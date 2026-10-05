@@ -52,7 +52,7 @@ flowchart TD
     subgraph DISCOVERY
         N[NeuralScan<br/>LLM endpoints, MCP servers]
         A[agent-bom<br/>packages, CVEs, credentials]
-        M[mcp-scan<br/>tool poisoning, hidden instructions]
+        M[agent-audit-kit<br/>tool poisoning, hidden instructions]
         G[garak<br/>model behavior under injection]
     end
 
