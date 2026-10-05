@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: aicorellator
+Version: 0.0.1
+Summary: AI Infrastructure Attack Surface Correlator
+Requires-Python: >=3.11
+License-File: LICENSE
+Dynamic: license-file
