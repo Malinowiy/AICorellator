@@ -103,10 +103,10 @@ Network access
 
 AICorellator itself does not require network access.
 However, some external tools may:
-    - NeuralScan: no
-    - agent-bom:  yes (CVE databases)
-    - mcp-scan:   yes (Invariant Labs API)
-    - garak:      no (unless using remote API targets)
+    - NeuralScan:         no
+    - agent-bom:          yes (CVE databases)
+    - agent-audit-kit:    no
+    - garak:              no (unless using remote API targets)
 
 For air-gapped environments, verify each tool's offline behavior
 before relying on it.
