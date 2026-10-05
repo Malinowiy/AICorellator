@@ -1,0 +1,43 @@
+First day.
+
+
+
+Today we scoped and started building AICorellator,
+a correlation pipeline for AI infrastructure attack surface.
+The tool ingests output from discovery and security scanners 
+(NeuralScan, agent-bom, agent-audit-kit, garak), normalizes
+everything into a unified graph of nodes (agents, LLM endpoints,
+MCP servers, tools, credentials, processes, sinks) and edges
+(access, delegation, exposure, reach), then uses a voting ensemble
+of heterogeneous local LLMs to identify multi-hop exploitability
+chains that no single scanner can see. It is designed for both red
+teams (post-exploitation recon) and blue teams (internal audit).
+Key architectural decisions: no database (filesystem as storage,
+JSON/JSONL snapshots), normalize-on-input (each tool gets a
+dedicated normalizer into the internal Node/Edge/Provenance model),
+provenance everywhere (every fact knows which tool reported it and
+when), and a configurable analytical layer driven by profiles (fast
+for red, deep for blue). We rejected mcp-scan/snyk-agent-scan and
+Cisco mcp-scanner because both require sending data to external APIs;
+agent-audit-kit was chosen instead as a fully offline replacement.
+Network scanning is deliberately out of scope for the first iteration
+— local-first keeps the tool's own attack surface minimal.
+
+On the implementation side, we set up the project skeleton 
+(pyproject.toml, src/aicorellator/, .gitignore), defined the data
+model (Node, Edge, Provenance, ScanResult), and built the runner:
+a ScannerModule abstract base, automatic module discovery via
+pkgutil, error isolation (a failing module never kills the run),
+and JSONL output to ~/.aicorellator/scans/<timestamp>/with raw tool
+outputs preserved under raw/. The first working module is
+NeuralScanModule, which maps NeuralScan's types into our schema —
+claude-client → agent, claude-connector→ tool,
+local-llm → llm_endpoint, resource → sink, and edge kinds
+data-flow/client → uses_client, data-flow/connector → provides_tool,
+inferred/detected → runs_on, reach→ has_access_to. The first
+end-to-end run produced 72 nodes and 123 edges with a clean mapping
+(60 provides_tool, 54 has_access_to, 5 runs_on, 4 uses_client, zero
+related_to). The project is now on GitHub with a working first commit.
+Next steps: add the agent-bom and agent-audit-kit modules, build the
+graph serializer, and run the first LLM query against the graph to
+validate verify_chain and the voting layer.
