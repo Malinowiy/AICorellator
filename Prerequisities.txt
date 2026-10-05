@@ -34,13 +34,11 @@ agent-bom
     Install: pip install agent-bom
     Check:   agent-bom --version
 
-mcp-scan (Invariant Labs)
-    Tool description analysis, poisoning detection, rug-pull detection.
-    Install: uvx mcp-scan@latest
-    Check:   uvx mcp-scan --help
-    Note:    Sends tool names and descriptions to Invariant Labs API
-             for classification. Do not run against sensitive targets
-             without reviewing their data handling policy.
+agent-audit-kit
+    MCP config scanning, tool poisoning detection, secret exposure,
+    supply chain analysis. Fully offline, no API keys required.
+    Install: pip install agent-audit-kit
+    Check:   agent-audit-kit --help
 
 garak
     LLM behavioral scanner (prompt injection, jailbreak, encoding).
