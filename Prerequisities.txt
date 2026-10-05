@@ -31,18 +31,18 @@ NeuralScan
 
 agent-bom
     Package inventory, CVE lookup, credential blast radius.
-    Install: pip install agent-bom
+    Install: uv pip install agent-bom
     Check:   agent-bom --version
 
 agent-audit-kit
     MCP config scanning, tool poisoning detection, secret exposure,
     supply chain analysis. Fully offline, no API keys required.
-    Install: pip install agent-audit-kit
+    Install: uv pip install agent-audit-kit
     Check:   agent-audit-kit --help
 
 garak
     LLM behavioral scanner (prompt injection, jailbreak, encoding).
-    Install: pip install garak
+    Install: uv pip install garak
     Check:   garak --version
 
 
