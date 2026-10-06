@@ -1,7 +1,7 @@
 import importlib
 import json
 import pkgutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from aicorellator.models import ScanResult, to_dict
@@ -71,7 +71,7 @@ def save_results(results: list[ScanResult], out_dir: Path) -> None:
 
 if __name__ == "__main__":
     results = run_all(strict=False)
-    scan_id = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    scan_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     out_dir = Path.home() / ".aicorellator" / "scans" / scan_id
     save_results(results, out_dir)
     total_nodes = sum(len(r.nodes) for r in results)

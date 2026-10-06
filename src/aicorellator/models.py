@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -39,7 +39,7 @@ class ScanResult:
 
 
 def now_iso() -> str:
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def to_dict(obj) -> dict:

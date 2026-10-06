@@ -41,3 +41,27 @@ related_to). The project is now on GitHub with a working first commit.
 Next steps: add the agent-bom and agent-audit-kit modules, build the
 graph serializer, and run the first LLM query against the graph to
 validate verify_chain and the voting layer.
+
+Date: 2026-10-07
+
+Done
+
+Built graph_serializer: graph → text for LLM, with node/edge filtering and meaningful attributes (risk, caps, sensitivity, exfil). Verified on real scan (72 nodes, 123 edges).
+Built llm_judge.py: LM Studio client via requests, token from .env via python-dotenv, parse_findings (markdown-safe), verify_chain.
+Ran first end-to-end run_judge.py: load JSONL → serialize → prompt → LM Studio → parse → verify.
+Issues & Fixes
+
+NameError: Node / Path — added missing imports.
+401 Unauthorized — LM Studio bug with OpenAI-compatible endpoint; token is valid (GET /v1/models works, POST /v1/chat/completions rejects).
+ReadTimeout (300s) — 27B model at 5–10 tok/s; raised timeout to 900s.
+Empty [] response — reasoning model burned all 4096 tokens on reasoning_content, content came back empty.
+State
+
+Pipeline runs end-to-end but returns no findings. Graph is correct and complete; prompt is too vague for the model to act on.
+
+Next
+
+Raise max_tokens to 8192.
+Rewrite prompt: explicit chain shape (agent → tool → sink), include example, disable reasoning.
+Update verify_chain for 5-element chains (currently assumes 3).
+If reasoning still eats the budget — switch to non-reasoning model (qwen3-4b, llama-3.1-8b-instruct).

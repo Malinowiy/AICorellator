@@ -1,0 +1,46 @@
+# questions/q1_exfil.yaml
+id: q1_exfil
+title: "Credential and data exfiltration chains"
+slice:
+  include_nodes: [tool, sink, credential]
+  include_edges: [has_access_to, provides_tool]
+prompt: |
+  PROMPT = """
+You are analyzing an AI infrastructure graph for exfiltration risks.
+
+GRAPH:
+{graph_text}
+
+TASK:
+Each edge "tool --provides_tool--> agent" means the agent can invoke this tool.
+Each edge "tool --has_access_to--> sink" means the tool can reach that sink.
+
+Find chains of EXACTLY this form:
+  agent --provides_tool--> tool --has_access_to--> sink
+
+A chain is interesting if the tool has "network" in its caps.
+
+OUTPUT FORMAT (strict JSON, no markdown):
+{{"chains": [
+  {{"chain": ["agent_id", "provides_tool", "tool_id", "has_access_to", "sink_id"],
+    "reasoning": "one sentence",
+    "confidence": 0.0}}
+]}}
+
+EXAMPLE (for reference only, do not copy):
+{{"chains": [
+  {{"chain": ["node:claude-desktop", "provides_tool", "claude-catalog:gmail", "has_access_to", "sink:network"],
+    "reasoning": "Claude Desktop can invoke Gmail, which has network access and RESTRICTED sensitivity.",
+    "confidence": 0.8}}
+]}}
+
+Now output JSON only. No reasoning, no explanation, no markdown.
+"""
+  Return JSON:
+  {{"chains": [
+    {{"chain": ["tool_id", "has_access_to", "sink_id"],
+      "reasoning": "why this is a risk",
+      "confidence": 0.0}}
+  ]}}
+
+  If no chains found, return {{"chains": []}}.
