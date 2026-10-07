@@ -1,0 +1,4863 @@
+{
+  "scanTime": "2026-10-05T17:47:20.294Z",
+  "hostInfo": {
+    "os": "Darwin 27.0.0",
+    "platform": "darwin",
+    "hostname": "Crimsons-MacBook-Pro.local",
+    "nodeVersion": "v26.10.0"
+  },
+  "hub": {
+    "id": "local-ai-hub",
+    "name": "NeuralScan",
+    "label": "Multi-LLM",
+    "providers": [
+      "LM Studio",
+      "Copilot",
+      "OpenAI",
+      "GitHub Copilot",
+      "Perplexity"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "node:claude-desktop",
+      "name": "Claude",
+      "type": "claude-client",
+      "status": "online",
+      "provider": "Claude",
+      "connectedCount": 0,
+      "totalCount": 25,
+      "metadata": {
+        "connectedCount": 0,
+        "totalCount": 25
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "node:chatgpt",
+      "name": "ChatGPT",
+      "type": "chatgpt-client",
+      "status": "available",
+      "provider": "OpenAI",
+      "connectedCount": 0,
+      "totalCount": 19,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "metadata": {
+        "installed": false,
+        "connectedCount": 0,
+        "totalCount": 19,
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)"
+      },
+      "verified": false,
+      "evidence": "catalog"
+    },
+    {
+      "id": "node:copilot",
+      "name": "GitHub Copilot",
+      "type": "copilot-client",
+      "status": "online",
+      "provider": "GitHub Copilot",
+      "connectedCount": 0,
+      "totalCount": 8,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "metadata": {
+        "installed": true,
+        "connectedCount": 0,
+        "totalCount": 8,
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)"
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "node:perplexity",
+      "name": "Perplexity",
+      "type": "perplexity-client",
+      "status": "available",
+      "provider": "Perplexity",
+      "connectedCount": 0,
+      "totalCount": 8,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "metadata": {
+        "installed": false,
+        "connectedCount": 0,
+        "totalCount": 8,
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)"
+      },
+      "verified": false,
+      "evidence": "catalog"
+    },
+    {
+      "id": "claude-catalog:github",
+      "name": "GitHub",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "github",
+      "provider": "GitHub",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Manage repos, issues, and pull requests",
+        "category": "web",
+        "brand": "github",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "IP",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches github|gitlab → IP, INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.292Z"
+      }
+    },
+    {
+      "id": "claude-catalog:gmail",
+      "name": "Gmail",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "gmail",
+      "provider": "Gmail",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Read, draft, and manage emails",
+        "category": "web",
+        "brand": "gmail",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "PII",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches gmail → INTERNAL, PII"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:googlecalendar",
+      "name": "Google Calendar",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googlecalendar",
+      "provider": "Google Calendar",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Create and manage calendar events",
+        "category": "web",
+        "brand": "googlecalendar",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can send or post data over the network"
+        ],
+        "caps": {
+          "read": false,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:googledrive",
+      "name": "Google Drive",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googledrive",
+      "provider": "Google Drive",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Browse, create, and edit Drive files",
+        "category": "web",
+        "brand": "googledrive",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches google ?drive → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:googledocs",
+      "name": "Google Docs",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googledocs",
+      "provider": "Google Docs",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Create and edit documents",
+        "category": "web",
+        "brand": "googledocs",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can send or post data over the network"
+        ],
+        "caps": {
+          "read": false,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:googlesheets",
+      "name": "Google Sheets",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googlesheets",
+      "provider": "Google Sheets",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Read and write spreadsheets",
+        "category": "web",
+        "brand": "googlesheets",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:slack",
+      "name": "Slack",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "slack",
+      "provider": "Slack",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Send and read Slack messages",
+        "category": "web",
+        "brand": "slack",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches slack → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:notion",
+      "name": "Notion",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "notion",
+      "provider": "Notion",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Read and write Notion pages",
+        "category": "web",
+        "brand": "notion",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches notion → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:linear",
+      "name": "Linear",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "linear",
+      "provider": "Linear",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Manage issues and projects",
+        "category": "web",
+        "brand": "linear",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 1,
+        "sensitivity_label": "INTERNAL",
+        "reasons": [
+          "Provider matches linear → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:jira",
+      "name": "Jira",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "jira",
+      "provider": "Jira",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Create and track Jira issues",
+        "category": "web",
+        "brand": "jira",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can send or post data over the network"
+        ],
+        "caps": {
+          "read": false,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 1,
+        "sensitivity_label": "INTERNAL",
+        "reasons": [
+          "Provider matches jira|confluence → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:asana",
+      "name": "Asana",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "asana",
+      "provider": "Asana",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Manage tasks and projects",
+        "category": "web",
+        "brand": "asana",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:dropbox",
+      "name": "Dropbox",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "dropbox",
+      "provider": "Dropbox",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Access Dropbox files",
+        "category": "web",
+        "brand": "dropbox",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:box",
+      "name": "Box",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "box",
+      "provider": "Box",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Access Box cloud storage",
+        "category": "web",
+        "brand": "box",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:hubspot",
+      "name": "HubSpot",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "hubspot",
+      "provider": "HubSpot",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "CRM contacts and deals",
+        "category": "web",
+        "brand": "hubspot",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "PII"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches hubspot → PII"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:zendesk",
+      "name": "Zendesk",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "zendesk",
+      "provider": "Zendesk",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Support tickets and customer data",
+        "category": "web",
+        "brand": "zendesk",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:trello",
+      "name": "Trello",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "trello",
+      "provider": "Trello",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Boards, lists, and cards",
+        "category": "web",
+        "brand": "trello",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:airtable",
+      "name": "Airtable",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "airtable",
+      "provider": "Airtable",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Read and write Airtable bases",
+        "category": "web",
+        "brand": "airtable",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:figma",
+      "name": "Figma",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "figma",
+      "provider": "Figma",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Inspect and work with design files",
+        "category": "web",
+        "brand": "figma",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:zoom",
+      "name": "Zoom",
+      "type": "claude-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "zoom",
+      "provider": "Zoom",
+      "settingsUrl": "https://claude.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Schedule and manage meetings",
+        "category": "web",
+        "brand": "zoom",
+        "source": "catalog",
+        "settingsUrl": "https://claude.ai/settings/connectors"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can send or post data over the network"
+        ],
+        "caps": {
+          "read": false,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:controlchrome",
+      "name": "Control Chrome",
+      "type": "claude-connector",
+      "subtype": "desktop-extension",
+      "status": "available",
+      "brand": "googlechrome",
+      "provider": "Control Chrome",
+      "tools": [],
+      "metadata": {
+        "description": "Control Chrome tabs and navigation",
+        "category": "desktop",
+        "brand": "googlechrome",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "critical",
+        "reasons": [
+          "Can execute code or control your machine"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": true,
+          "network": true
+        },
+        "reach": {
+          "files": true,
+          "machine": true,
+          "network": true,
+          "exfil": true
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Can control your machine. Disable it in Claude settings if you don’t need it."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": true,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:claudeinchrome",
+      "name": "Claude in Chrome",
+      "type": "claude-connector",
+      "subtype": "desktop-extension",
+      "status": "available",
+      "brand": "claude",
+      "provider": "Claude in Chrome",
+      "tools": [],
+      "metadata": {
+        "description": "Claude as a Chrome extension",
+        "category": "desktop",
+        "brand": "claude",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "critical",
+        "reasons": [
+          "Can execute code or control your machine"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": true,
+          "network": true
+        },
+        "reach": {
+          "files": true,
+          "machine": true,
+          "network": true,
+          "exfil": true
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Can control your machine. Disable it in Claude settings if you don’t need it."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": true,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:controlyourmac",
+      "name": "Control your Mac",
+      "type": "claude-connector",
+      "subtype": "desktop-extension",
+      "status": "available",
+      "brand": "applescript",
+      "provider": "Control your Mac",
+      "tools": [],
+      "metadata": {
+        "description": "Run AppleScript on your Mac",
+        "category": "desktop",
+        "brand": "applescript",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can execute code or control your machine"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": true,
+          "network": false
+        },
+        "reach": {
+          "files": true,
+          "machine": true,
+          "network": false,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Can control your machine. Disable it in Claude settings if you don’t need it."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": true,
+        "network": false
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:readandsendimessages",
+      "name": "Read and Send iMessages",
+      "type": "claude-connector",
+      "subtype": "desktop-extension",
+      "status": "available",
+      "brand": "imessage",
+      "provider": "Read and Send iMessages",
+      "tools": [],
+      "metadata": {
+        "description": "Send and read iMessages",
+        "category": "desktop",
+        "brand": "imessage",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in Claude settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.293Z"
+      }
+    },
+    {
+      "id": "claude-catalog:filesystem",
+      "name": "Filesystem",
+      "type": "claude-connector",
+      "subtype": "desktop-extension",
+      "status": "available",
+      "brand": "filesystem",
+      "provider": "Filesystem",
+      "tools": [],
+      "metadata": {
+        "description": "Read and write local files",
+        "category": "desktop",
+        "brand": "filesystem",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can modify or delete local data"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": false
+        },
+        "reach": {
+          "files": true,
+          "machine": false,
+          "network": false,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": false
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "claude-catalog:airbnbsearchlistings",
+      "name": "Airbnb Search & Listings",
+      "type": "claude-connector",
+      "subtype": "desktop-extension",
+      "status": "available",
+      "brand": "airbnb",
+      "provider": "Airbnb Search & Listings",
+      "tools": [],
+      "metadata": {
+        "description": "Search Airbnb listings",
+        "category": "desktop",
+        "brand": "airbnb",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Read-only access"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": false
+        },
+        "reach": {
+          "files": true,
+          "machine": false,
+          "network": false,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": false
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:googledrive",
+      "name": "Google Drive",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googledrive",
+      "provider": "Google Drive",
+      "priority": true,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search and reference Google Drive files",
+        "category": "web",
+        "brand": "googledrive",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches google ?drive → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:gmail",
+      "name": "Gmail",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "gmail",
+      "provider": "Gmail",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search and reference emails",
+        "category": "web",
+        "brand": "gmail",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "PII",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches gmail → INTERNAL, PII"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:googlecalendar",
+      "name": "Google Calendar",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googlecalendar",
+      "provider": "Google Calendar",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference calendar events",
+        "category": "web",
+        "brand": "googlecalendar",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:onedrive",
+      "name": "OneDrive",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "microsoftonedrive",
+      "provider": "OneDrive",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search and reference OneDrive files",
+        "category": "web",
+        "brand": "microsoftonedrive",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:sharepoint",
+      "name": "SharePoint",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "microsoftsharepoint",
+      "provider": "SharePoint",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search and reference SharePoint sites",
+        "category": "web",
+        "brand": "microsoftsharepoint",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:outlook",
+      "name": "Outlook",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "microsoftoutlook",
+      "provider": "Outlook",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference Outlook email and calendar",
+        "category": "web",
+        "brand": "microsoftoutlook",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:microsoftteams",
+      "name": "Microsoft Teams",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "microsoftteams",
+      "provider": "Microsoft Teams",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference Teams messages and files",
+        "category": "web",
+        "brand": "microsoftteams",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:dropbox",
+      "name": "Dropbox",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "dropbox",
+      "provider": "Dropbox",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Access Dropbox files",
+        "category": "web",
+        "brand": "dropbox",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:box",
+      "name": "Box",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "box",
+      "provider": "Box",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Access Box cloud storage",
+        "category": "web",
+        "brand": "box",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:github",
+      "name": "GitHub",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "github",
+      "provider": "GitHub",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference repos, issues, and pull requests",
+        "category": "web",
+        "brand": "github",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "IP",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches github|gitlab → IP, INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:gitlab",
+      "name": "GitLab",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "gitlab",
+      "provider": "GitLab",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference GitLab issues and merge requests",
+        "category": "web",
+        "brand": "gitlab",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in ChatGPT settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "IP",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches github|gitlab → IP, INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:linear",
+      "name": "Linear",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "linear",
+      "provider": "Linear",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference issues and projects",
+        "category": "web",
+        "brand": "linear",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 1,
+        "sensitivity_label": "INTERNAL",
+        "reasons": [
+          "Provider matches linear → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:asana",
+      "name": "Asana",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "asana",
+      "provider": "Asana",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference tasks and projects",
+        "category": "web",
+        "brand": "asana",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:clickup",
+      "name": "ClickUp",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "clickup",
+      "provider": "ClickUp",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference ClickUp tasks and docs",
+        "category": "web",
+        "brand": "clickup",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:hubspot",
+      "name": "HubSpot",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "hubspot",
+      "provider": "HubSpot",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "CRM contacts and deals",
+        "category": "web",
+        "brand": "hubspot",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "PII"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches hubspot → PII"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:notion",
+      "name": "Notion",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "notion",
+      "provider": "Notion",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference Notion pages",
+        "category": "web",
+        "brand": "notion",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches notion → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:canva",
+      "name": "Canva",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "canva",
+      "provider": "Canva",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Work with Canva designs",
+        "category": "web",
+        "brand": "canva",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:figma",
+      "name": "Figma",
+      "type": "chatgpt-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "figma",
+      "provider": "Figma",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Inspect Figma design files",
+        "category": "web",
+        "brand": "figma",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "chatgpt-catalog:custommcpconnector",
+      "name": "Custom MCP Connector",
+      "type": "chatgpt-connector",
+      "subtype": "mcp-connector",
+      "status": "available",
+      "brand": "openai",
+      "provider": "Custom MCP Connector",
+      "priority": false,
+      "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Add your own MCP server (Developer mode)",
+        "category": "mcp",
+        "brand": "openai",
+        "settingsUrl": "https://chatgpt.com/#settings/Connectors",
+        "managedBy": "ChatGPT account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can send or post data over the network"
+        ],
+        "caps": {
+          "read": false,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:github",
+      "name": "GitHub",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "github",
+      "provider": "GitHub",
+      "priority": true,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Repos, issues, pull requests, and Actions",
+        "category": "dev",
+        "brand": "github",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "IP",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches github|gitlab → IP, INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:docker",
+      "name": "Docker",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "docker",
+      "provider": "Docker",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Containerize apps and generate Docker assets",
+        "category": "dev",
+        "brand": "docker",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:mongodb",
+      "name": "MongoDB",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "mongodb",
+      "provider": "MongoDB",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Query and manage MongoDB databases",
+        "category": "data",
+        "brand": "mongodb",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "high",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": true,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": true,
+          "machine": false,
+          "network": true,
+          "exfil": true
+        },
+        "recommendation": {
+          "kind": "review",
+          "text": "Broad read/write access. Review its scopes in GitHub Copilot settings and revoke if unused."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": true,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches mongo(db)? → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:sentry",
+      "name": "Sentry",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "sentry",
+      "provider": "Sentry",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Reference and triage Sentry errors",
+        "category": "dev",
+        "brand": "sentry",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:stripe",
+      "name": "Stripe",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "stripe",
+      "provider": "Stripe",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Build and debug Stripe integrations",
+        "category": "web",
+        "brand": "stripe",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "FINANCIAL",
+          "PCI"
+        ],
+        "sensitivity": 4,
+        "sensitivity_label": "CRITICAL",
+        "reasons": [
+          "Name/description signals FINANCIAL, PCI (\\b(payment|billing|invoice|stripe)\\b)"
+        ],
+        "confidence": "medium",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:datadog",
+      "name": "Datadog",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "datadog",
+      "provider": "Datadog",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Query Datadog metrics and monitors",
+        "category": "dev",
+        "brand": "datadog",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:azure",
+      "name": "Azure",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "azure",
+      "provider": "Azure",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Manage Azure resources and deployments",
+        "category": "cloud",
+        "brand": "azure",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "copilot-catalog:atlassian",
+      "name": "Atlassian",
+      "type": "copilot-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "jira",
+      "provider": "Atlassian",
+      "priority": false,
+      "settingsUrl": "https://github.com/settings/copilot",
+      "tools": [],
+      "metadata": {
+        "description": "Jira issues and Confluence pages",
+        "category": "web",
+        "brand": "jira",
+        "settingsUrl": "https://github.com/settings/copilot",
+        "managedBy": "GitHub account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "low",
+        "reasons": [
+          "Makes outbound network connections"
+        ],
+        "caps": {
+          "read": false,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": false,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 1,
+        "sensitivity_label": "INTERNAL",
+        "reasons": [
+          "Provider matches jira|confluence → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:googledrive",
+      "name": "Google Drive",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "googledrive",
+      "provider": "Google Drive",
+      "priority": true,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search and reference Google Drive files",
+        "category": "web",
+        "brand": "googledrive",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches google ?drive → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:gmail",
+      "name": "Gmail",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "gmail",
+      "provider": "Gmail",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search and reference emails",
+        "category": "web",
+        "brand": "gmail",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "PII",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches gmail → INTERNAL, PII"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:notion",
+      "name": "Notion",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "notion",
+      "provider": "Notion",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference Notion pages and databases",
+        "category": "web",
+        "brand": "notion",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches notion → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:github",
+      "name": "GitHub",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "github",
+      "provider": "GitHub",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference repositories and code",
+        "category": "dev",
+        "brand": "github",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "IP",
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches github|gitlab → IP, INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:dropbox",
+      "name": "Dropbox",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "dropbox",
+      "provider": "Dropbox",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Access Dropbox files",
+        "category": "web",
+        "brand": "dropbox",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:sharepoint",
+      "name": "SharePoint",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "microsoftsharepoint",
+      "provider": "SharePoint",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Search SharePoint sites and files",
+        "category": "web",
+        "brand": "microsoftsharepoint",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:outlook",
+      "name": "Outlook",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "microsoftoutlook",
+      "provider": "Outlook",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference Outlook mail and calendar",
+        "category": "web",
+        "brand": "microsoftoutlook",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [],
+        "sensitivity": 0,
+        "sensitivity_label": "PUBLIC",
+        "reasons": [
+          "No provider or content match — data class unknown"
+        ],
+        "confidence": "low",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "perplexity-catalog:slack",
+      "name": "Slack",
+      "type": "perplexity-connector",
+      "subtype": "cloud-integration",
+      "status": "available",
+      "brand": "slack",
+      "provider": "Slack",
+      "priority": false,
+      "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+      "tools": [],
+      "metadata": {
+        "description": "Reference Slack messages and files",
+        "category": "web",
+        "brand": "slack",
+        "settingsUrl": "https://www.perplexity.ai/settings/connectors",
+        "managedBy": "Perplexity account (server-side)",
+        "transport": "cloud",
+        "source": "catalog"
+      },
+      "risk": {
+        "level": "medium",
+        "reasons": [
+          "Can read your data and reach the network — exfiltration risk"
+        ],
+        "caps": {
+          "read": true,
+          "write": false,
+          "exec": false,
+          "network": true
+        },
+        "reach": {
+          "files": false,
+          "machine": false,
+          "network": true,
+          "exfil": false
+        },
+        "recommendation": {
+          "kind": "none",
+          "text": "Limited access — low risk."
+        }
+      },
+      "active": false,
+      "capabilities": {
+        "read": true,
+        "write": false,
+        "exec": false,
+        "network": true
+      },
+      "verified": false,
+      "evidence": "catalog",
+      "classification": {
+        "classes": [
+          "INTERNAL"
+        ],
+        "sensitivity": 2,
+        "sensitivity_label": "RESTRICTED",
+        "reasons": [
+          "Provider matches slack → INTERNAL"
+        ],
+        "confidence": "high",
+        "classified_at": "2026-10-05T17:47:20.294Z"
+      }
+    },
+    {
+      "id": "port:5000",
+      "name": "Generic server",
+      "type": "local-llm",
+      "status": "online",
+      "provider": "generic",
+      "metadata": {
+        "id": "port:5000",
+        "port": 5000,
+        "name": "Generic server",
+        "provider": "generic",
+        "type": "local-llm"
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "port:8000",
+      "name": "AI server (generic)",
+      "type": "local-llm",
+      "status": "online",
+      "provider": "generic",
+      "metadata": {
+        "id": "port:8000",
+        "port": 8000,
+        "name": "AI server (generic)",
+        "provider": "generic",
+        "type": "local-llm"
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "proc:lm-studio",
+      "name": "LM Studio",
+      "type": "process",
+      "status": "online",
+      "provider": "LM Studio",
+      "processCount": 6,
+      "metadata": {
+        "id": "proc:lm-studio",
+        "name": "LM Studio",
+        "pid": 1448,
+        "command": "/Applications/LM Studio.app/Contents/MacOS/LM Studio",
+        "type": "process",
+        "inferredProvider": "LM Studio",
+        "processCount": 6
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "proc:copilot",
+      "name": "GitHub Copilot",
+      "type": "process",
+      "status": "online",
+      "provider": "Copilot",
+      "processCount": 1,
+      "metadata": {
+        "id": "proc:copilot",
+        "name": "GitHub Copilot",
+        "pid": 40364,
+        "command": "/Applications/Visual Studio Code.app/Contents/Resources/app/node_modules.asar.unpacked/@github/copilot-sdk-darwin-arm64/prebuilds/darwin-arm64/copilot-runtime --headless --no-auto-update --log-level i…",
+        "type": "process",
+        "inferredProvider": "Copilot",
+        "processCount": 1
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "ext:vscode:saoudrizwan.claude-dev",
+      "name": "claude-dev",
+      "type": "ide-extension",
+      "status": "online",
+      "provider": "saoudrizwan",
+      "metadata": {
+        "id": "ext:vscode:saoudrizwan.claude-dev",
+        "name": "claude-dev",
+        "publisher": "saoudrizwan",
+        "version": "4.1.13",
+        "type": "ide-extension",
+        "ide": "vscode"
+      },
+      "verified": true,
+      "evidence": "local-scan"
+    },
+    {
+      "id": "sink:files",
+      "name": "Your Files",
+      "type": "resource",
+      "resource": "files",
+      "status": "online",
+      "metadata": {
+        "resource": "files",
+        "description": "Local filesystem & databases — what file-reading/writing connectors can touch"
+      }
+    },
+    {
+      "id": "sink:network",
+      "name": "The Internet",
+      "type": "resource",
+      "resource": "network",
+      "status": "online",
+      "metadata": {
+        "resource": "network",
+        "description": "Outbound network — where networked connectors can send your data"
+      }
+    },
+    {
+      "id": "sink:machine",
+      "name": "Your Machine",
+      "type": "resource",
+      "resource": "machine",
+      "status": "online",
+      "metadata": {
+        "resource": "machine",
+        "description": "Code & OS execution — what code-running connectors can control"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "node:claude-desktop->local-ai-hub",
+      "from": "node:claude-desktop",
+      "to": "local-ai-hub",
+      "type": "data-flow",
+      "label": "client"
+    },
+    {
+      "id": "node:chatgpt->local-ai-hub",
+      "from": "node:chatgpt",
+      "to": "local-ai-hub",
+      "type": "data-flow",
+      "label": "client"
+    },
+    {
+      "id": "node:copilot->local-ai-hub",
+      "from": "node:copilot",
+      "to": "local-ai-hub",
+      "type": "data-flow",
+      "label": "client"
+    },
+    {
+      "id": "node:perplexity->local-ai-hub",
+      "from": "node:perplexity",
+      "to": "local-ai-hub",
+      "type": "data-flow",
+      "label": "client"
+    },
+    {
+      "id": "claude-catalog:github->node:claude-desktop",
+      "from": "claude-catalog:github",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:gmail->node:claude-desktop",
+      "from": "claude-catalog:gmail",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:googlecalendar->node:claude-desktop",
+      "from": "claude-catalog:googlecalendar",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:googledrive->node:claude-desktop",
+      "from": "claude-catalog:googledrive",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:googledocs->node:claude-desktop",
+      "from": "claude-catalog:googledocs",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:googlesheets->node:claude-desktop",
+      "from": "claude-catalog:googlesheets",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:slack->node:claude-desktop",
+      "from": "claude-catalog:slack",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:notion->node:claude-desktop",
+      "from": "claude-catalog:notion",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:linear->node:claude-desktop",
+      "from": "claude-catalog:linear",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:jira->node:claude-desktop",
+      "from": "claude-catalog:jira",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:asana->node:claude-desktop",
+      "from": "claude-catalog:asana",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:dropbox->node:claude-desktop",
+      "from": "claude-catalog:dropbox",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:box->node:claude-desktop",
+      "from": "claude-catalog:box",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:hubspot->node:claude-desktop",
+      "from": "claude-catalog:hubspot",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:zendesk->node:claude-desktop",
+      "from": "claude-catalog:zendesk",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:trello->node:claude-desktop",
+      "from": "claude-catalog:trello",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:airtable->node:claude-desktop",
+      "from": "claude-catalog:airtable",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:figma->node:claude-desktop",
+      "from": "claude-catalog:figma",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:zoom->node:claude-desktop",
+      "from": "claude-catalog:zoom",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:controlchrome->node:claude-desktop",
+      "from": "claude-catalog:controlchrome",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:claudeinchrome->node:claude-desktop",
+      "from": "claude-catalog:claudeinchrome",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:controlyourmac->node:claude-desktop",
+      "from": "claude-catalog:controlyourmac",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:readandsendimessages->node:claude-desktop",
+      "from": "claude-catalog:readandsendimessages",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:filesystem->node:claude-desktop",
+      "from": "claude-catalog:filesystem",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "claude-catalog:airbnbsearchlistings->node:claude-desktop",
+      "from": "claude-catalog:airbnbsearchlistings",
+      "to": "node:claude-desktop",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:googledrive->node:chatgpt",
+      "from": "chatgpt-catalog:googledrive",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:gmail->node:chatgpt",
+      "from": "chatgpt-catalog:gmail",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:googlecalendar->node:chatgpt",
+      "from": "chatgpt-catalog:googlecalendar",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:onedrive->node:chatgpt",
+      "from": "chatgpt-catalog:onedrive",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:sharepoint->node:chatgpt",
+      "from": "chatgpt-catalog:sharepoint",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:outlook->node:chatgpt",
+      "from": "chatgpt-catalog:outlook",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:microsoftteams->node:chatgpt",
+      "from": "chatgpt-catalog:microsoftteams",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:dropbox->node:chatgpt",
+      "from": "chatgpt-catalog:dropbox",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:box->node:chatgpt",
+      "from": "chatgpt-catalog:box",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:github->node:chatgpt",
+      "from": "chatgpt-catalog:github",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:gitlab->node:chatgpt",
+      "from": "chatgpt-catalog:gitlab",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:linear->node:chatgpt",
+      "from": "chatgpt-catalog:linear",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:asana->node:chatgpt",
+      "from": "chatgpt-catalog:asana",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:clickup->node:chatgpt",
+      "from": "chatgpt-catalog:clickup",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:hubspot->node:chatgpt",
+      "from": "chatgpt-catalog:hubspot",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:notion->node:chatgpt",
+      "from": "chatgpt-catalog:notion",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:canva->node:chatgpt",
+      "from": "chatgpt-catalog:canva",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:figma->node:chatgpt",
+      "from": "chatgpt-catalog:figma",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "chatgpt-catalog:custommcpconnector->node:chatgpt",
+      "from": "chatgpt-catalog:custommcpconnector",
+      "to": "node:chatgpt",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:github->node:copilot",
+      "from": "copilot-catalog:github",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:docker->node:copilot",
+      "from": "copilot-catalog:docker",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:mongodb->node:copilot",
+      "from": "copilot-catalog:mongodb",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:sentry->node:copilot",
+      "from": "copilot-catalog:sentry",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:stripe->node:copilot",
+      "from": "copilot-catalog:stripe",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:datadog->node:copilot",
+      "from": "copilot-catalog:datadog",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:azure->node:copilot",
+      "from": "copilot-catalog:azure",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "copilot-catalog:atlassian->node:copilot",
+      "from": "copilot-catalog:atlassian",
+      "to": "node:copilot",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:googledrive->node:perplexity",
+      "from": "perplexity-catalog:googledrive",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:gmail->node:perplexity",
+      "from": "perplexity-catalog:gmail",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:notion->node:perplexity",
+      "from": "perplexity-catalog:notion",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:github->node:perplexity",
+      "from": "perplexity-catalog:github",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:dropbox->node:perplexity",
+      "from": "perplexity-catalog:dropbox",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:sharepoint->node:perplexity",
+      "from": "perplexity-catalog:sharepoint",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:outlook->node:perplexity",
+      "from": "perplexity-catalog:outlook",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "perplexity-catalog:slack->node:perplexity",
+      "from": "perplexity-catalog:slack",
+      "to": "node:perplexity",
+      "type": "data-flow",
+      "label": "connector"
+    },
+    {
+      "id": "port:5000->local-ai-hub",
+      "from": "port:5000",
+      "to": "local-ai-hub",
+      "type": "inferred",
+      "label": "local"
+    },
+    {
+      "id": "port:8000->local-ai-hub",
+      "from": "port:8000",
+      "to": "local-ai-hub",
+      "type": "inferred",
+      "label": "local"
+    },
+    {
+      "id": "proc:lm-studio->local-ai-hub",
+      "from": "proc:lm-studio",
+      "to": "local-ai-hub",
+      "type": "detected",
+      "label": "process"
+    },
+    {
+      "id": "proc:copilot->local-ai-hub",
+      "from": "proc:copilot",
+      "to": "local-ai-hub",
+      "type": "detected",
+      "label": "process"
+    },
+    {
+      "id": "ext:vscode:saoudrizwan.claude-dev->local-ai-hub",
+      "from": "ext:vscode:saoudrizwan.claude-dev",
+      "to": "local-ai-hub",
+      "type": "detected",
+      "label": "ide"
+    },
+    {
+      "id": "reach:claude-catalog:github->network",
+      "from": "claude-catalog:github",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:gmail->network",
+      "from": "claude-catalog:gmail",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:googlecalendar->network",
+      "from": "claude-catalog:googlecalendar",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:googledrive->network",
+      "from": "claude-catalog:googledrive",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:googledocs->network",
+      "from": "claude-catalog:googledocs",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:googlesheets->network",
+      "from": "claude-catalog:googlesheets",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:slack->network",
+      "from": "claude-catalog:slack",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:notion->network",
+      "from": "claude-catalog:notion",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:jira->network",
+      "from": "claude-catalog:jira",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:dropbox->network",
+      "from": "claude-catalog:dropbox",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:box->network",
+      "from": "claude-catalog:box",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:airtable->network",
+      "from": "claude-catalog:airtable",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:figma->network",
+      "from": "claude-catalog:figma",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:zoom->network",
+      "from": "claude-catalog:zoom",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:controlchrome->machine",
+      "from": "claude-catalog:controlchrome",
+      "to": "sink:machine",
+      "type": "reach",
+      "risk": "critical",
+      "exfil": true
+    },
+    {
+      "id": "reach:claude-catalog:controlchrome->files",
+      "from": "claude-catalog:controlchrome",
+      "to": "sink:files",
+      "type": "reach",
+      "risk": "critical",
+      "exfil": true
+    },
+    {
+      "id": "reach:claude-catalog:controlchrome->network",
+      "from": "claude-catalog:controlchrome",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "critical",
+      "exfil": true
+    },
+    {
+      "id": "reach:claude-catalog:claudeinchrome->machine",
+      "from": "claude-catalog:claudeinchrome",
+      "to": "sink:machine",
+      "type": "reach",
+      "risk": "critical",
+      "exfil": true
+    },
+    {
+      "id": "reach:claude-catalog:claudeinchrome->files",
+      "from": "claude-catalog:claudeinchrome",
+      "to": "sink:files",
+      "type": "reach",
+      "risk": "critical",
+      "exfil": true
+    },
+    {
+      "id": "reach:claude-catalog:claudeinchrome->network",
+      "from": "claude-catalog:claudeinchrome",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "critical",
+      "exfil": true
+    },
+    {
+      "id": "reach:claude-catalog:controlyourmac->machine",
+      "from": "claude-catalog:controlyourmac",
+      "to": "sink:machine",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:controlyourmac->files",
+      "from": "claude-catalog:controlyourmac",
+      "to": "sink:files",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:readandsendimessages->network",
+      "from": "claude-catalog:readandsendimessages",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:claude-catalog:filesystem->files",
+      "from": "claude-catalog:filesystem",
+      "to": "sink:files",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:googledrive->network",
+      "from": "chatgpt-catalog:googledrive",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:gmail->network",
+      "from": "chatgpt-catalog:gmail",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:googlecalendar->network",
+      "from": "chatgpt-catalog:googlecalendar",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:onedrive->network",
+      "from": "chatgpt-catalog:onedrive",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:sharepoint->network",
+      "from": "chatgpt-catalog:sharepoint",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:outlook->network",
+      "from": "chatgpt-catalog:outlook",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:microsoftteams->network",
+      "from": "chatgpt-catalog:microsoftteams",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:dropbox->network",
+      "from": "chatgpt-catalog:dropbox",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:box->network",
+      "from": "chatgpt-catalog:box",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:github->network",
+      "from": "chatgpt-catalog:github",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:gitlab->network",
+      "from": "chatgpt-catalog:gitlab",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:linear->network",
+      "from": "chatgpt-catalog:linear",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:asana->network",
+      "from": "chatgpt-catalog:asana",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:clickup->network",
+      "from": "chatgpt-catalog:clickup",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:notion->network",
+      "from": "chatgpt-catalog:notion",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:figma->network",
+      "from": "chatgpt-catalog:figma",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:chatgpt-catalog:custommcpconnector->network",
+      "from": "chatgpt-catalog:custommcpconnector",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:copilot-catalog:github->network",
+      "from": "copilot-catalog:github",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:copilot-catalog:mongodb->files",
+      "from": "copilot-catalog:mongodb",
+      "to": "sink:files",
+      "type": "reach",
+      "risk": "high",
+      "exfil": true
+    },
+    {
+      "id": "reach:copilot-catalog:mongodb->network",
+      "from": "copilot-catalog:mongodb",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "high",
+      "exfil": true
+    },
+    {
+      "id": "reach:copilot-catalog:sentry->network",
+      "from": "copilot-catalog:sentry",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:copilot-catalog:datadog->network",
+      "from": "copilot-catalog:datadog",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:googledrive->network",
+      "from": "perplexity-catalog:googledrive",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:gmail->network",
+      "from": "perplexity-catalog:gmail",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:notion->network",
+      "from": "perplexity-catalog:notion",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:github->network",
+      "from": "perplexity-catalog:github",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:dropbox->network",
+      "from": "perplexity-catalog:dropbox",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:sharepoint->network",
+      "from": "perplexity-catalog:sharepoint",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:outlook->network",
+      "from": "perplexity-catalog:outlook",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    },
+    {
+      "id": "reach:perplexity-catalog:slack->network",
+      "from": "perplexity-catalog:slack",
+      "to": "sink:network",
+      "type": "reach",
+      "risk": "medium",
+      "exfil": false
+    }
+  ],
+  "stats": {
+    "claudeConnectors": 0,
+    "claudeCatalog": 25,
+    "chatgptConnectors": 0,
+    "chatgptCatalog": 19,
+    "chatgptInstalled": false,
+    "risk": {
+      "low": 12,
+      "medium": 36,
+      "high": 10,
+      "critical": 2
+    },
+    "atRisk": 0,
+    "mcpServers": 0,
+    "claudePlugins": 0,
+    "enabledPlugins": 0,
+    "apiKeys": 0,
+    "processes": 2,
+    "localLlms": 2,
+    "connectors": 0,
+    "extensions": 1
+  },
+  "classification": {
+    "highest_sensitivity": 0,
+    "highest_sensitivity_label": "PUBLIC",
+    "data_classes_present": [],
+    "by_node": {},
+    "risk_summary": {
+      "pii_exposure_count": 0,
+      "financial_exposure_count": 0,
+      "credential_exposure_count": 0,
+      "unclassified_count": 0
+    },
+    "compliance_flags": {
+      "hipaa_relevant": false,
+      "pci_relevant": false,
+      "gdpr_relevant": false,
+      "sox_relevant": false
+    },
+    "classified_at": "2026-10-05T17:47:20.294Z"
+  }
+}

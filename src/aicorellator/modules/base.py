@@ -5,12 +5,12 @@ from aicorellator.models import ScanResult
 
 class ScannerModule(ABC):
     """
-    Базовый интерфейс модуля сканирования.
+    Base interface for a scanner module.
 
-    Каждый модуль:
-      1. Запускает свой внешний инструмент (subprocess, API, etc.)
-      2. Парсит его вывод
-      3. Нормализует в ScanResult (Node/Edge/Provenance)
+    Each module:
+      1. Runs its external tool (subprocess, API, etc.)
+      2. Parses its output
+      3. Normalizes it into a ScanResult (Node/Edge/Provenance)
     """
 
     name: str = "unnamed"
@@ -19,9 +19,9 @@ class ScannerModule(ABC):
 
     @abstractmethod
     def run(self) -> ScanResult:
-        """Запускает инструмент и возвращает нормализованный результат."""
+        """Runs the tool and returns the normalized result."""
         ...
 
     def is_available(self) -> bool:
-        """Проверка, что инструмент установлен и доступен."""
+        """Checks that the tool is installed and available."""
         return True

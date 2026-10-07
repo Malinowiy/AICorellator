@@ -1,13 +1,31 @@
 # scripts/run_judge.py
 import json
+import sys
 from pathlib import Path
+
+import yaml
+
 from aicorellator.models import Node, Edge, Provenance
 from aicorellator.analysis.serializer import serialize_graph
 from aicorellator.analysis.llm_judge import judge
 
-scan_dir = sorted((Path.home() / ".aicorellator" / "scans").iterdir())[-1]
+# --- Locate latest scan ---
+scans_dir = Path.home() / ".aicorellator" / "scans"
+if not scans_dir.is_dir():
+    sys.exit(f"error: {scans_dir} not found - run a scan first")
+scan_dirs = sorted(p for p in scans_dir.iterdir() if p.is_dir())
+if not scan_dirs:
+    sys.exit(f"error: no scans in {scans_dir}")
+scan_dir = scan_dirs[-1]
 
-# --- Загрузка узлов ---
+# --- Load question template ---
+question_path = Path(__file__).resolve().parents[1] / "questions" / "q1_exfil.yaml"
+if not question_path.is_file():
+    sys.exit(f"error: question file not found: {question_path}")
+with question_path.open() as f:
+    question = yaml.safe_load(f)
+
+# --- Load nodes ---
 nodes = []
 with (scan_dir / "nodes.jsonl").open() as f:
     for line in f:
@@ -15,7 +33,7 @@ with (scan_dir / "nodes.jsonl").open() as f:
         d["provenance"] = [Provenance(**p) for p in d["provenance"]]
         nodes.append(Node(**d))
 
-# --- Загрузка рёбер ---
+# --- Load edges ---
 edges = []
 with (scan_dir / "edges.jsonl").open() as f:
     for line in f:
@@ -23,27 +41,22 @@ with (scan_dir / "edges.jsonl").open() as f:
         d["provenance"] = [Provenance(**p) for p in d["provenance"]]
         edges.append(Edge(**d))
 
-# --- Сериализация ---
+# --- Serialize per question slice ---
+slice_cfg = question.get("slice", {})
 graph_text = serialize_graph(
     nodes, edges,
-    include_kinds=["agent", "tool", "sink", "credential"],
-    include_edge_kinds=["has_access_to", "provides_tool", "uses_client", "uses_model"],
-    max_nodes=30,
+    include_kinds=slice_cfg.get("include_nodes"),
+    include_edge_kinds=slice_cfg.get("include_edges"),
+    max_nodes=slice_cfg.get("max_nodes", 200),
 )
 
 print(graph_text)
 print("---")
 
-PROMPT = """
-You are analyzing an AI infrastructure graph for exfiltration risks.
+# --- Run judge ---
+result = judge(graph_text, question["prompt"], edges)
 
-GRAPH:
-{graph_text}
+if result.get("parse_error"):
+    print(f"[judge] WARNING: {result['parse_error']}", file=sys.stderr)
 
-TASK: Find chains where a tool can move data to an external sink.
-Return JSON: {{"chains": [{{"chain": ["tool_id", "has_access_to", "sink_id"], "reasoning": "...", "confidence": 0.0}}]}}
-If none, return {{"chains": []}}.
-"""
-
-findings = judge(graph_text, PROMPT, edges)
-print(json.dumps(findings, indent=2, ensure_ascii=False))
+print(json.dumps(result, indent=2, ensure_ascii=False))

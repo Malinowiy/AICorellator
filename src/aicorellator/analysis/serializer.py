@@ -10,13 +10,13 @@ def serialize_graph(
     max_nodes: int = 200,
 ) -> str:
     """
-    Превращает граф в текстовое представление для LLM.
+    Converts the graph into a text representation for an LLM.
 
-    include_kinds: если задано — только узлы этих типов
-    include_edge_kinds: если задано — только рёбра этих типов
-    max_nodes: защита от переполнения контекста
+    include_kinds: if set, only nodes of these kinds are included
+    include_edge_kinds: if set, only edges of these kinds are included
+    max_nodes: guard against context overflow
     """
-    # Фильтрация узлов
+    # Filter nodes
     if include_kinds:
         nodes = [n for n in nodes if n.kind in include_kinds]
     if max_nodes and len(nodes) > max_nodes:
@@ -24,7 +24,7 @@ def serialize_graph(
 
     node_ids = {n.id for n in nodes}
 
-    # Фильтрация рёбер: оба конца должны быть в отфильтрованных узлах
+    # Filter edges: both endpoints must be among the filtered nodes
     if include_edge_kinds:
         edges = [e for e in edges if e.kind in include_edge_kinds]
     edges = [
@@ -34,13 +34,13 @@ def serialize_graph(
 
     lines = []
 
-    # Секция NODES
+    # NODES section
     lines.append("NODES:")
     for n in nodes:
         attrs = _format_attrs(n)
         lines.append(f"- [{n.id}] ({n.kind}) {n.name}{attrs}")
 
-    # Секция EDGES
+    # EDGES section
     lines.append("")
     lines.append("EDGES:")
     for e in edges:
@@ -51,7 +51,7 @@ def serialize_graph(
 
 
 def _format_attrs(node: Node) -> str:
-    """Извлекает только значимые атрибуты, не весь словарь."""
+    """Extracts only the significant attributes, not the whole dict."""
     parts = []
     a = node.attributes or {}
 

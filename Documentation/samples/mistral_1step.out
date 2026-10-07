@@ -1,0 +1,312 @@
+AICorellator/src/scripts/run_judge.py
+NODES:
+- [node:claude-desktop] (agent) Claude provider=Claude
+- [node:chatgpt] (agent) ChatGPT provider=OpenAI
+- [node:copilot] (agent) GitHub Copilot provider=GitHub Copilot
+- [node:perplexity] (agent) Perplexity provider=Perplexity
+- [claude-catalog:github] (tool) GitHub provider=GitHub, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [claude-catalog:gmail] (tool) Gmail provider=Gmail, risk=high, caps=[read,write,network], sensitivity=RESTRICTED
+- [claude-catalog:googlecalendar] (tool) Google Calendar provider=Google Calendar, risk=medium, caps=[write,network], sensitivity=PUBLIC
+- [claude-catalog:googledrive] (tool) Google Drive provider=Google Drive, risk=high, caps=[read,write,network], sensitivity=RESTRICTED
+- [claude-catalog:googledocs] (tool) Google Docs provider=Google Docs, risk=medium, caps=[write,network], sensitivity=PUBLIC
+- [claude-catalog:googlesheets] (tool) Google Sheets provider=Google Sheets, risk=high, caps=[read,write,network], sensitivity=PUBLIC
+- [claude-catalog:slack] (tool) Slack provider=Slack, risk=high, caps=[read,write,network], sensitivity=RESTRICTED
+- [claude-catalog:notion] (tool) Notion provider=Notion, risk=high, caps=[read,write,network], sensitivity=RESTRICTED
+- [claude-catalog:linear] (tool) Linear provider=Linear, risk=low, caps=[network], sensitivity=INTERNAL
+- [claude-catalog:jira] (tool) Jira provider=Jira, risk=medium, caps=[write,network], sensitivity=INTERNAL
+- [claude-catalog:asana] (tool) Asana provider=Asana, risk=low, caps=[network], sensitivity=PUBLIC
+- [claude-catalog:dropbox] (tool) Dropbox provider=Dropbox, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [claude-catalog:box] (tool) Box provider=Box, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [claude-catalog:hubspot] (tool) HubSpot provider=HubSpot, risk=low, caps=[network], sensitivity=RESTRICTED
+- [claude-catalog:zendesk] (tool) Zendesk provider=Zendesk, risk=low, caps=[network], sensitivity=PUBLIC
+- [claude-catalog:trello] (tool) Trello provider=Trello, risk=low, caps=[network], sensitivity=PUBLIC
+- [claude-catalog:airtable] (tool) Airtable provider=Airtable, risk=high, caps=[read,write,network], sensitivity=PUBLIC
+- [claude-catalog:figma] (tool) Figma provider=Figma, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [claude-catalog:zoom] (tool) Zoom provider=Zoom, risk=medium, caps=[write,network], sensitivity=PUBLIC
+- [claude-catalog:controlchrome] (tool) Control Chrome provider=Control Chrome, risk=critical, caps=[exec,network], sensitivity=PUBLIC
+- [claude-catalog:claudeinchrome] (tool) Claude in Chrome provider=Claude in Chrome, risk=critical, caps=[exec,network], sensitivity=PUBLIC
+- [claude-catalog:controlyourmac] (tool) Control your Mac provider=Control your Mac, risk=high, caps=[exec], sensitivity=PUBLIC
+- [claude-catalog:readandsendimessages] (tool) Read and Send iMessages provider=Read and Send iMessages, risk=high, caps=[read,write,network], sensitivity=PUBLIC
+- [claude-catalog:filesystem] (tool) Filesystem provider=Filesystem, risk=medium, caps=[read,write], sensitivity=PUBLIC
+- [claude-catalog:airbnbsearchlistings] (tool) Airbnb Search & Listings provider=Airbnb Search & Listings, risk=low, caps=[read], sensitivity=PUBLIC
+- [chatgpt-catalog:googledrive] (tool) Google Drive provider=Google Drive, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [chatgpt-catalog:gmail] (tool) Gmail provider=Gmail, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [chatgpt-catalog:googlecalendar] (tool) Google Calendar provider=Google Calendar, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:onedrive] (tool) OneDrive provider=OneDrive, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:sharepoint] (tool) SharePoint provider=SharePoint, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:outlook] (tool) Outlook provider=Outlook, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:microsoftteams] (tool) Microsoft Teams provider=Microsoft Teams, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:dropbox] (tool) Dropbox provider=Dropbox, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:box] (tool) Box provider=Box, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:github] (tool) GitHub provider=GitHub, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [chatgpt-catalog:gitlab] (tool) GitLab provider=GitLab, risk=high, caps=[read,write,network], sensitivity=RESTRICTED
+- [chatgpt-catalog:linear] (tool) Linear provider=Linear, risk=medium, caps=[read,network], sensitivity=INTERNAL
+- [chatgpt-catalog:asana] (tool) Asana provider=Asana, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:clickup] (tool) ClickUp provider=ClickUp, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:hubspot] (tool) HubSpot provider=HubSpot, risk=low, caps=[network], sensitivity=RESTRICTED
+- [chatgpt-catalog:notion] (tool) Notion provider=Notion, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [chatgpt-catalog:canva] (tool) Canva provider=Canva, risk=low, caps=[network], sensitivity=PUBLIC
+- [chatgpt-catalog:figma] (tool) Figma provider=Figma, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [chatgpt-catalog:custommcpconnector] (tool) Custom MCP Connector provider=Custom MCP Connector, risk=medium, caps=[write,network], sensitivity=PUBLIC
+- [copilot-catalog:github] (tool) GitHub provider=GitHub, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [copilot-catalog:docker] (tool) Docker provider=Docker, risk=low, caps=[network], sensitivity=PUBLIC
+- [copilot-catalog:mongodb] (tool) MongoDB provider=MongoDB, risk=high, caps=[read,write,network], sensitivity=RESTRICTED
+- [copilot-catalog:sentry] (tool) Sentry provider=Sentry, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [copilot-catalog:stripe] (tool) Stripe provider=Stripe, risk=low, caps=[network], sensitivity=CRITICAL
+- [copilot-catalog:datadog] (tool) Datadog provider=Datadog, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [copilot-catalog:azure] (tool) Azure provider=Azure, risk=low, caps=[network], sensitivity=PUBLIC
+- [copilot-catalog:atlassian] (tool) Atlassian provider=Atlassian, risk=low, caps=[network], sensitivity=INTERNAL
+- [perplexity-catalog:googledrive] (tool) Google Drive provider=Google Drive, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [perplexity-catalog:gmail] (tool) Gmail provider=Gmail, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [perplexity-catalog:notion] (tool) Notion provider=Notion, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [perplexity-catalog:github] (tool) GitHub provider=GitHub, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [perplexity-catalog:dropbox] (tool) Dropbox provider=Dropbox, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [perplexity-catalog:sharepoint] (tool) SharePoint provider=SharePoint, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [perplexity-catalog:outlook] (tool) Outlook provider=Outlook, risk=medium, caps=[read,network], sensitivity=PUBLIC
+- [perplexity-catalog:slack] (tool) Slack provider=Slack, risk=medium, caps=[read,network], sensitivity=RESTRICTED
+- [ext:vscode:saoudrizwan.claude-dev] (tool) claude-dev provider=saoudrizwan
+- [sink:files] (sink) Your Files
+- [sink:network] (sink) The Internet
+- [sink:machine] (sink) Your Machine
+
+EDGES:
+- claude-catalog:github --provides_tool--> node:claude-desktop
+- claude-catalog:gmail --provides_tool--> node:claude-desktop
+- claude-catalog:googlecalendar --provides_tool--> node:claude-desktop
+- claude-catalog:googledrive --provides_tool--> node:claude-desktop
+- claude-catalog:googledocs --provides_tool--> node:claude-desktop
+- claude-catalog:googlesheets --provides_tool--> node:claude-desktop
+- claude-catalog:slack --provides_tool--> node:claude-desktop
+- claude-catalog:notion --provides_tool--> node:claude-desktop
+- claude-catalog:linear --provides_tool--> node:claude-desktop
+- claude-catalog:jira --provides_tool--> node:claude-desktop
+- claude-catalog:asana --provides_tool--> node:claude-desktop
+- claude-catalog:dropbox --provides_tool--> node:claude-desktop
+- claude-catalog:box --provides_tool--> node:claude-desktop
+- claude-catalog:hubspot --provides_tool--> node:claude-desktop
+- claude-catalog:zendesk --provides_tool--> node:claude-desktop
+- claude-catalog:trello --provides_tool--> node:claude-desktop
+- claude-catalog:airtable --provides_tool--> node:claude-desktop
+- claude-catalog:figma --provides_tool--> node:claude-desktop
+- claude-catalog:zoom --provides_tool--> node:claude-desktop
+- claude-catalog:controlchrome --provides_tool--> node:claude-desktop
+- claude-catalog:claudeinchrome --provides_tool--> node:claude-desktop
+- claude-catalog:controlyourmac --provides_tool--> node:claude-desktop
+- claude-catalog:readandsendimessages --provides_tool--> node:claude-desktop
+- claude-catalog:filesystem --provides_tool--> node:claude-desktop
+- claude-catalog:airbnbsearchlistings --provides_tool--> node:claude-desktop
+- chatgpt-catalog:googledrive --provides_tool--> node:chatgpt
+- chatgpt-catalog:gmail --provides_tool--> node:chatgpt
+- chatgpt-catalog:googlecalendar --provides_tool--> node:chatgpt
+- chatgpt-catalog:onedrive --provides_tool--> node:chatgpt
+- chatgpt-catalog:sharepoint --provides_tool--> node:chatgpt
+- chatgpt-catalog:outlook --provides_tool--> node:chatgpt
+- chatgpt-catalog:microsoftteams --provides_tool--> node:chatgpt
+- chatgpt-catalog:dropbox --provides_tool--> node:chatgpt
+- chatgpt-catalog:box --provides_tool--> node:chatgpt
+- chatgpt-catalog:github --provides_tool--> node:chatgpt
+- chatgpt-catalog:gitlab --provides_tool--> node:chatgpt
+- chatgpt-catalog:linear --provides_tool--> node:chatgpt
+- chatgpt-catalog:asana --provides_tool--> node:chatgpt
+- chatgpt-catalog:clickup --provides_tool--> node:chatgpt
+- chatgpt-catalog:hubspot --provides_tool--> node:chatgpt
+- chatgpt-catalog:notion --provides_tool--> node:chatgpt
+- chatgpt-catalog:canva --provides_tool--> node:chatgpt
+- chatgpt-catalog:figma --provides_tool--> node:chatgpt
+- chatgpt-catalog:custommcpconnector --provides_tool--> node:chatgpt
+- copilot-catalog:github --provides_tool--> node:copilot
+- copilot-catalog:docker --provides_tool--> node:copilot
+- copilot-catalog:mongodb --provides_tool--> node:copilot
+- copilot-catalog:sentry --provides_tool--> node:copilot
+- copilot-catalog:stripe --provides_tool--> node:copilot
+- copilot-catalog:datadog --provides_tool--> node:copilot
+- copilot-catalog:azure --provides_tool--> node:copilot
+- copilot-catalog:atlassian --provides_tool--> node:copilot
+- perplexity-catalog:googledrive --provides_tool--> node:perplexity
+- perplexity-catalog:gmail --provides_tool--> node:perplexity
+- perplexity-catalog:notion --provides_tool--> node:perplexity
+- perplexity-catalog:github --provides_tool--> node:perplexity
+- perplexity-catalog:dropbox --provides_tool--> node:perplexity
+- perplexity-catalog:sharepoint --provides_tool--> node:perplexity
+- perplexity-catalog:outlook --provides_tool--> node:perplexity
+- perplexity-catalog:slack --provides_tool--> node:perplexity
+- claude-catalog:github --has_access_to--> sink:network (risk=medium)
+- claude-catalog:gmail --has_access_to--> sink:network (risk=high)
+- claude-catalog:googlecalendar --has_access_to--> sink:network (risk=medium)
+- claude-catalog:googledrive --has_access_to--> sink:network (risk=high)
+- claude-catalog:googledocs --has_access_to--> sink:network (risk=medium)
+- claude-catalog:googlesheets --has_access_to--> sink:network (risk=high)
+- claude-catalog:slack --has_access_to--> sink:network (risk=high)
+- claude-catalog:notion --has_access_to--> sink:network (risk=high)
+- claude-catalog:jira --has_access_to--> sink:network (risk=medium)
+- claude-catalog:dropbox --has_access_to--> sink:network (risk=medium)
+- claude-catalog:box --has_access_to--> sink:network (risk=medium)
+- claude-catalog:airtable --has_access_to--> sink:network (risk=high)
+- claude-catalog:figma --has_access_to--> sink:network (risk=medium)
+- claude-catalog:zoom --has_access_to--> sink:network (risk=medium)
+- claude-catalog:controlchrome --has_access_to--> sink:machine (risk=critical, exfil=true)
+- claude-catalog:controlchrome --has_access_to--> sink:files (risk=critical, exfil=true)
+- claude-catalog:controlchrome --has_access_to--> sink:network (risk=critical, exfil=true)
+- claude-catalog:claudeinchrome --has_access_to--> sink:machine (risk=critical, exfil=true)
+- claude-catalog:claudeinchrome --has_access_to--> sink:files (risk=critical, exfil=true)
+- claude-catalog:claudeinchrome --has_access_to--> sink:network (risk=critical, exfil=true)
+- claude-catalog:controlyourmac --has_access_to--> sink:machine (risk=high)
+- claude-catalog:controlyourmac --has_access_to--> sink:files (risk=high)
+- claude-catalog:readandsendimessages --has_access_to--> sink:network (risk=high)
+- claude-catalog:filesystem --has_access_to--> sink:files (risk=medium)
+- chatgpt-catalog:googledrive --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:gmail --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:googlecalendar --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:onedrive --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:sharepoint --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:outlook --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:microsoftteams --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:dropbox --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:box --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:github --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:gitlab --has_access_to--> sink:network (risk=high)
+- chatgpt-catalog:linear --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:asana --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:clickup --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:notion --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:figma --has_access_to--> sink:network (risk=medium)
+- chatgpt-catalog:custommcpconnector --has_access_to--> sink:network (risk=medium)
+- copilot-catalog:github --has_access_to--> sink:network (risk=medium)
+- copilot-catalog:mongodb --has_access_to--> sink:files (risk=high, exfil=true)
+- copilot-catalog:mongodb --has_access_to--> sink:network (risk=high, exfil=true)
+- copilot-catalog:sentry --has_access_to--> sink:network (risk=medium)
+- copilot-catalog:datadog --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:googledrive --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:gmail --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:notion --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:github --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:dropbox --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:sharepoint --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:outlook --has_access_to--> sink:network (risk=medium)
+- perplexity-catalog:slack --has_access_to--> sink:network (risk=medium)
+---
+{
+  "findings": [
+    {
+      "chain": [
+        "claude-catalog:controlchrome",
+        "has_access_to",
+        "sink:machine"
+      ],
+      "reasoning": "The tool 'Control Chrome' has critical risk and capabilities to execute commands and access the network. It explicitly has access to 'Your Machine' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:controlchrome",
+        "has_access_to",
+        "sink:files"
+      ],
+      "reasoning": "The tool 'Control Chrome' has critical risk and capabilities to execute commands and access the network. It explicitly has access to 'Your Files' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:controlchrome",
+        "has_access_to",
+        "sink:network"
+      ],
+      "reasoning": "The tool 'Control Chrome' has critical risk and capabilities to execute commands and access the network. It explicitly has access to 'The Internet' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:claudeinchrome",
+        "has_access_to",
+        "sink:machine"
+      ],
+      "reasoning": "The tool 'Claude in Chrome' has critical risk and capabilities to execute commands and access the network. It explicitly has access to 'Your Machine' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:claudeinchrome",
+        "has_access_to",
+        "sink:files"
+      ],
+      "reasoning": "The tool 'Claude in Chrome' has critical risk and capabilities to execute commands and access the network. It explicitly has access to 'Your Files' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:claudeinchrome",
+        "has_access_to",
+        "sink:network"
+      ],
+      "reasoning": "The tool 'Claude in Chrome' has critical risk and capabilities to execute commands and access the network. It explicitly has access to 'The Internet' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:controlyourmac",
+        "has_access_to",
+        "sink:machine"
+      ],
+      "reasoning": "The tool 'Control your Mac' has high risk and capabilities to execute commands. It explicitly has access to 'Your Machine' sink.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:controlyourmac",
+        "has_access_to",
+        "sink:files"
+      ],
+      "reasoning": "The tool 'Control your Mac' has high risk and capabilities to execute commands. It explicitly has access to 'Your Files' sink.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:readandsendimessages",
+        "has_access_to",
+        "sink:network"
+      ],
+      "reasoning": "The tool 'Read and Send iMessages' has high risk and capabilities to read, write, and access the network. It explicitly has access to 'The Internet' sink.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "claude-catalog:filesystem",
+        "has_access_to",
+        "sink:files"
+      ],
+      "reasoning": "The tool 'Filesystem' has medium risk and capabilities to read and write. It explicitly has access to 'Your Files' sink.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "copilot-catalog:mongodb",
+        "has_access_to",
+        "sink:files"
+      ],
+      "reasoning": "The tool 'MongoDB' has high risk and capabilities to read, write, and access the network. It explicitly has access to 'Your Files' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    },
+    {
+      "chain": [
+        "copilot-catalog:mongodb",
+        "has_access_to",
+        "sink:network"
+      ],
+      "reasoning": "The tool 'MongoDB' has high risk and capabilities to read, write, and access the network. It explicitly has access to 'The Internet' sink with exfiltration capability.",
+      "confidence": 1.0,
+      "verified": true
+    }
+  ],
+  "parse_error": null
+}

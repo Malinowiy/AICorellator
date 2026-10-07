@@ -5,6 +5,14 @@ A modular pipeline that correlates AI infrastructure scan data into exploitabili
 
 Built for both red and blue teams: fast profile for quick reconnaissance, deep profile for thorough audit with prioritized findings.
 
+**Current state: early alpha.**
+
+neuralscan - works locally
+agent-bom - TODO
+agent-audit-kit - TODO
+garak - TODO
+LLM evaluation - works locally
+
 ---
 
 ## What AICorellator is not

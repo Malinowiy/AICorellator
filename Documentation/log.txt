@@ -65,3 +65,14 @@ Raise max_tokens to 8192.
 Rewrite prompt: explicit chain shape (agent → tool → sink), include example, disable reasoning.
 Update verify_chain for 5-element chains (currently assumes 3).
 If reasoning still eats the budget — switch to non-reasoning model (qwen3-4b, llama-3.1-8b-instruct).
+
+Model comparison
+
+                    Qwen 3.6-35B-A3B (reasoning)	Mistral Small 3.2 24B (non-reasoning)
+Reasoning tokens	~2700	                        0
+Completion tokens	~2705	                        ~400
+Findings        	8	                            12
+Confidence range	0.90–0.95	                    1.0 (all)
+Coverage	        Only exfil=true tools	        exfil=true plus controlyourmac, readandsendimessages, filesystem
+Precision	High — focused on explicit exfil flags	High — includes medium-risk has_access_to edges
+Speed	            Slow (reasoning overhead)	    Medium
