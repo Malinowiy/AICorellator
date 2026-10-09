@@ -241,22 +241,6 @@ Content-hash of nodes → findings reused if hash matches. Only changed nodes ar
 
 ---
 
-## What Was Discarded
-
-| Discarded | Reason |
-|---|---|
-| Versioning / snapshots | POC model, not for continuous |
-| Raw data storage | Debug mode only |
-| Dynamic testing in the base version | Architectural option |
-| Regex for chain discovery | Replaced by LLM |
-| CVE scanners (Trivy/Grype) | Wrong class |
-| agent-bom | SBOM scanner, no AI-specific links |
-| Snyk, Cisco | Explicitly excluded |
-| SIEM approach | Redundant |
-| Coverage as a goal | Not a success metric |
-
----
-
 ## Current State
 
 **Early alpha.** Development in staging.
