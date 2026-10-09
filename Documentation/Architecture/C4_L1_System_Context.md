@@ -10,7 +10,7 @@
 flowchart TB
     USER["<b>Security Analyst</b><br/>Runs scans, reviews chains"]
     AICO["<b>AICorellator</b><br/>Correlates AI infrastructure<br/>into attack chains"]
-    LLM["<b>Local LLM Runtime</b><br/>Ollama / vLLM"]
+    LLM["<b>Local LLM Runtime</b><br/>Ollama / vLLM / LMStudio"]
     SRC["<b>Target Sources</b><br/>Code, Docker images, K8s"]
     SCAN["<b>External Scanners</b><br/>Network services<br/>AAK, LLM-scanner, MCP-scanner"]
 

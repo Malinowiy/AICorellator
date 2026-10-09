@@ -67,7 +67,7 @@ flowchart TB
     end
 
     subgraph OUT["Reports"]
-        CUR[current.pdf] --> ARCH["&lt;timestamp&gt;.pdf"]
+        CUR[current/] --> ARCH["&lt;timestamp&gt;/"]
     end
 
     P1 --> P2
@@ -85,7 +85,7 @@ Task queue. Static workers — AAK (findings on files: taint, MCP config, IPI), 
 Graph → serialize to text → LLM voting ensemble → chain + reasoning + confidence + voters. Tagging by AKC phases and OWASP Agentic (ASI01–ASI10). Status: `active` / `potential` / `stale`.
 
 **Reports.**
-`current.pdf` — current report. On graph mutation: `current.pdf` → `<timestamp>.pdf`, `report_fresh = false`. New report — on demand only.
+`current/` — current report bundle dir. On graph mutation: `current/` → `<timestamp>`, `report_fresh = false`. New report — on demand only.
 
 ### Multi-host
 
@@ -209,7 +209,7 @@ flowchart LR
 |---|---|---|
 | `phase1_done` | AST parser finished | Graph built, `report --fast` possible |
 | `scan_done` | All static workers finished | Graph enriched, `report --full` possible |
-| `report_fresh` | After report generation | `current.pdf` is current |
+| `report_fresh` | After report generation | `current/` is current |
 | `report_fresh = false` | On graph mutation | Graph moved ahead, report is stale |
 | `dynamic_enabled` | Architectural option | Dynamic workers enabled |
 
@@ -231,9 +231,9 @@ stateDiagram-v2
     Archived --> [*]
 ```
 
-- **Generation on demand only.** Slow (20–30 minutes), expensive in electricity.
+- **Generation on demand only.** Slow (20–30 minutes), expensive in resources.
 - **Two tiers:** `report --fast` (after Phase 1, partial) and `report --full` (after Phase 2).
-- **Archival:** `current.pdf` → `<timestamp>.pdf` on new generation.
+- **Archival:** `current/` → `<timestamp>/` on new generation.
 
 ### Re-runs
 

@@ -41,7 +41,7 @@ flowchart TB
 | **Graph Store** | Single source of truth. Live, mutable graph: nodes, edges, findings, hosts, state, task_state. | SQLite |
 | **Enrichment** | Task queue. Static workers (AAK, LLM-scanner, MCP-scanner) and dynamic workers (change-detectors). Enriches vertices with findings. | Python asyncio + network clients |
 | **Analysis** | LLM voting ensemble. Serializes graph to text, sends to local LLM, parses chains + reasoning + confidence. | Python + Ollama/vLLM client |
-| **Reporting** | Generates Markdown / JSON / SARIF. Manages `current.pdf` → `<timestamp>.pdf` archival. | Python |
+| **Reporting** | Generates report bundle dir. Manages `current/` → `<timestamp>/` archival. | Python |
 
 ---
 

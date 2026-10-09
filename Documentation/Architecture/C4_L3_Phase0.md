@@ -153,7 +153,7 @@ flowchart TB
 
 ### 8. Reports Repository
 
-**Responsibility:** Metadata about generated reports. The report file itself lives on disk (`current.pdf`, `<timestamp>.pdf`).
+**Responsibility:** Metadata about generated reports. The report file itself lives on disk (`current/`, `<timestamp>/`).
 
 **Interface:**
 
