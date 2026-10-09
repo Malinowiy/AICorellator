@@ -1,0 +1,1348 @@
+{
+  "tool": "AgentAuditKit",
+  "version": "0.6.17",
+  "summary": {
+    "critical": 1,
+    "high": 13,
+    "medium": 46,
+    "low": 0,
+    "info": 0,
+    "total": 60,
+    "reported": 60,
+    "minSeverity": "low",
+    "filesScanned": 401,
+    "rulesEvaluated": 383,
+    "scanDurationMs": 12576.9,
+    "scannerFailures": 0,
+    "complete": true
+  },
+  "findings": [
+    {
+      "ruleId": "AAK-SECRET-004",
+      "title": "Generic high-entropy secret",
+      "description": "A value assigned to a secret-like key has high Shannon entropy, indicating a likely credential or API key.",
+      "severity": "high",
+      "category": "secret-exposure",
+      "filePath": "finbot-ctf/finbot/static/js/web/main.js",
+      "lineNumber": 183,
+      "evidence": "passwordField = (high entropy value, Shannon entropy: 4.57)",
+      "remediation": "Move to environment variables or secrets manager.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-TOKEN-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-MCP-018",
+      "title": "Missing rate limiting on MCP endpoint",
+      "description": "An MCP server endpoint does not declare rate limiting. Unrestricted access allows credential stuffing and enumeration attacks.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/finbot/apps/admin/routes/api.py",
+      "lineNumber": 85,
+      "evidence": "MCP handler declared without rate-limit keyword anywhere in file",
+      "remediation": "Add per-IP and per-token rate limits. Reject bursts above the limit with 429.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP06:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-DOS-02"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/plugins/google_sheets_reporter/pytest_google_sheets.py",
+      "lineNumber": 62,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/plugins/google_sheets_reporter/pytest_google_sheets.py",
+      "lineNumber": 62,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/database/test_database_provider.py",
+      "lineNumber": 720,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/database/test_database_provider.py",
+      "lineNumber": 720,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_ollama_client.py",
+      "lineNumber": 1611,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_ollama_client.py",
+      "lineNumber": 1611,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_contextual_client.py",
+      "lineNumber": 1253,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_contextual_client.py",
+      "lineNumber": 1253,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_mock_client.py",
+      "lineNumber": 367,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_mock_client.py",
+      "lineNumber": 367,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_llm_client.py",
+      "lineNumber": 750,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_llm_client.py",
+      "lineNumber": 750,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_openai_client.py",
+      "lineNumber": 1250,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/llm/test_openai_client.py",
+      "lineNumber": 1250,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/auth/test_secure_session_management.py",
+      "lineNumber": 617,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/auth/test_secure_session_management.py",
+      "lineNumber": 617,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/ctf/test_event_driven_ctf_backend.py",
+      "lineNumber": 1581,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/ctf/test_event_driven_ctf_backend.py",
+      "lineNumber": 1581,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-001",
+      "title": "OAuth flow without PKCE",
+      "description": "An OAuth 2.1 client flow does not use PKCE. PKCE is mandatory for all MCP remote server clients per spec 2025-11-25, including confidential clients.",
+      "severity": "high",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/isolation/test_complete_user_isolation.py",
+      "lineNumber": 886,
+      "evidence": "OAuth authorize call without PKCE fields (code_verifier/code_challenge)",
+      "remediation": "Add a code_verifier/code_challenge pair to every authorization request. Use code_challenge_method=S256.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-06"
+      ]
+    },
+    {
+      "ruleId": "AAK-OAUTH-007",
+      "title": "OAuth flow does not set the RFC 8707 `resource` parameter (Resource Indicators)",
+      "description": "An OAuth 2.1 authorization/token flow \u2014 or an MCP client/server config that advertises OAuth 2.1 \u2014 builds authorization and/or token requests without the RFC 8707 `resource` parameter. The ratified MCP 2025-11-25 authorization spec requires MCP clients to send `resource` on both the authorization request and the token request, identifying the MCP server by its canonical URI, so the authorization server audience-binds the issued token. Without Resource Indicators the token is not bound to a specific MCP server, so a token minted for one server can be replayed at another (token replay / audience confusion) \u2014 the confused-deputy class OAuth 2.1 \u00a75.2 and the MCP spec's Access Token Privilege Restriction section forbid.",
+      "severity": "medium",
+      "category": "mcp-config",
+      "filePath": "finbot-ctf/tests/unit/isolation/test_complete_user_isolation.py",
+      "lineNumber": 886,
+      "evidence": "OAuth flow builds authorization/token requests without the RFC 8707 `resource` parameter (Resource Indicators) \u2014 issued tokens are not audience-bound to this MCP server (MCP 2025-11-25 auth spec)",
+      "remediation": "Set the `resource` parameter to the MCP server's canonical URI so issued tokens are audience-bound (RFC 8707, on both the authorization and token requests); reject tokens whose audience is not this server (validate the audience per RFC 8707 \u00a72 / RFC 9728 \u00a77.4).",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-AUTH-11"
+      ]
+    },
+    {
+      "ruleId": "AAK-HEALTHCARE-AI-004",
+      "title": "Healthcare context without explicit AI-disclosure to user",
+      "description": "Text mentions patient / clinical / mental-health / therapy / diagnosis but the tool never explicitly says the responder is an AI. Multiple 2026 state laws (TN, WA, UT) expect clear AI disclosure in clinical interactions.",
+      "severity": "medium",
+      "category": "legal-compliance",
+      "filePath": "finbot-ctf/finbot/ctf/definitions/challenges/policy_bypass/risk_downplay.yaml",
+      "lineNumber": null,
+      "evidence": "Conversational healthcare agent surface without explicit AI-disclosure string",
+      "remediation": "Add a visible 'You are talking to an AI; this is not medical advice and is not a substitute for licensed care' disclosure.",
+      "cveReferences": [],
+      "owaspMcpReferences": [],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": []
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/orchestrator.py",
+      "lineNumber": 431,
+      "evidence": "Tool function 'delegate_to_onboarding' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/orchestrator.py",
+      "lineNumber": 455,
+      "evidence": "Tool function 'delegate_to_invoice' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/orchestrator.py",
+      "lineNumber": 486,
+      "evidence": "Tool function 'delegate_to_fraud' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/orchestrator.py",
+      "lineNumber": 517,
+      "evidence": "Tool function 'delegate_to_payments' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/orchestrator.py",
+      "lineNumber": 547,
+      "evidence": "Tool function 'delegate_to_system_maintenance' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/orchestrator.py",
+      "lineNumber": 587,
+      "evidence": "Tool function 'delegate_to_communication' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/finstripe/server.py",
+      "lineNumber": 80,
+      "evidence": "Tool function 'create_transfer' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 52,
+      "evidence": "Tool function 'run_diagnostics' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 75,
+      "evidence": "Tool function 'manage_storage' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 98,
+      "evidence": "Tool function 'rotate_logs' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 122,
+      "evidence": "Tool function 'database_maintenance' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 147,
+      "evidence": "Tool function 'network_request' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 174,
+      "evidence": "Tool function 'read_config' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 197,
+      "evidence": "Tool function 'manage_users' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 222,
+      "evidence": "Tool function 'execute_script' logs caller-controlled parameter via logger.warning(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/findrive/server.py",
+      "lineNumber": 77,
+      "evidence": "Tool function 'upload_file' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/findrive/server.py",
+      "lineNumber": 163,
+      "evidence": "Tool function 'delete_file' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/payments.py",
+      "lineNumber": 316,
+      "evidence": "Tool function 'get_invoice_for_payment' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/payments.py",
+      "lineNumber": 336,
+      "evidence": "Tool function 'get_vendor_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/payments.py",
+      "lineNumber": 373,
+      "evidence": "Tool function 'get_vendor_payment_summary' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/payments.py",
+      "lineNumber": 402,
+      "evidence": "Tool function 'process_payment' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/onboarding.py",
+      "lineNumber": 284,
+      "evidence": "Tool function 'get_vendor_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/onboarding.py",
+      "lineNumber": 334,
+      "evidence": "Tool function 'update_vendor_status' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/fraud.py",
+      "lineNumber": 431,
+      "evidence": "Tool function 'get_vendor_risk_profile' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/fraud.py",
+      "lineNumber": 451,
+      "evidence": "Tool function 'get_invoice_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/fraud.py",
+      "lineNumber": 471,
+      "evidence": "Tool function 'get_vendor_invoices' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/fraud.py",
+      "lineNumber": 500,
+      "evidence": "Tool function 'update_vendor_risk' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/fraud.py",
+      "lineNumber": 560,
+      "evidence": "Tool function 'flag_invoice_for_review' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/communication.py",
+      "lineNumber": 271,
+      "evidence": "Tool function 'get_vendor_contact_info' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/communication.py",
+      "lineNumber": 281,
+      "evidence": "Tool function 'get_vendor_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/communication.py",
+      "lineNumber": 302,
+      "evidence": "Tool function 'get_invoice_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/invoice.py",
+      "lineNumber": 329,
+      "evidence": "Tool function 'get_invoice_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/invoice.py",
+      "lineNumber": 366,
+      "evidence": "Tool function 'update_invoice_status' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-LOGINJ-001",
+      "title": "MCP tool logs caller-controlled input without CRLF/ANSI sanitization",
+      "description": "A `@tool`-decorated function parameter flows into logger.info / print / sys.stdout.write / console.log without stripping control characters (\\r, \\n, \\x1b) first. CVE-2026-6494 (AAP MCP, CVSS 5.3 MEDIUM, CWE-117) lets an attacker forge log entries and inject ANSI escape sequences to socially engineer an operator.",
+      "severity": "medium",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/agents/specialized/invoice.py",
+      "lineNumber": 434,
+      "evidence": "Tool function 'get_vendor_details' logs caller-controlled parameter via logger.info(...) without CRLF/ANSI sanitization",
+      "remediation": "Strip \\r\\n\\x1b (or accept only printable ASCII) before logging anything derived from tool input. Prefer structured logging (JSON/logfmt) so log consumers aren't confused by forged lines.",
+      "cveReferences": [
+        "CVE-2026-6494"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-LOG-01"
+      ]
+    },
+    {
+      "ruleId": "AAK-IPI-WILD-CORPUS-001",
+      "title": "Indirect-prompt-injection wild payload checked into repo",
+      "description": "A source / config file (`.md`, `.txt`, `.yml`, `.yaml`, `.json`, `.py`) embeds a known wild IPI payload from the 2026-04-24 Help Net Security + Infosec Magazine catalogue. Common shapes: ignore-prior + exfil, system-role override, reveal-system-prompt, credential exfil via cURL, tool-call rerouting, delete-repository, admin role escalation, obfuscated prompt break, image-attached IPI, RAG-poisoned document. Refresh the corpus with `aak corpus update --ipi`.",
+      "severity": "high",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/systemutils/server.py",
+      "lineNumber": 8,
+      "evidence": "Wild IPI payload IPI-2026-04-WILD-06 (delete repository) \u2014 see https://www.helpnetsecurity.com/2026/04/24/indirect-prompt-injection-in-the-wild/",
+      "remediation": "Remove the payload from the file. If the file is intentionally an attack-corpus fixture, exclude it via `--ignore-paths`. The real risk is checked-in poisoned templates / system-prompt files / RAG seed corpora \u2014 those need to be sanitized at ingestion time, not at scan time.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-PROMPT-02"
+      ]
+    },
+    {
+      "ruleId": "AAK-IPI-WILD-CORPUS-001",
+      "title": "Indirect-prompt-injection wild payload checked into repo",
+      "description": "A source / config file (`.md`, `.txt`, `.yml`, `.yaml`, `.json`, `.py`) embeds a known wild IPI payload from the 2026-04-24 Help Net Security + Infosec Magazine catalogue. Common shapes: ignore-prior + exfil, system-role override, reveal-system-prompt, credential exfil via cURL, tool-call rerouting, delete-repository, admin role escalation, obfuscated prompt break, image-attached IPI, RAG-poisoned document. Refresh the corpus with `aak corpus update --ipi`.",
+      "severity": "high",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/ctf/detectors/primitives/pi_jb.py",
+      "lineNumber": 53,
+      "evidence": "Wild IPI payload IPI-2026-04-WILD-03 (reveal system prompt) \u2014 see https://www.helpnetsecurity.com/2026/04/24/indirect-prompt-injection-in-the-wild/",
+      "remediation": "Remove the payload from the file. If the file is intentionally an attack-corpus fixture, exclude it via `--ignore-paths`. The real risk is checked-in poisoned templates / system-prompt files / RAG seed corpora \u2014 those need to be sanitized at ingestion time, not at scan time.",
+      "cveReferences": [],
+      "owaspMcpReferences": [
+        "MCP01:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI03"
+      ],
+      "adversaReferences": [
+        "ADV-PROMPT-02"
+      ]
+    },
+    {
+      "ruleId": "AAK-LLM-SQL-RCE-001",
+      "title": "LLM-generated SQL executed on an RCE-capable database role",
+      "description": "An agent / LLM application feeds model-generated SQL into a database executor whose connection role holds code-execution or filesystem privileges, turning prompt-injected SQL into remote code execution. Two arms fire this rule: (a) an LLM-output value reaches a SQL-execution sink (`cursor.execute` / `conn.execute` / SQLAlchemy `text(...)` / a TS `.query()`/`.raw()` call) as the query itself \u2014 not as a bound parameter \u2014 with no allow-list or query-validation step; and (b) a DB connection string / role that grants the dangerous primitives (a superuser connection account, or a literal PostgreSQL `COPY ... FROM PROGRAM` / `pg_execute_server_program`, MySQL `FILE` / `INTO OUTFILE` / `LOAD_FILE`, or MS SQL `xp_cmdshell`) inside an LLM/agent context. CVE-2026-25879 is the documented instance: a text-to-SQL chat agent ran model output on a superuser connection and a prompt-injected `COPY ... FROM PROGRAM` produced a shell. CWE-94 (Code Injection) / CWE-89 (SQL Injection) chained to CWE-78 (OS Command Injection) through CWE-250 (Execution with Unnecessary Privileges). This is distinct from `AAK-TAINT-005`, where the tainted source is a tool *parameter* string-formatted into SQL rather than LLM output landing on an RCE-capable role.",
+      "severity": "critical",
+      "category": "taint-analysis",
+      "filePath": "finbot-ctf/finbot/mcp/servers/findrive/server.py",
+      "lineNumber": 45,
+      "evidence": "Database connection / role grants code-execution or filesystem privileges (`load_file(`) in an LLM/agent context. If model-generated SQL ever reaches this connection, the role turns SQL injection into RCE. Use a least-privilege, read-only role (CVE-2026-25879, CWE-250).",
+      "remediation": "Never execute LLM-generated SQL directly. Constrain the model to parameterised, allow-listed queries (validate with `sqlglot`/`sqlparse` and reject anything that is not a single read-only `SELECT` against an approved table set), and run every agent query on a dedicated least-privilege, read-only role that lacks `pg_execute_server_program` / `FILE` / `xp_cmdshell` and cannot `COPY ... FROM PROGRAM`. Treat the DB role as the last line of defence: even a perfect prompt filter must not sit in front of a superuser connection.",
+      "cveReferences": [
+        "CVE-2026-25879"
+      ],
+      "owaspMcpReferences": [
+        "MCP04:2025"
+      ],
+      "owaspAgenticReferences": [
+        "ASI02",
+        "ASI05"
+      ],
+      "adversaReferences": [
+        "ADV-INJECT-07"
+      ]
+    }
+  ]
+}

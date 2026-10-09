@@ -1,3 +1,10 @@
+> **Status: POC archived (2026-10-08).**
+> This branch contains the proof-of-concept. It demonstrated the viability of
+> the correlator approach but revealed architectural incompatibilities between
+> modules (NeuralScan, AAK, garak) and no path to scalability.
+> Development continues on branch `alpha`. This POC is preserved for
+> reference only.
+
 # AICorellator
 **AI Infrastructure Attack Surface Correlator**
 
@@ -113,6 +120,7 @@ flowchart TD
 | `credential` | Environment variable or secret visible to a tool | `AWS_SECRET`, `DB_URL` |
 | `process` | Running process on the host | LM Studio, Ollama daemon |
 | `sink` | Data destination reachable from a tool | `files`, `network`, `machine` |
+| `security_findings` | list[dict] | Findings from static analyzers (agent-audit-kit, garak) |
 
 **Edge kinds**
 
@@ -192,6 +200,7 @@ flowchart TD
 ```
 
 JSONL for nodes/edges/findings: append-friendly, streamable, diff-friendly. Raw tool outputs preserved for debugging and audit.
+
 
 ---
 
