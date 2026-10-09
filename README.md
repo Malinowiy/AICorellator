@@ -1,246 +1,275 @@
-> **Status: POC archived (2026-10-08).**
-> This branch contains the proof-of-concept. It demonstrated the viability of
-> the correlator approach but revealed architectural incompatibilities between
-> modules (NeuralScan, AAK, garak) and no path to scalability.
-> Development continues on branch `alpha`. This POC is preserved for
-> reference only.
-
 # AICorellator
-**AI Infrastructure Attack Surface Correlator**
 
-A modular pipeline that correlates AI infrastructure scan data into exploitability chains. It ingests output from discovery tools (NeuralScan, agent-bom, agent-audit-kit) and LLM behavioral scanners (garak), normalizes everything into a unified graph of nodes (LLM endpoints, MCP servers, tools, credentials, agents, processes, sinks) and edges (access, delegation, exposure, reach), then uses a voting ensemble of heterogeneous local LLMs to identify multi-hop attack chains that no single scanner can see.
+**AI Infrastructure Attack Surface Correlator** — a correlation tool for AI infrastructure that finds **compromise chains** in systems with AI components.
 
-Built for both red and blue teams: fast profile for quick reconnaissance, deep profile for thorough audit with prioritized findings.
-
-**Current state: early alpha.**
-
-neuralscan - works locally
-agent-bom - TODO
-agent-audit-kit - TODO
-garak - TODO
-LLM evaluation - works locally
+Not a CVE scanner. Not SAST. Not a runtime IDS. The goal is to build a graph of AI tool interactions (agents, LLMs, MCP servers, tools, sinks), enrich its vertices with scanner data, and **evaluate chain exploitability entirely through LLMs**.
 
 ---
 
-## What AICorellator is not
+## What We Look For
 
-**Not an external scanner.** AICorellator does not scan networks, hosts, or services by itself. It consumes output from discovery tools that already ran. If you need to find what is running on a remote host, you use NeuralScan, AASM, or scout-ai first — AICorellator works with their results, not instead of them.
+A chain in which untrusted input reaches a dangerous action through AI components:
 
-**Not a replacement for SAST, DAST, or SCA.** It does not analyze source code, does not fuzz binaries, and does not check dependencies against CVE databases. Those are inputs. AICorellator correlates their findings with the AI infrastructure layer — MCP servers, tools, credentials, LLM endpoints, agents, and sinks.
+```mermaid
+flowchart LR
+    EP[entry_point] --> AG[agent]
+    AG --> LLM[llm_endpoint]
+    LLM --> MCP[mcp_server]
+    MCP --> T[tool]
+    T --> S[sink]
+```
 
-**Not a runtime monitor.** It does not intercept traffic between an agent and an MCP server in real time. It operates on snapshots. If you need runtime blocking or live proxy inspection, that is a different class of tool.
-
-**Not a replacement for human judgment.** It produces candidate chains, not verdicts. Every finding carries provenance and a chain that can be verified. The final decision — whether a chain is exploitable in your specific environment — remains with the analyst.
-
-**No external API calls for analysis.** All correlation runs on local LLMs via Ollama or vLLM. No data leaves the machine during the analysis phase.
+Each node alone is legitimate. The chain is not.
 
 ---
 
-## Network scanning: current scope and roadmap
+## Key Principles
 
-AICorellator is **local-first**. The current design assumes access to the host where AI infrastructure runs — configuration files, running processes, local endpoints. This covers the most common case: auditing your own deployment, or post-exploitation reconnaissance after initial access has been obtained by another team.
-
-**Network scanning is not in the first iteration.** The reasons are deliberate:
-
-- **Discovery of remote AI infrastructure is a separate problem.** Tools like AASM and scout-ai already solve it. Duplicating that logic inside AICorellator would add complexity without adding value.
-- **The graph model is already network-agnostic.** Nodes have a `source` attribute (`local` or `network`) and a `host` attribute. When network discovery is added, the graph schema does not change — only the discovery module.
-- **Local-first keeps the attack surface of the tool itself minimal.** No listening ports, no credentials for remote hosts, no agent deployed on target machines. This is a deliberate security trade-off: the tool that audits AI infrastructure should not itself become a target.
-
-When network scanning is added, it will be as a separate discovery module that feeds into the same normalization layer. The pipeline does not change. Profiles do not change. Findings do not change. Only the input source changes.
-
-**Priority for network scanning is low** because the primary use cases — internal audit and post-exploitation reconnaissance — are already covered by local discovery. Network scanning is a convenience, not a requirement.
+| Principle | Meaning |
+|---|---|
+| **Graph is alive** | Single, mutable, no versioning. Nodes are added, enriched, marked `stale`. |
+| **SQLite is the store** | No alternatives. Cheaper mutations, faster queries, no separate service. |
+| **Scanners run on vertices** | Task queue. Each vertex → task. Workers run asynchronously. |
+| **Staleness via `confidence`** | Float, not a boolean flag. A node not confirmed by dynamics loses confidence gradually. |
+| **Chain evaluation is LLM-only** | No regex. The LLM receives the graph as text and returns chain + reasoning. |
+| **Reports on demand** | Not automatic. A full run takes 20–30 minutes, expensive in electricity. |
+| **Multi-host via Agent + Core** | One Agent per node. Three delivery adapters: Swarm, K8s, standalone. |
 
 ---
 
 ## Architecture
 
-### Design Principles
-
-1. **Stateless core, filesystem as storage.** No database. Each scan is an immutable snapshot written as JSON/JSONL to a timestamped directory. History is a list of snapshots. Diffing snapshots reveals changes over time.
-2. **Normalize on input, not on output.** Every external tool emits its own JSON schema. AICorellator never works with those schemas directly. Each tool has a dedicated normalizer that converts its output into the internal `Node`/`Edge`/`Provenance` model. The correlator only sees the internal model.
-3. **Graph is the source of truth.** Nodes are entities. Edges are relationships. Findings are not stored as facts — they are derived from graph traversal and LLM analysis.
-4. **Provenance everywhere.** Every node, edge, and finding carries provenance: which tool reported it, when, and with what evidence. Without provenance, false positives cannot be debugged.
-5. **Configurable analytical layer.** The same graph can be analyzed in different modes. Red team needs speed and recall. Blue team needs depth and prioritization. The analysis layer is driven by profiles, not hardcoded logic.
-
 ### Pipeline
 
 ```mermaid
-flowchart TD
-    subgraph DISCOVERY
-        N[NeuralScan<br/>LLM endpoints, MCP servers,<br/>agents, sinks]
-        A[agent-bom<br/>packages, CVEs, credentials]
-        K[agent-audit-kit<br/>tool poisoning, hidden instructions]
-        G[garak<br/>model behavior under injection]
+flowchart TB
+    subgraph P1["Phase 1 — Graph Construction"]
+        SRC[Sources: code, configs] --> AST[AST parser TSA / SCIP]
+        AST --> G[AI tool interaction graph]
     end
 
-    subgraph NORMALIZATION
-        NR[Raw JSON → Node / Edge / Provenance<br/>Canonical IDs for deduplication]
+    subgraph P2["Phase 2 — Vertex Enrichment (async)"]
+        Q[Task queue]
+        Q --> W1[AAK: taint, MCP config, IPI]
+        Q --> W2[LLM-scanner: model, provider]
+        Q --> W3[MCP-scanner: tool schema]
+        Q --> WD[Dynamic workers: change-detectors]
+        W1 --> EN[Node enrichment: findings + attributes]
+        W2 --> EN
+        W3 --> EN
+        WD --> EN
     end
 
-    subgraph GRAPH[GRAPH CONSTRUCTION]
-        GC[Merge by canonical ID<br/>Build edges<br/>Unified attack surface graph]
+    subgraph P3["Phase 3 — Chain Discovery & Evaluation (LLM-only)"]
+        SER[Serialize graph to text] --> LLM[LLM voting ensemble]
+        LLM --> CH[chain + reasoning + confidence + voters]
+        CH --> TAG[Tagging: AKC phases + OWASP Agentic]
     end
 
-    subgraph ANALYSIS[ANALYSIS · configurable]
-        SL[Slice graph per question]
-        SE[Serialize to text]
-        LLM[Run N heterogeneous LLMs]
-        VT[Canonicalize + vote + verify]
-        JD[Optional judge model]
+    subgraph OUT["Reports"]
+        CUR[current.pdf] --> ARCH["&lt;timestamp&gt;.pdf"]
     end
 
-    subgraph OUTPUT
-        O[Findings: chain, reasoning,<br/>confidence, voters]
-    end
-
-    N --> NR
-    A --> NR
-    K --> NR
-    G --> NR
-    NR --> GC
-    GC --> SL
-    SL --> SE
-    SE --> LLM
-    LLM --> VT
-    VT --> JD
-    JD --> O
-    VT --> O
+    P1 --> P2
+    P2 --> P3
+    P3 --> OUT
 ```
 
-### Data Model
+**Phase 1 — Graph Construction.**
+Sources (code, configs) → AST parser (TSA/SCIP) → AI tool interaction graph. Nodes: `agent`, `llm_endpoint`, `mcp_server`, `tool`, `credential`, `sink`, `entry_point`. Edges: `uses_model`, `provides_tool`, `delegates_to`, `has_access_to`, `reaches_sink`.
 
-**Node kinds**
+**Phase 2 — Vertex Enrichment (async).**
+Task queue. Static workers — AAK (findings on files: taint, MCP config, IPI), LLM-scanner (model, provider, endpoint), MCP-scanner (tool schema, capabilities). Dynamic workers (architectural option) — change-detectors that add new nodes/edges. Each result enriches a node (findings + attributes). Counters: `static.active_count`, `dynamic.last_completed_at`.
 
-| Kind | Description | Example |
-|---|---|---|
-| `agent` | AI client or orchestrator | Claude Desktop, ChatGPT, Copilot, Perplexity |
-| `llm_endpoint` | Running LLM server | Ollama on `:11434`, vLLM on `:8000` |
-| `mcp_server` | MCP server process | `finbot-tools`, stdio or HTTP |
-| `tool` | Connector or extension exposed to an agent | GitHub connector, filesystem extension |
-| `credential` | Environment variable or secret visible to a tool | `AWS_SECRET`, `DB_URL` |
-| `process` | Running process on the host | LM Studio, Ollama daemon |
-| `sink` | Data destination reachable from a tool | `files`, `network`, `machine` |
-| `security_findings` | list[dict] | Findings from static analyzers (agent-audit-kit, garak) |
+**Phase 3 — Chain Discovery and Evaluation (LLM-only).**
+Graph → serialize to text → LLM voting ensemble → chain + reasoning + confidence + voters. Tagging by AKC phases and OWASP Agentic (ASI01–ASI10). Status: `active` / `potential` / `stale`.
 
-**Edge kinds**
+**Reports.**
+`current.pdf` — current report. On graph mutation: `current.pdf` → `<timestamp>.pdf`, `report_fresh = false`. New report — on demand only.
 
-| Kind | Description | Example |
-|---|---|---|
-| `uses_client` | Agent connects to a hub or another agent | Claude → AI hub |
-| `provides_tool` | Server or agent exposes a tool | MCP server → `read_file` |
-| `has_access_to` | Tool can reach a credential or sink | `read_file` → `files` sink |
-| `delegates_to` | Agent delegates to another agent | Invoice agent → Payment agent |
-| `uses_model` | Agent or tool uses an LLM endpoint | Invoice agent → Ollama `:11434` |
-| `runs_on` | Node is hosted on a process or host | MCP server → host process |
+### Multi-host
 
-**Scan** — immutable snapshot of one pipeline run.
+```mermaid
+flowchart TB
+    CORE[AICorellator Core<br/>SQLite + graph + LLM analysis + aggregation]
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | string | Timestamp, e.g. `20261005_143052` |
-| `host` | string | `localhost` \| IP \| domain |
-| `mode` | string | `local` \| `network` |
-| `tools_used` | list | `["neuralscan", "agent-bom", ...]` |
-| `nodes` | list[Node] | Entities |
-| `edges` | list[Edge] | Relationships |
-| `findings` | list[Finding] | Derived chains |
+    subgraph A1["Node Agent 1"]
+        D1[Local Docker daemon + FS]
+    end
+    subgraph A2["Node Agent 2"]
+        D2[Local Docker daemon + FS]
+    end
+    subgraph AN["Node Agent N"]
+        DN[Local Docker daemon + FS]
+    end
 
-**Node** — entity in the graph.
+    subgraph DEL["Delivery Adapters"]
+        SW[Swarm Global Service]
+        K8S[K8s DaemonSet]
+        SA[Standalone systemd/ssh]
+    end
 
-| Field | Type | Description |
-|---|---|---|
-| `id` | string | Canonical, e.g. `llm:ollama:11434`, `tool:read_file` |
-| `kind` | enum | See Node kinds table |
-| `name` | string | Human-readable name |
-| `attributes` | dict | Kind-specific fields |
-| `provenance` | list[Provenance] | Who reported it |
-
-**Edge** — relationship between nodes.
-
-| Field | Type | Description |
-|---|---|---|
-| `source_id` | string | Node.id |
-| `target_id` | string | Node.id |
-| `kind` | enum | See Edge kinds table |
-| `attributes` | dict | Kind-specific fields (e.g. `risk`, `exfil`) |
-| `provenance` | list[Provenance] | Who reported it |
-
-**Finding** — derived from graph analysis, not from scanners.
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | string | Unique |
-| `severity` | enum | `critical` \| `high` \| `medium` \| `low` |
-| `title` | string | Short description |
-| `chain` | list | `[node_id, edge_kind, node_id, ...]` |
-| `reasoning` | string | Explanation from LLM |
-| `confidence` | float | 0.0–1.0 |
-| `voters` | list[string] | Models that found this chain |
-| `evidence` | list[Provenance] | Supporting facts |
-
-### Storage Layout
-
-```
-~/.aicorellator/
-├── scans/
-│   └── 20261005_143052/
-│       ├── scan.json          # metadata
-│       ├── nodes.jsonl        # one node per line
-│       ├── edges.jsonl        # one edge per line
-│       ├── findings.jsonl     # one finding per line
-│       └── raw/               # raw tool outputs
-│           ├── neuralscan.json
-│           ├── agent-bom.json
-│           ├── agent-audit-kit.json
-│           └── garak.json
-├── profiles/
-│   ├── fast.yaml
-│   └── deep.yaml
-└── config.json
+    A1 -->|reports| CORE
+    A2 -->|reports| CORE
+    AN -->|reports| CORE
+    SW -.deploys.-> A1
+    K8S -.deploys.-> A2
+    SA -.deploys.-> AN
 ```
 
-JSONL for nodes/edges/findings: append-friendly, streamable, diff-friendly. Raw tool outputs preserved for debugging and audit.
-
+One Agent — one node. Three delivery adapters: Docker Swarm Global Service, Kubernetes DaemonSet, standalone systemd/ssh. Core aggregates everything into a single graph keyed by `host_id`.
 
 ---
 
-## Analysis Layer
+## Development Staging
 
-**Profiles** control the analytical strategy without changing the pipeline.
+```mermaid
+flowchart TB
+    P0["Phase 0 — Data Model<br/>SQLite schema + Python graph API"]
+    P1["Phase 1 — AST + LLM<br/>graph population from code and configs"]
+    P2["Phase 2 — Scanner Queue<br/>async queue + static workers"]
+    P3["Phase 3 — Core + Agent + UI<br/>Core/Agent split, multi-host, minimal UI"]
 
-```yaml
-# profiles/fast.yaml — red team: quick recon
-name: fast
-models: [qwen3.5-9b]
-voting:
-  threshold: 1
-judge:
-  enabled: false
+    P0 --> P1 --> P2 --> P3
+
+    P0 -.output.-> O0[docs/schema.sql + graph/store.py]
+    P1 -.output.-> O1[Live graph in SQLite]
+    P2 -.output.-> O2[Enriched graph, scan_done = true]
+    P3 -.output.-> O3[Multi-host tool with an interface]
 ```
 
-```yaml
-# profiles/deep.yaml — blue team: thorough audit
-name: deep
-models: [qwen3.8-27b, gemma4-31b, qwq-32b]
-voting:
-  threshold: 2
-judge:
-  enabled: true
-  model: qwen3.8-27b
+| Phase | What | Output |
+|---|---|---|
+| **0** | Data Model — SQLite schema + Python graph API (`nodes`, `edges`, `findings`, `hosts`, `state`, `task_state`; `confidence`, `host_id`, stale logic) | `docs/schema.sql` + `graph/store.py` |
+| **1** | AST + LLM — AST parser (TSA → SCIP conditionally) + LLM extractor; graph population from code and configs | Live graph in SQLite |
+| **2** | Scanner Queue — async queue + static workers; vertex enrichment with findings | Enriched graph, `scan_done = true` |
+| **3** | Core + Agent + UI — Core/Agent split, multi-host, minimal UI, background mode, reports | Multi-host tool with an interface |
+
+---
+
+## Ontology
+
+### Node Kinds
+
+| Kind | Description | Example |
+|---|---|---|
+| `agent` | AI client or orchestrator | `InvoiceAgent`, `orchestrator` |
+| `llm_endpoint` | Running LLM server | `openai:gpt-5-nano`, `ollama:11434` |
+| `mcp_server` | MCP server | `findrive`, `systemutils` |
+| `tool` | Tool exposed to an agent | `execute_script`, `delete_file` |
+| `credential` | Secret visible to a tool | `AWS_SECRET`, `DB_URL` |
+| `sink` | Dangerous action | `shell`, `filesystem`, `network` |
+| `entry_point` | Entry point | HTTP route, WebSocket, form |
+
+### Edge Kinds
+
+| Kind | Description |
+|---|---|
+| `uses_model` | Agent uses an LLM endpoint |
+| `provides_tool` | Server exposes a tool |
+| `delegates_to` | Agent delegates to another agent |
+| `has_access_to` | Tool has access to a credential or sink |
+| `reaches_sink` | Path reaches a dangerous action |
+| `called_by` | Reverse call relation |
+
+### Chain Tagging
+
+```mermaid
+flowchart LR
+    P1["Phase 1<br/>Semantic Infection<br/>entry_point / untrusted input"]
+    P2["Phase 2<br/>Cognitive Compromise<br/>agent / llm_endpoint"]
+    P3["Phase 3<br/>Agency Propagation<br/>tool / credential"]
+    P4["Phase 4<br/>Systemic Execution<br/>sink"]
+
+    P1 --> P2 --> P3 --> P4
 ```
 
-**Questions** are YAML templates that define what to look for and which slice of the graph to analyze.
+**AKC phases (Agentic Kill Chain):**
 
-```yaml
-# questions/q1_exfil.yaml
-id: q1_exfil
-title: "Credential exfiltration chains"
-slice:
-  include_nodes: [credential, tool, sink]
-  include_edges: [has_access_to, provides_tool]
-  max_hops: 3
-prompt: |
-  Analyze the graph for credential exfiltration paths.
-  GRAPH: {graph_text}
-  Return JSON: {"chains": [{"chain": [...], "reasoning": "...", "confidence": 0.0}]}
+| Phase | Name | Graph anchor |
+|---|---|---|
+| 1 | Semantic Infection | `entry_point`, untrusted input |
+| 2 | Cognitive Compromise | `agent`, `llm_endpoint` |
+| 3 | Agency Propagation | `tool`, `credential` |
+| 4 | Systemic Execution | `sink` |
+
+**OWASP Agentic (ASI01–ASI10):**
+
+- ASI02 — Tool Misuse
+- ASI05 — Unexpected Code Execution
+- ASI07 — Insecure Inter-Agent Communication
+
+---
+
+## Lifecycle Management
+
+### State Flags
+
+| Flag | Set when | Meaning |
+|---|---|---|
+| `phase1_done` | AST parser finished | Graph built, `report --fast` possible |
+| `scan_done` | All static workers finished | Graph enriched, `report --full` possible |
+| `report_fresh` | After report generation | `current.pdf` is current |
+| `report_fresh = false` | On graph mutation | Graph moved ahead, report is stale |
+| `dynamic_enabled` | Architectural option | Dynamic workers enabled |
+
+### Task Counters
+
+| Counter | Behavior |
+|---|---|
+| `static.active_count` | Drops to 0 → `scan_done = true` |
+| `dynamic.last_completed_at` | Does not block `scan_done`, but must complete at least one cycle |
+
+### Reports
+
+```mermaid
+stateDiagram-v2
+    [*] --> Fresh: report generated
+    Fresh --> Stale: graph mutated
+    Stale --> Fresh: report regenerated
+    Fresh --> Archived: new report generated
+    Archived --> [*]
 ```
+
+- **Generation on demand only.** Slow (20–30 minutes), expensive in electricity.
+- **Two tiers:** `report --fast` (after Phase 1, partial) and `report --full` (after Phase 2).
+- **Archival:** `current.pdf` → `<timestamp>.pdf` on new generation.
+
+### Re-runs
+
+Content-hash of nodes → findings reused if hash matches. Only changed nodes are rescanned. Full rescan is not required.
+
+---
+
+## What Was Discarded
+
+| Discarded | Reason |
+|---|---|
+| Versioning / snapshots | POC model, not for continuous |
+| Raw data storage | Debug mode only |
+| Dynamic testing in the base version | Architectural option |
+| Regex for chain discovery | Replaced by LLM |
+| CVE scanners (Trivy/Grype) | Wrong class |
+| agent-bom | SBOM scanner, no AI-specific links |
+| Snyk, Cisco | Explicitly excluded |
+| SIEM approach | Redundant |
+| Coverage as a goal | Not a success metric |
+
+---
+
+## Current State
+
+**Early alpha.** Development in staging.
+
+| Component | Status |
+|---|---|
+| Data Model | TODO (Phase 0) |
+| AST + LLM | TODO (Phase 1) |
+| Scanner Queue | TODO (Phase 2) |
+| Core + Agent + UI | TODO (Phase 3) |
+
+---
+
+## License
+
+See `LICENSE`.
