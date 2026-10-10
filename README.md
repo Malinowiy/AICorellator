@@ -247,8 +247,8 @@ Content-hash of nodes → findings reused if hash matches. Only changed nodes ar
 
 | Component | Status |
 |---|---|
-| Data Model | TODO (Phase 0) |
-| AST + LLM | TODO (Phase 1) |
+| Data Model | DONE (Phase 0) |
+| AST + LLM | DONE (Phase 1) |
 | Scanner Queue | TODO (Phase 2) |
 | Core + Agent + UI | TODO (Phase 3) |
 
