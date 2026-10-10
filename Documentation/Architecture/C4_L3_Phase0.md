@@ -50,7 +50,7 @@ flowchart TB
 
 **Responsibility:** Defines the SQLite structure. Applied at startup with `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = WAL`. Migration policy: forward-only, numbered SQL files.
 
-**Artifacts:** `docs/schema.sql`, `docs/migrations/NNN_description.sql`, `schema_version` table.
+**Artifacts:** `graph/schema.sql`, `src/migrations/NNN_description.sql`, `schema_version` table.
 
 **Tables:** `nodes`, `edges`, `findings`, `chains`, `hosts`, `state`, `task_state`, `reports`, `schema_version`.
 

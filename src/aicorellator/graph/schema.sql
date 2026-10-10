@@ -3,7 +3,9 @@
 -- Phase 0: Data Model
 -- ============================================================
 -- Conventions:
---   - All timestamps are UTC, stored as TEXT (ISO 8601).
+--   - Timestamps are SQLite-style UTC: 'YYYY-MM-DD HH:MM:SS'.
+--     Lexicographically sortable. Not strict ISO 8601 (no 'Z').
+--     Python models produce the same format via strftime().
 --   - JSON columns are TEXT with a JSON validity CHECK
 --     (requires SQLite 3.38+).
 --   - confidence is REAL in [0.0, 1.0].
@@ -90,9 +92,11 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
 CREATE INDEX IF NOT EXISTS idx_nodes_host ON nodes(host_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);
-CREATE INDEX IF NOT EXISTS idx_nodes_confidence ON nodes(confidence);
 CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
 CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
+-- NOTE: idx_nodes_confidence is intentionally absent. confidence has
+-- very low cardinality (defaults to 1.0) and SQLite's query planner
+-- ignores it. If a query needs it, add it via a migration.
 
 -- ------------------------------------------------------------
 -- edges — graph relations (stored kinds only)
@@ -146,16 +150,17 @@ CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
 CREATE INDEX IF NOT EXISTS idx_edges_status ON edges(status);
 CREATE INDEX IF NOT EXISTS idx_edges_host ON edges(host_id);
-CREATE INDEX IF NOT EXISTS idx_edges_precision ON edges(precision);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique
     ON edges(source_id, target_id, kind, host_id);
+-- NOTE: idx_edges_precision is intentionally absent. precision has
+-- two possible values and SQLite ignores low-cardinality indexes.
 
 -- ------------------------------------------------------------
 -- findings — scanner-reported weaknesses
 -- ------------------------------------------------------------
 -- A finding is a weakness reported by a scanner (AAK, LLM-scanner,
--- MCP-scanner) attached to a node or an edge.
--- Findings are INPUTS to chain evaluation, not chains themselves.
+-- MCP-scanner) attached to EITHER a node OR an edge — never both,
+-- never neither. The CHECK enforces strict exclusivity.
 --
 -- updated_at is used by the cleanup policy (see C4_L3_Phase0.md:
 -- "Delete findings with status = 'stale' older than N days").
@@ -184,7 +189,10 @@ CREATE TABLE IF NOT EXISTS findings (
     CHECK (status IN ('active', 'stale')),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (json_valid(evidence)),
-    CHECK (node_id IS NOT NULL OR edge_id IS NOT NULL)
+    CHECK (
+        (node_id IS NOT NULL AND edge_id IS NULL) OR
+        (node_id IS NULL AND edge_id IS NOT NULL)
+    )
 );
 
 CREATE INDEX IF NOT EXISTS idx_findings_node ON findings(node_id);
@@ -206,6 +214,12 @@ CREATE INDEX IF NOT EXISTS idx_findings_updated ON findings(updated_at);
 -- Validation is Layer 3 app logic (ADR-0006). Chains with
 -- validated = 0 may reference non-existent nodes/edges — these
 -- are hallucinated chains kept for provenance, not for reports.
+--
+-- NOTE: chain_nodes and chain_edges are JSON arrays of IDs.
+-- No FK validation is possible on JSON contents. After a CASCADE
+-- delete of a referenced node/edge, these arrays may contain
+-- dangling IDs. Validation happens at query time (see QueryLayer)
+-- or via periodic integrity checks.
 --
 -- validated:
 --   0 — rejected as hallucination (Layer 3, ADR-0006)
@@ -251,6 +265,9 @@ CREATE INDEX IF NOT EXISTS idx_chains_prompt_version ON chains(prompt_version);
 -- CHECK on key enforces the documented key set. Adding a new key
 -- requires a migration — this is intentional: it catches typos
 -- (e.g., 'Phase1_Done') at insert time.
+--
+-- value is nullable to allow 'last_report_at' = NULL before the
+-- first report is generated.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS state (
@@ -297,6 +314,10 @@ INSERT OR IGNORE INTO state (host_id, key, value) VALUES
 -- scan_done is defined as "all tasks in terminal state
 -- (done | failed | timeout)", not "active_count = 0".
 -- Terminal-state counters are populated in Phase 2.
+--
+-- last_completed_at is NULL until the first task in this kind
+-- completes (done, failed, or timeout) — or until a dynamic
+-- worker finishes its first monitoring cycle.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS task_state (
@@ -364,6 +385,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_current
 -- ------------------------------------------------------------
 -- The WHEN clause prevents the trigger from firing on its own
 -- UPDATE (infinite recursion guard).
+--
+-- NOTE: GraphStore is not thread-safe by design (one connection
+-- per thread). Parallel updates to the same row do not occur,
+-- so the trigger does not race. If causal ordering becomes a
+-- requirement, an ADR is needed.
 
 CREATE TRIGGER IF NOT EXISTS trg_nodes_updated_at
 AFTER UPDATE ON nodes

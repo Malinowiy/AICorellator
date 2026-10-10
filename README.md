@@ -132,7 +132,7 @@ flowchart TB
 
     P0 --> P1 --> P2 --> P3
 
-    P0 -.output.-> O0[docs/schema.sql + graph/store.py]
+    P0 -.output.-> O0[graph/schema.sql + graph/store.py]
     P1 -.output.-> O1[Live graph in SQLite]
     P2 -.output.-> O2[Enriched graph, scan_done = true]
     P3 -.output.-> O3[Multi-host tool with an interface]
@@ -140,7 +140,7 @@ flowchart TB
 
 | Phase | What | Output |
 |---|---|---|
-| **0** | Data Model — SQLite schema + Python graph API (`nodes`, `edges`, `findings`, `hosts`, `state`, `task_state`; `confidence`, `host_id`, stale logic) | `docs/schema.sql` + `graph/store.py` |
+| **0** | Data Model — SQLite schema + Python graph API (`nodes`, `edges`, `findings`, `hosts`, `state`, `task_state`; `confidence`, `host_id`, stale logic) | `graph/schema.sql` + `graph/store.py` |
 | **1** | AST + LLM — AST parser (TSA → SCIP conditionally) + LLM extractor; graph population from code and configs | Live graph in SQLite |
 | **2** | Scanner Queue — async queue + static workers; vertex enrichment with findings | Enriched graph, `scan_done = true` |
 | **3** | Core + Agent + UI — Core/Agent split, multi-host, minimal UI, background mode, reports | Multi-host tool with an interface |
