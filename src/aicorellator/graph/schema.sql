@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 
     CHECK (kind IN (
         'agent', 'llm_endpoint', 'mcp_server', 'tool',
-        'credential', 'sink', 'entry_point'
+        'credential', 'sink', 'entry_point', 'guardrail'
     )),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),

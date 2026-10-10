@@ -16,7 +16,28 @@ def utcnow() -> str:
     """ISO 8601 UTC timestamp, matching SQLite CURRENT_TIMESTAMP format."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+# Valid node kinds. Mirrors the CHECK constraint in schema.sql.
+# Update both when adding a new kind.
+VALID_NODE_KINDS = frozenset({
+    "agent",
+    "llm_endpoint",
+    "mcp_server",
+    "tool",
+    "credential",
+    "sink",
+    "entry_point",
+    "guardrail",
+})
 
+# Valid edge kinds. Mirrors the CHECK constraint in schema.sql.
+# Only stored kinds — derived kinds (reaches_sink, called_by) are
+# computed by the Query Layer and are not written to the DB.
+VALID_EDGE_KINDS = frozenset({
+    "uses_model",
+    "provides_tool",
+    "delegates_to",
+    "has_access_to",
+})
 # ------------------------------------------------------------
 # Host
 # ------------------------------------------------------------
@@ -33,7 +54,7 @@ class Host:
     created_at: str = field(default_factory=utcnow)
 
     @classmethod
-    def from_row(cls, row) -> "Host":
+    def from_row(cls, row: Any) -> "Host":
         return cls(
             id=row["id"],
             hostname=row["hostname"],
