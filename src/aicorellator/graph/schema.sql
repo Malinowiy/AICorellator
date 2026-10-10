@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS edges (
     FOREIGN KEY (host_id)   REFERENCES hosts(id) ON DELETE CASCADE,
 
     CHECK (kind IN (
-        'uses_model', 'provides_tool', 'delegates_to', 'has_access_to'
+        'uses_model', 'provides_tool', 'delegates_to', 'has_access_to', 'guards'
     )),
     CHECK (precision IN ('syntactic', 'compiler-verified')),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),

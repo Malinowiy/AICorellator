@@ -37,6 +37,7 @@ VALID_EDGE_KINDS = frozenset({
     "provides_tool",
     "delegates_to",
     "has_access_to",
+    "guards",
 })
 # ------------------------------------------------------------
 # Host
