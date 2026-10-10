@@ -4,8 +4,6 @@ Tests use hand-built FileManifest and TSAOutput objects — no file
 system access, no TSA subprocess. Fast and deterministic.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -23,8 +21,12 @@ from aicorellator.parsing.ast_normalizer import (
     normalize,
 )
 from aicorellator.parsing.classification import Classification
+from aicorellator.parsing.entry_points import (
+    AgentCall,
+    EntryPoint,
+    EntryPointOutput,
+)
 from aicorellator.parsing.models import TSASymbol, TSAOutput
-
 
 # ============================================================
 # Fixtures
@@ -313,3 +315,63 @@ def test_normalize_deterministic(target: Target) -> None:
     ids1 = sorted(n.id for n in d1.nodes)
     ids2 = sorted(n.id for n in d2.nodes)
     assert ids1 == ids2
+
+
+def test_normalize_entry_point_node(target: Target) -> None:
+    """Entry point produces a node with method + path in name."""
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST",
+                path="/api/chat",
+                handler="chat_endpoint",
+                file_path="apps/api.py",
+                line=42,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+    eps = [n for n in delta.nodes if n.kind == "entry_point"]
+    assert len(eps) == 1
+    assert eps[0].name == "POST /api/chat"
+    assert eps[0].attributes["handler"] == "chat_endpoint"
+
+
+def test_normalize_entry_to_agent_edge(target: Target) -> None:
+    """Entry point handler calling an agent produces delegates_to edge."""
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="InvoiceAgent", kind="class",
+            file_path="agents/invoice.py", line_start=1, line_end=50,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/api/chat",
+                handler="chat_endpoint", file_path="apps/api.py", line=42,
+            ),
+        ],
+        agent_calls=[
+            AgentCall(
+                handler="chat_endpoint",
+                agent_name="InvoiceAgent",
+                file_path="apps/api.py",
+                line=45,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
+    agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
+    assert len(entry_nodes) == 1
+    assert len(agent_nodes) == 1
+
+    delegates = [e for e in delta.edges if e.kind == "delegates_to"]
+    assert len(delegates) == 1
+    assert delegates[0].source_id == entry_nodes[0].id
+    assert delegates[0].target_id == agent_nodes[0].id

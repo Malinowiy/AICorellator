@@ -73,3 +73,21 @@ def test_cleanup_keeps_active_nodes(store: GraphStore) -> None:
     result = store.cleanup()
     assert result["nodes_deleted"] == 0
     assert store.nodes.get("n:1") is not None
+
+def test_context_manager_commits() -> None:
+    """Data written inside `with` persists after exit."""
+    import tempfile, os
+    from aicorellator.graph import Node
+
+    path = tempfile.mktemp(suffix=".db")
+    try:
+        with GraphStore(path) as s:
+            s.nodes.add(Node(
+                id="n:1", kind="agent", name="A", host_id="localhost",
+            ))
+        # Reopen — node should exist
+        with GraphStore(path) as s2:
+            assert s2.nodes.get("n:1") is not None
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)

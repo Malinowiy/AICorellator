@@ -171,4 +171,6 @@ class GraphStore:
     ) -> None:
         if exc_type is not None:
             self.rollback()
+        else:
+            self.commit()
         self.close()

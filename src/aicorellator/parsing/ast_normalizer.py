@@ -1,13 +1,18 @@
 """AST Normalizer — turns TSA symbols into Node/Edge objects.
 
-Two responsibilities:
+Responsibilities:
   1. Create Node objects for classified symbols.
   2. Create edges between nodes using simple heuristics.
 
-Edges are best-effort: only `provides_tool` and `has_access_to`
-are derived here. `uses_model` and `delegates_to` require source
-analysis beyond what TSA provides — they are produced by the LLM
-Extractor (later phase).
+Edges derived here:
+  - provides_tool  (mcp_server → tool)
+  - has_access_to  (tool → sink)
+  - delegates_to   (entry_point → agent)
+  - delegates_to   (agent → agent, orchestrator pattern)
+  - has_access_to  (agent → mcp_server, via create_mcp_server)
+
+Edges NOT derived here (require source analysis beyond TSA):
+  - uses_model     (agent → llm_endpoint)
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from .classification import (
     classify_file,
     classify_method,
 )
+from .entry_points import EntryPointOutput
 from .models import TSAOutput, TSASymbol
 
 
@@ -36,9 +42,21 @@ class GraphDelta:
     edges: list[Edge] = field(default_factory=list)
 
 
-def normalize(manifest: FileManifest, tsa_output: TSAOutput) -> GraphDelta:
-    """Build graph delta from manifest and TSA output."""
+def normalize(
+    manifest: FileManifest,
+    tsa_output: TSAOutput,
+    entry_points: EntryPointOutput | None = None,
+) -> GraphDelta:
+    """Build graph delta from manifest, TSA output, and entry points.
+
+    Args:
+        manifest: file list from ingestion.discover()
+        tsa_output: symbols from parsing.tsa_worker.run()
+        entry_points: routes, agent calls, and MCP usages from
+                      parsing.entry_points.run(). Pass None to skip.
+    """
     delta = GraphDelta()
+    entry_points = entry_points or EntryPointOutput()
 
     # --- MCP servers from files ---
     # One node per server name, deduplicated across files.
@@ -62,7 +80,6 @@ def normalize(manifest: FileManifest, tsa_output: TSAOutput) -> GraphDelta:
         ))
 
     # --- Classes ---
-    # agent, llm_endpoint, guardrail, mcp_server (per-class)
     for symbol in tsa_output.symbols:
         if symbol.kind != "class":
             continue
@@ -121,6 +138,91 @@ def normalize(manifest: FileManifest, tsa_output: TSAOutput) -> GraphDelta:
                     host_id=HOST_ID,
                 ))
 
+    # --- Entry points ---
+    entry_node_by_handler: dict[str, str] = {}
+    for ep in entry_points.entry_points:
+        node_id = _entry_point_id(ep)
+        entry_node_by_handler[ep.handler] = node_id
+        delta.nodes.append(Node(
+            id=node_id,
+            kind="entry_point",
+            name=f"{ep.method} {ep.path}",
+            host_id=HOST_ID,
+            attributes={
+                "source_file": ep.file_path,
+                "line_start": ep.line,
+                "method": ep.method,
+                "path": ep.path,
+                "handler": ep.handler,
+            },
+        ))
+
+    # --- Indexes for edge derivation ---
+    # agent_node_by_name:  "InvoiceAgent" -> node_id
+    # agent_node_by_file:  "agents/invoice.py" -> node_id
+    agent_node_by_name: dict[str, str] = {
+        n.name: n.id for n in delta.nodes if n.kind == "agent"
+    }
+    agent_node_by_file: dict[str, str] = {
+        n.attributes.get("source_file", ""): n.id
+        for n in delta.nodes
+        if n.kind == "agent"
+    }
+
+    # --- Edges: entry_point → agent (delegates_to) ---
+    # Only for calls made from route handlers.
+    for call in entry_points.agent_calls:
+        if call.is_agent_to_agent:
+            continue
+        entry_id = entry_node_by_handler.get(call.handler)
+        agent_id = agent_node_by_name.get(call.agent_name)
+        if entry_id is None or agent_id is None:
+            continue
+        delta.edges.append(Edge(
+            id=_edge_id(entry_id, agent_id, "delegates_to"),
+            source_id=entry_id,
+            target_id=agent_id,
+            kind="delegates_to",
+            host_id=HOST_ID,
+        ))
+
+    # --- Edges: agent → agent (delegates_to) ---
+    # Calls made from agent modules (e.g. orchestrator → invoice).
+    for call in entry_points.agent_calls:
+        if not call.is_agent_to_agent:
+            continue
+        source_id = agent_node_by_file.get(call.file_path)
+        target_id = agent_node_by_name.get(call.agent_name)
+        if source_id is None or target_id is None:
+            continue
+        if source_id == target_id:
+            continue  # skip self-loops
+        delta.edges.append(Edge(
+            id=_edge_id(source_id, target_id, "delegates_to"),
+            source_id=source_id,
+            target_id=target_id,
+            kind="delegates_to",
+            host_id=HOST_ID,
+        ))
+
+    # --- Edges: agent → mcp_server (has_access_to) ---
+    # An agent that calls create_mcp_server("name") has access to
+    # that MCP server.
+    for usage in entry_points.mcp_usages:
+        if not usage.is_agent_module:
+            continue
+        agent_id = agent_node_by_file.get(usage.file_path)
+        server_id = mcp_servers.get(usage.mcp_server_name)
+        if agent_id is None or server_id is None:
+            continue
+        delta.edges.append(Edge(
+            id=_edge_id(agent_id, server_id, "has_access_to"),
+            source_id=agent_id,
+            target_id=server_id,
+            kind="has_access_to",
+            host_id=HOST_ID,
+        ))
+
     return delta
 
 
@@ -131,6 +233,17 @@ def normalize(manifest: FileManifest, tsa_output: TSAOutput) -> GraphDelta:
 def _mcp_server_id(server_name: str) -> str:
     h = _sha256(f"mcp_server:{server_name}:{HOST_ID}")
     return f"mcp_server:{h}"
+
+
+def _entry_point_id(ep) -> str:
+    """Canonical ID for an entry point.
+
+    Entry points are keyed by (file, method, path) — the handler
+    name is not part of the key, so renaming the function does not
+    create a new node.
+    """
+    key = f"entry_point:{ep.file_path}:{ep.method}:{ep.path}:{HOST_ID}"
+    return f"entry_point:{_sha256(key)}"
 
 
 def _node_from_class(symbol: TSASymbol, c: Classification) -> Node:
@@ -150,8 +263,6 @@ def _node_from_class(symbol: TSASymbol, c: Classification) -> Node:
 
 
 def _node_from_method(symbol: TSASymbol, c: Classification) -> Node:
-    # Tools under MCP servers need stable IDs tied to their server.
-    # Tools elsewhere (tools/data/) use file+name.
     key_parts = [c.kind, symbol.file_path, symbol.name]
     if symbol.class_name:
         key_parts.append(symbol.class_name)

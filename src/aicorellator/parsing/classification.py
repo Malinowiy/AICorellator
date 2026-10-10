@@ -33,6 +33,11 @@ EXCLUDED_CLASSES = frozenset({
     "BaseRepository",
 })
 
+# Agent classes that don't end in `*Agent` but are agents.
+EXTRA_AGENT_CLASSES = frozenset({
+    "CoPilotAssistant",
+})
+
 # Suffixes that indicate non-AI components even if the path looks relevant.
 EXCLUDED_CLASS_SUFFIXES = (
     "Detector",     # CTF detectors (RCEDetector, etc.)
@@ -64,6 +69,9 @@ def classify_class(class_name: str, file_path: str) -> Classification | None:
 
     # --- Agents ---
     if class_name.endswith(("Agent", "Orchestrator")):
+        return Classification(kind="agent")
+    # --- Agents (extra classes) ---
+    if class_name in EXTRA_AGENT_CLASSES:
         return Classification(kind="agent")
 
     # --- LLM endpoints (by explicit name) ---

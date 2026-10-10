@@ -24,6 +24,7 @@ from .classification import (
 )
 from .ast_normalizer import GraphDelta, normalize
 from .writer import set_phase1_done, write as write_graph
+from .entry_points import run as run_entry_points
 
 __all__ = [
     "TSASymbol",
@@ -37,4 +38,5 @@ __all__ = [
     "classify_class",
     "classify_file",
     "classify_method",
+    "run_entry_points",
 ]
