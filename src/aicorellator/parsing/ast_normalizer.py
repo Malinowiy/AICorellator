@@ -11,6 +11,14 @@ Edges derived here:
   - delegates_to   (agent → agent, orchestrator pattern)
   - has_access_to  (agent → mcp_server, via create_mcp_server)
 
+Nodes derived here:
+  - agent, llm_endpoint (from classification)
+  - mcp_server (from file paths)
+  - tool, sink (from methods)
+  - guardrail (from classification)
+  - entry_point (from entry_points)
+  - llm_endpoint (from llm_extractor configs)
+
 Edges NOT derived here (require source analysis beyond TSA):
   - uses_model     (agent → llm_endpoint)
 """
@@ -29,6 +37,7 @@ from .classification import (
     classify_method,
 )
 from .entry_points import EntryPointOutput
+from .llm_extractor import LLMExtractorOutput
 from .models import TSAOutput, TSASymbol
 
 
@@ -46,17 +55,21 @@ def normalize(
     manifest: FileManifest,
     tsa_output: TSAOutput,
     entry_points: EntryPointOutput | None = None,
+    llm_output: LLMExtractorOutput | None = None,
 ) -> GraphDelta:
-    """Build graph delta from manifest, TSA output, and entry points.
+    """Build graph delta from manifest, TSA output, entry points, and LLM configs.
 
     Args:
         manifest: file list from ingestion.discover()
         tsa_output: symbols from parsing.tsa_worker.run()
         entry_points: routes, agent calls, and MCP usages from
                       parsing.entry_points.run(). Pass None to skip.
+        llm_output: LLM endpoints from parsing.llm_extractor.run().
+                    Pass None to skip.
     """
     delta = GraphDelta()
     entry_points = entry_points or EntryPointOutput()
+    llm_output = llm_output or LLMExtractorOutput()
 
     # --- MCP servers from files ---
     # One node per server name, deduplicated across files.
@@ -157,9 +170,23 @@ def normalize(
             },
         ))
 
+    # --- LLM endpoints from configs ---
+    for llm_ep in llm_output.deduplicated():
+        node_id = _llm_endpoint_id(llm_ep)
+        delta.nodes.append(Node(
+            id=node_id,
+            kind="llm_endpoint",
+            name=_llm_endpoint_name(llm_ep),
+            host_id=HOST_ID,
+            attributes={
+                "source_file": llm_ep.source_file,
+                "provider": llm_ep.provider,
+                "model": llm_ep.model or "",
+                "base_url": llm_ep.base_url or "",
+            },
+        ))
+
     # --- Indexes for edge derivation ---
-    # agent_node_by_name:  "InvoiceAgent" -> node_id
-    # agent_node_by_file:  "agents/invoice.py" -> node_id
     agent_node_by_name: dict[str, str] = {
         n.name: n.id for n in delta.nodes if n.kind == "agent"
     }
@@ -170,7 +197,6 @@ def normalize(
     }
 
     # --- Edges: entry_point → agent (delegates_to) ---
-    # Only for calls made from route handlers.
     for call in entry_points.agent_calls:
         if call.is_agent_to_agent:
             continue
@@ -187,7 +213,6 @@ def normalize(
         ))
 
     # --- Edges: agent → agent (delegates_to) ---
-    # Calls made from agent modules (e.g. orchestrator → invoice).
     for call in entry_points.agent_calls:
         if not call.is_agent_to_agent:
             continue
@@ -196,7 +221,7 @@ def normalize(
         if source_id is None or target_id is None:
             continue
         if source_id == target_id:
-            continue  # skip self-loops
+            continue
         delta.edges.append(Edge(
             id=_edge_id(source_id, target_id, "delegates_to"),
             source_id=source_id,
@@ -206,8 +231,6 @@ def normalize(
         ))
 
     # --- Edges: agent → mcp_server (has_access_to) ---
-    # An agent that calls create_mcp_server("name") has access to
-    # that MCP server.
     for usage in entry_points.mcp_usages:
         if not usage.is_agent_module:
             continue
@@ -236,14 +259,26 @@ def _mcp_server_id(server_name: str) -> str:
 
 
 def _entry_point_id(ep) -> str:
-    """Canonical ID for an entry point.
-
-    Entry points are keyed by (file, method, path) — the handler
-    name is not part of the key, so renaming the function does not
-    create a new node.
-    """
     key = f"entry_point:{ep.file_path}:{ep.method}:{ep.path}:{HOST_ID}"
     return f"entry_point:{_sha256(key)}"
+
+
+def _llm_endpoint_id(llm_ep) -> str:
+    """Canonical ID: sha256(provider + model + base_url + host)."""
+    key = (
+        f"llm_endpoint:{llm_ep.provider}:"
+        f"{llm_ep.model or ''}:{llm_ep.base_url or ''}:{HOST_ID}"
+    )
+    return f"llm_endpoint:{_sha256(key)}"
+
+
+def _llm_endpoint_name(llm_ep) -> str:
+    """Human-readable name: provider:model, or provider:base_url."""
+    if llm_ep.model:
+        return f"{llm_ep.provider}:{llm_ep.model}"
+    if llm_ep.base_url:
+        return f"{llm_ep.provider}:{llm_ep.base_url}"
+    return llm_ep.provider
 
 
 def _node_from_class(symbol: TSASymbol, c: Classification) -> Node:

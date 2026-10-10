@@ -9,4 +9,4 @@ build/
 *.db
 *.db-wal
 *.db-shm
-.tree-sitter-cache/
+.tree-sitter-cache/aicorellator_data/
