@@ -15,7 +15,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-ws = open_workspace(clean=True)      # чистим workspace
+ws = open_workspace()
+#ws = open_workspace(clean=True)      # чистим workspace
 print(f"Workspace: {ws.root}")
 
 target = ingest('/Users/malinowiy/Documents/FinBot_CTF/finbot-ctf/finbot')

@@ -380,6 +380,25 @@ PROVIDER_BY_KEY: dict[str, str] = {
     "OLLAMA_MODEL": "ollama",
 }
 
+# ============================================================
+# Model name filters
+# ============================================================
+
+# Substrings that identify non-chat models. Any model whose ID
+# contains one of these (case-insensitive) is excluded from the
+# voter list — embeddings and similar models do not respond to
+# chat completions and would time out.
+EXCLUDED_MODEL_SUBSTRINGS: tuple[str, ...] = (
+    "embedding",
+    "embed-",
+    "-embed",
+    "reranker",
+    "rerank",
+    "whisper",
+    "tts",
+    "audio",
+    "vision-only",
+)
 
 # ============================================================
 # Language support

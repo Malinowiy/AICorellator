@@ -24,7 +24,7 @@ from ..graph.store import GraphStore
 
 
 # Cap on how many chains to render per entry point.
-MAX_CHAINS_PER_ENTRY = 20
+MAX_CHAINS_PER_ENTRY = 30
 
 
 def render_report(store: GraphStore, host_id: str = "localhost") -> str:
@@ -173,11 +173,19 @@ def _render_candidate_path(store: GraphStore, chain) -> str:
 # ============================================================
 
 def _evaluated_chains_section(store: GraphStore, chains: list[Chain]) -> str:
-    """Render Phase 3 evaluated chains.
+    """Render Phase 3 evaluated chains, grouped by entry point."""
+    # Group by first node (entry point)
+    by_entry: dict[str, list[Chain]] = defaultdict(list)
+    for chain in chains:
+        if not chain.chain_nodes:
+            continue
+        by_entry[chain.chain_nodes[0]].append(chain)
 
-    Evaluated chains have a verdict (exploitable / not_exploitable /
-    uncertain), aggregated confidence, and Layer 3 validation.
-    """
+    entry_names: dict[str, str] = {}
+    for entry_id in by_entry:
+        node = store.nodes.get(entry_id)
+        entry_names[entry_id] = node.name if node else entry_id
+
     lines: list[str] = []
     lines.append("## Evaluated chains (Phase 3)")
     lines.append("")
@@ -197,25 +205,45 @@ def _evaluated_chains_section(store: GraphStore, chains: list[Chain]) -> str:
         lines.append(f"| `{verdict}` | {count} |")
     lines.append("")
 
-    # Detailed list
-    lines.append("### Chains")
+    # Summary by entry point
+    lines.append("### By entry point")
     lines.append("")
-    lines.append("| Verdict | Confidence | Validated | Hops | Path |")
+    lines.append("| Entry point | Chains | Exploitable | Not exploitable | Uncertain |")
     lines.append("|---|---|---|---|---|")
-    for chain in chains[:MAX_CHAINS_PER_ENTRY]:
-        path = _render_chain_path(store, chain)
-        validated = "✓" if chain.validated else "✗"
-        lines.append(
-            f"| `{chain.verdict}` | {chain.confidence:.2f} "
-            f"| {validated} | {chain.length} | {path} |"
-        )
-    if len(chains) > MAX_CHAINS_PER_ENTRY:
-        remaining = len(chains) - MAX_CHAINS_PER_ENTRY
+    for entry_id, entry_chains in sorted(by_entry.items(), key=lambda kv: -len(kv[1])):
+        name = entry_names[entry_id]
+        exploitable = sum(1 for c in entry_chains if c.verdict == "exploitable")
+        not_expl = sum(1 for c in entry_chains if c.verdict == "not_exploitable")
+        uncertain = sum(1 for c in entry_chains if c.verdict == "uncertain")
+        lines.append(f"| `{name}` | {len(entry_chains)} | {exploitable} | {not_expl} | {uncertain} |")
+    lines.append("")
+
+    # Detailed chains per entry point (only exploitable ones get reasoning)
+    for entry_id, entry_chains in sorted(by_entry.items(), key=lambda kv: -len(kv[1])):
+        name = entry_names[entry_id]
+        lines.append(f"### `{name}` — {len(entry_chains)} chains")
         lines.append("")
-        lines.append(f"_... and {remaining} more chains_")
+
+        # Sort by confidence descending
+        sorted_chains = sorted(entry_chains, key=lambda c: -c.confidence)
+
+        for i, chain in enumerate(sorted_chains, start=1):
+            path = _render_chain_path(store, chain)
+            validated = "✓" if chain.validated else "✗"
+            lines.append(
+                f"**Chain {i}** — `{chain.verdict}` "
+                f"(conf={chain.confidence:.2f}, {validated}, {chain.length} hops)"
+            )
+            lines.append("")
+            lines.append(f"> {path}")
+            lines.append("")
+            if chain.reasoning:
+                # Indent reasoning as a quote
+                reasoning = chain.reasoning.strip().replace("\n", "\n> ")
+                lines.append(f"> **Reasoning:** {reasoning}")
+                lines.append("")
 
     return "\n".join(lines)
-
 
 def _render_chain_path(store: GraphStore, chain: Chain) -> str:
     """Render a Chain (evaluated) as `kind:name → kind:name → ...`."""

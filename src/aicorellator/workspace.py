@@ -1,7 +1,7 @@
 """Workspace — the working directory layout.
 
 A workspace holds all AICorellator state for a single project:
-SQLite DB, reports, cache, logs.
+SQLite DB, reports, cache, logs, config.
 
 Layout:
     aicorellator_data/
@@ -13,6 +13,8 @@ Layout:
             tree-sitter/
         logs/
             aicorellator.log
+        config/
+            models.yaml
 """
 
 from __future__ import annotations
@@ -51,6 +53,14 @@ class Workspace:
         return self.cache_dir / "tree-sitter"
 
     @property
+    def config_dir(self) -> Path:
+        return self.root / "config"
+
+    @property
+    def models_config_path(self) -> Path:
+        return self.config_dir / "models.yaml"
+
+    @property
     def logs_dir(self) -> Path:
         return self.root / "logs"
 
@@ -59,12 +69,22 @@ class Workspace:
         return self.logs_dir / "aicorellator.log"
 
     def ensure(self) -> None:
-        """Create all required subdirectories if missing."""
+        """Create all required subdirectories if missing.
+
+        Also writes a template models.yaml if the config file does
+        not exist. The template references plausible local models
+        but the user must verify them against their own setup.
+        """
         self.root.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(exist_ok=True)
         self.cache_dir.mkdir(exist_ok=True)
         self.tree_sitter_cache_dir.mkdir(exist_ok=True)
         self.logs_dir.mkdir(exist_ok=True)
+        self.config_dir.mkdir(exist_ok=True)
+
+        if not self.models_config_path.exists():
+            from .analysis.config_loader import write_example_config
+            write_example_config(self.models_config_path)
 
     def clean(self) -> None:
         """Delete all contents of the workspace, then recreate."""
