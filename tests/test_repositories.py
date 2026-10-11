@@ -179,6 +179,38 @@ def test_chain_add_and_read(store: GraphStore) -> None:
     assert c.chain_nodes == ["n:1", "n:2"]
     assert c.validated is True
 
+def test_chain_length_property(store: GraphStore) -> None:
+    """Chain.length derives from chain_nodes, not stored."""
+    from aicorellator.graph import Chain
+
+    store.chains.add(Chain(
+        id="c:1",
+        chain_nodes=["a", "b", "c", "d"],   # 4 nodes
+        chain_edges=["e1", "e2", "e3"],     # 3 edges
+        verdict="exploitable",
+        prompt_version="v1.0.0",
+        confidence=0.9,
+        validated=True,
+    ))
+
+    chain = store.chains.get("c:1")
+    assert chain.length == 3   # 4 nodes - 1 = 3 hops
+
+
+def test_chain_length_empty(store: GraphStore) -> None:
+    """Empty chain → length 0, no negative."""
+    from aicorellator.graph import Chain
+
+    store.chains.add(Chain(
+        id="c:empty",
+        chain_nodes=[],
+        chain_edges=[],
+        verdict="uncertain",
+        prompt_version="v1.0.0",
+    ))
+
+    chain = store.chains.get("c:empty")
+    assert chain.length == 0
 
 def test_chain_list_actionable(store: GraphStore) -> None:
     from aicorellator.graph import Chain

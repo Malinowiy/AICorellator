@@ -209,6 +209,15 @@ class Chain:
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
 
+    @property
+    def length(self) -> int:
+        """Number of hops. Derived from chain_nodes.
+
+        Computed, not stored — the chains table has no length column.
+        A chain of N nodes has N-1 edges, hence N-1 hops.
+        """
+        return max(0, len(self.chain_nodes) - 1)
+
     def to_row(self) -> dict[str, Any]:
         row = asdict(self)
         row["chain_nodes"] = json.dumps(self.chain_nodes)

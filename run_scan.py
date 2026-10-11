@@ -8,6 +8,12 @@ from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.reporting import write_bundle
 from aicorellator.workspace import open_workspace
 
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 ws = open_workspace(clean=True)      # чистим workspace
 print(f"Workspace: {ws.root}")

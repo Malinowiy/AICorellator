@@ -28,6 +28,13 @@ from aicorellator.parsing.entry_points import (
 )
 from aicorellator.parsing.models import TSASymbol, TSAOutput
 
+from aicorellator.parsing.entry_points import (
+    AgentCall,
+    EntryPoint,
+    EntryPointOutput,
+    MCPUsage,
+)
+
 # ============================================================
 # Fixtures
 # ============================================================
@@ -375,3 +382,49 @@ def test_normalize_entry_to_agent_edge(target: Target) -> None:
     assert len(delegates) == 1
     assert delegates[0].source_id == entry_nodes[0].id
     assert delegates[0].target_id == agent_nodes[0].id
+
+def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
+    """Agent with create_mcp_server call → has_access_to edge."""
+    from aicorellator.parsing.entry_points import MCPUsage
+
+    manifest = FileManifest(target=target)
+    manifest.files = [
+        FileEntry(
+            path="mcp/servers/findrive/server.py",
+            abs_path=target.root / "mcp/servers/findrive/server.py",
+            language="python",
+            content_hash="aaa",
+            size=100,
+        ),
+    ]
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="InvoiceAgent", kind="class",
+            file_path="agents/invoice.py", line_start=1, line_end=50,
+        ),
+    ])
+    ep = EntryPointOutput(
+        mcp_usages=[
+            MCPUsage(
+                handler="_get_mcp_servers",
+                mcp_server_name="findrive",
+                file_path="agents/invoice.py",
+                line=10,
+                is_agent_module=True,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
+    mcp_nodes = [n for n in delta.nodes if n.kind == "mcp_server"]
+    assert len(agent_nodes) == 1
+    assert len(mcp_nodes) == 1
+
+    has_access = [
+        e for e in delta.edges
+        if e.kind == "has_access_to"
+        and e.source_id == agent_nodes[0].id
+        and e.target_id == mcp_nodes[0].id
+    ]
+    assert len(has_access) == 1
