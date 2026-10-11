@@ -24,6 +24,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import tomllib
+import yaml
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -152,38 +155,61 @@ def _scan_python(text: str) -> dict[str, str]:
     return out
 
 def _scan_yaml(text: str) -> dict[str, str]:
-    """Extract KEY: VALUE pairs from YAML. Handles nested with
-    simple indentation-aware scan."""
+    """Extract LLM-relevant key-value pairs from YAML.
+
+    Uses pyyaml for correct handling of nested structures, lists,
+    inline maps, and anchors. Walks the resulting tree and flattens
+    keys into uppercase snake_case for uniform downstream matching.
+    """
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
+    if not isinstance(data, (dict, list)):
+        return {}
+
     out: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.rstrip()
-        if not line or line.lstrip().startswith("#"):
-            continue
-        stripped = line.strip()
-        if ":" not in stripped:
-            continue
-        key, _, value = stripped.partition(":")
-        key = key.strip().strip("'\"")
-        value = value.strip().strip("'\"")
-        if key and value and _is_relevant_key(key):
-            out[key.upper()] = value
+    _walk_tree(data, out)
     return out
 
 
 def _scan_toml(text: str) -> dict[str, str]:
+    """Extract LLM-relevant key-value pairs from TOML.
+
+    Uses tomllib (Python 3.11+ stdlib) for correct handling of
+    tables, arrays of tables, and inline tables.
+    """
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return {}
+
     out: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("["):
-            continue
-        if "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip().strip("'\"")
-        value = value.strip().strip("'\"")
-        if key and value and _is_relevant_key(key):
-            out[key.upper()] = value
+    _walk_tree(data, out)
     return out
+
+
+def _walk_tree(obj, out: dict[str, str], prefix: str = "") -> None:
+    """Recursively flatten a nested structure into KEY → value pairs.
+
+    Keys are joined with underscores and uppercased:
+        services.llm.model = "gpt-4"  →  "SERVICES_LLM_MODEL"
+        llm.model_name = "claude"     →  "LLM_MODEL_NAME"
+
+    Values are kept as strings. Booleans and numbers are stringified.
+    Filters by _is_relevant_key so only LLM-related keys are kept.
+    """
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            full = f"{prefix}_{k}" if prefix else str(k)
+            if isinstance(v, (str, int, float, bool)):
+                if _is_relevant_key(full):
+                    out[full.upper()] = str(v)
+            elif isinstance(v, (dict, list)):
+                _walk_tree(v, out, full)
+    elif isinstance(obj, list):
+        for item in obj:
+            _walk_tree(item, out, prefix)
 
 
 def _scan_json(text: str) -> dict[str, str]:
@@ -191,33 +217,46 @@ def _scan_json(text: str) -> dict[str, str]:
         data = json.loads(text)
     except json.JSONDecodeError:
         return {}
+    if not isinstance(data, (dict, list)):
+        return {}
+
     out: dict[str, str] = {}
-    _walk_json(data, out)
+    _walk_tree(data, out)
     return out
 
 
-def _walk_json(obj, out: dict[str, str], prefix: str = "") -> None:
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            full = f"{prefix}_{k}" if prefix else str(k)
-            if isinstance(v, (str, int, float)) and _is_relevant_key(full):
-                out[full.upper()] = str(v)
-            elif isinstance(v, (dict, list)):
-                _walk_json(v, out, full)
-    elif isinstance(obj, list):
-        for item in obj:
-            _walk_json(item, out, prefix)
-
-
 def _is_relevant_key(key: str) -> bool:
-    """True if key looks like an LLM provider/model/base_url key."""
+    """True if key looks like an LLM provider/model/base_url key.
+
+    Matches:
+      - exact keys (LLM_PROVIDER, OLLAMA_BASE_URL)
+      - keys ending in a known suffix (_MODEL, _BASE_URL, _ENDPOINT)
+      - keys whose last segment is a known exact key
+        (SERVICES_APP_ENVIRONMENT_LLM_PROVIDER ends with LLM_PROVIDER)
+    """
     k = key.upper()
+
+    # Exact matches (top-level config keys)
     if k in PROVIDER_KEYS or k in MODEL_KEYS or k in BASE_URL_KEYS:
         return True
     if k in PROVIDER_BY_KEY:
         return True
+
+    # Suffix matches (any depth, but the suffix is meaningful)
     if k.endswith(MODEL_KEY_SUFFIXES) or k.endswith(BASE_URL_KEY_SUFFIXES):
         return True
+
+    # Known key as the trailing path segment:
+    # SERVICES_APP_ENVIRONMENT_LLM_PROVIDER  →  ends with LLM_PROVIDER
+    for known in PROVIDER_KEYS | MODEL_KEYS | BASE_URL_KEYS:
+        if k.endswith(f"_{known}"):
+            return True
+
+    # Known provider key as trailing segment (OPENAI_API_KEY, etc.)
+    for known in PROVIDER_BY_KEY:
+        if k.endswith(f"_{known}"):
+            return True
+
     return False
 
 
