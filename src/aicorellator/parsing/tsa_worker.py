@@ -33,19 +33,18 @@ def run(manifest: FileManifest, root: Path | None = None) -> TSAOutput:
 
     Args:
         manifest: file list from ingestion.discover()
-        root: optional target root (reserved for future use; current
-              implementation relies on manifest.target.root)
-
-    Returns:
-        TSAOutput with all symbols found and per-file status counters.
+        root: target root path. If provided, passed to TSA as
+              --project-root so it accepts absolute paths outside
+              the current working directory.
     """
     output = TSAOutput()
+    project_root = Path(root).resolve() if root is not None else None
 
     for entry in manifest.files:
         if entry.language not in TSA_SUPPORTED_LANGUAGES:
             continue
 
-        data = _run_structure(entry.abs_path)
+        data = _run_structure(entry.abs_path, project_root)
         if data is None:
             output.files_failed += 1
             continue
@@ -56,14 +55,21 @@ def run(manifest: FileManifest, root: Path | None = None) -> TSAOutput:
     return output
 
 
-def _run_structure(file_path: Path) -> dict | None:
-    """Run TSA --structure on one file. Returns parsed JSON or None."""
+def _run_structure(file_path: Path, project_root: Path | None = None) -> dict | None:
+    """Run TSA --structure on one file. Returns parsed JSON or None.
+
+    TSA requires --project-root when the file path is absolute and
+    outside the current working directory. Pass project_root to
+    satisfy this requirement.
+    """
     cmd = [
         "uvx", "--from", "tree-sitter-analyzer",
         "tree-sitter-analyzer",
         str(file_path),
         "--structure", "--format", "json",
     ]
+    if project_root is not None:
+        cmd.extend(["--project-root", str(project_root)])
 
     try:
         proc = subprocess.run(
