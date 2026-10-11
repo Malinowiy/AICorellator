@@ -31,37 +31,19 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..patterns import (
+    EXTRA_AGENT_CLASSES,
+    HTTP_METHODS,
+    MCP_CONNECT_FUNCTION,
+    RUNNER_TO_AGENT,
+    WEBSOCKET_METHOD,
+)
+
 
 log = logging.getLogger(__name__)
 
 
-# HTTP methods recognized as route decorators.
-HTTP_METHODS = frozenset({
-    "get", "post", "put", "delete", "patch", "options", "head",
-})
-
-# WebSocket decorator attribute name.
-WEBSOCKET_METHOD = "websocket"
-
-# Map runner function names to agent class names.
-# Used when a handler calls `run_invoice_agent(...)`.
-RUNNER_TO_AGENT: dict[str, str] = {
-    "run_orchestrator_agent": "OrchestratorAgent",
-    "run_invoice_agent": "InvoiceAgent",
-    "run_payments_agent": "PaymentsAgent",
-    "run_fraud_agent": "FraudComplianceAgent",
-    "run_onboarding_agent": "VendorOnboardingAgent",
-    "run_communication_agent": "CommunicationAgent",
-}
-
-# Agent classes that are not named `*Agent` but are agents.
-EXTRA_AGENT_CLASSES: frozenset[str] = frozenset({
-    "CoPilotAssistant",
-})
-
-# Function name that indicates connecting to an MCP server.
-MCP_CONNECT_FUNCTION = "create_mcp_server"
-
+# Module names that contain agent classes. Used to detect agent-to-agent calls.
 
 @dataclass
 class EntryPoint:

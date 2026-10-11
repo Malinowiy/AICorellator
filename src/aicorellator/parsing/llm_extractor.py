@@ -28,57 +28,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..ingestion.discovery import FileEntry, FileManifest
+from ..patterns import (
+    BASE_URL_KEY_SUFFIXES,
+    BASE_URL_KEYS,
+    MODEL_KEY_SUFFIXES,
+    MODEL_KEYS,
+    PROVIDER_BY_KEY,
+    PROVIDER_KEYS,
+)
 
 
 log = logging.getLogger(__name__)
 
-
-# Keys that signal LLM provider or endpoint.
-PROVIDER_KEYS = frozenset({
-    "LLM_PROVIDER",
-    "LLM_DEFAULT_PROVIDER",
-})
-
-MODEL_KEYS = frozenset({
-    "LLM_DEFAULT_MODEL",
-    "LLM_MODEL",
-    "LLM_MODEL_NAME",
-    "OPENAI_MODEL",
-    "ANTHROPIC_MODEL",
-    "OLLAMA_MODEL",
-    "DEFAULT_MODEL",
-})
-
-BASE_URL_KEYS = frozenset({
-    "OLLAMA_BASE_URL",
-    "OLLAMA_HOST",
-    "OPENAI_BASE_URL",
-    "OPENAI_API_BASE",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_API_BASE",
-    "LLM_BASE_URL",
-    "LLM_API_BASE",
-    "LLM_ENDPOINT",
-})
-
-# Prefix-based patterns — anything matching these suffixes is picked up.
-MODEL_KEY_SUFFIXES = ("_MODEL", "_MODEL_NAME")
-BASE_URL_KEY_SUFFIXES = ("_BASE_URL", "_API_BASE", "_ENDPOINT")
-
-# Providers we recognize by key name.
-PROVIDER_BY_KEY: dict[str, str] = {
-    "OPENAI_API_KEY": "openai",
-    "OPENAI_BASE_URL": "openai",
-    "OPENAI_API_BASE": "openai",
-    "OPENAI_MODEL": "openai",
-    "ANTHROPIC_API_KEY": "anthropic",
-    "ANTHROPIC_BASE_URL": "anthropic",
-    "ANTHROPIC_API_BASE": "anthropic",
-    "ANTHROPIC_MODEL": "anthropic",
-    "OLLAMA_BASE_URL": "ollama",
-    "OLLAMA_HOST": "ollama",
-    "OLLAMA_MODEL": "ollama",
-}
 
 # Regex to match KEY=VALUE lines in .env-style files.
 _ENV_LINE = re.compile(r"^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.+?)\s*$")

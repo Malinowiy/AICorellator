@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 from ..graph.models import Edge, Node
 from ..ingestion.discovery import FileManifest
+from ..patterns import MCP_DIR_SEGMENT, MCP_SERVERS_SEGMENT
 from .classification import (
     Classification,
     classify_class,
@@ -329,9 +330,9 @@ def _sha256(payload: str) -> str:
 def _server_name_for_file(file_path: str) -> str | None:
     """Extract mcp server name from a file path, or None."""
     parts = file_path.split("/")
-    if "mcp" in parts and "servers" in parts:
+    if MCP_DIR_SEGMENT in parts and MCP_SERVERS_SEGMENT in parts:
         try:
-            servers_idx = parts.index("servers")
+            servers_idx = parts.index(MCP_SERVERS_SEGMENT)
         except ValueError:
             return None
         if servers_idx + 2 >= len(parts):

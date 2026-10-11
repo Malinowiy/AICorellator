@@ -17,17 +17,11 @@ import subprocess
 from pathlib import Path
 
 from ..ingestion.discovery import FileManifest
+from ..patterns import TSA_SUPPORTED_LANGUAGES
 from .models import TSASymbol, TSAOutput
 
 
 log = logging.getLogger(__name__)
-
-# Languages TSA supports with --structure. Others skipped.
-TSA_SUPPORTED_LANGUAGES = frozenset({
-    "python", "typescript", "javascript",
-    "go", "java", "kotlin", "rust",
-    "c", "cpp", "csharp", "ruby", "php", "swift",
-})
 
 # Per-file timeout. TSA on a single file should be quick; if it hangs,
 # something is wrong.

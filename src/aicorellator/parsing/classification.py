@@ -12,6 +12,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ..patterns import (
+    EXCLUDED_CLASSES,
+    EXCLUDED_CLASS_SUFFIXES,
+    EXTRA_AGENT_CLASSES,
+    SINK_METHOD_NAMES,
+    TOOL_METHOD_PREFIXES,
+    SKIP_METHOD_NAMES,
+)
+
+from ..patterns import PROVIDER_HINTS, SINK_CATEGORY_HINTS
 
 @dataclass
 class Classification:
@@ -19,38 +29,6 @@ class Classification:
 
     kind: str
     attributes: dict[str, str] = field(default_factory=dict)
-
-
-# ============================================================
-# Exclusions — symbols we never classify
-# ============================================================
-
-# Base classes — abstract, not real components.
-EXCLUDED_CLASSES = frozenset({
-    "BaseAgent",
-    "BaseDetector",
-    "BaseEvaluator",
-    "BaseRepository",
-})
-
-# Agent classes that don't end in `*Agent` but are agents.
-EXTRA_AGENT_CLASSES = frozenset({
-    "CoPilotAssistant",
-})
-
-# Suffixes that indicate non-AI components even if the path looks relevant.
-EXCLUDED_CLASS_SUFFIXES = (
-    "Detector",     # CTF detectors (RCEDetector, etc.)
-    "Evaluator",    # CTF evaluators
-    "Schema",       # Pydantic schemas
-    "Result",       # internal result types
-    "Error",        # exceptions
-    "Exception",
-    "Kind",       # HookKind
-    "Envelope",   # HookEnvelope
-    "Outcome",    # HookOutcome
-    "Verdict",    # WebhookVerdict
-)
 
 
 # ============================================================
@@ -109,36 +87,10 @@ def classify_class(class_name: str, file_path: str) -> Classification | None:
 
     return None
 
+
 # ============================================================
 # Method classification
 # ============================================================
-
-# Method names that are dangerous actions.
-SINK_METHOD_NAMES = frozenset({
-    "execute_script",
-    "run_script",
-    "run_command",
-    "network_request",
-    "upload_file",
-    "delete_file",
-    "download_file",
-    "make_request",
-    "send_request",
-})
-
-# Prefixes that indicate a tool method.
-TOOL_METHOD_PREFIXES = (
-    "get_",
-    "update_",
-    "create_",
-    "delete_",
-    "process_",
-    "handle_",
-    "call_",
-    "fetch_",
-    "send_",
-    "list_",
-)
 
 
 def classify_method(
@@ -229,32 +181,19 @@ def classify_file(file_path: str) -> Classification | None:
 # ============================================================
 
 def _provider_from_name(class_name: str) -> str:
-    """Extract provider name from a class name."""
     name = class_name.lower()
-    if "ollama" in name:
-        return "ollama"
-    if "openai" in name:
-        return "openai"
-    if "anthropic" in name:
-        return "anthropic"
-    if "contextual" in name:
-        return "contextual"
-    if "mock" in name:
-        return "mock"
-    if "judge" in name:
-        return "judge"
+    for hint, provider in PROVIDER_HINTS:
+        if hint in name:
+            return provider
     return "unknown"
 
 
 def _sink_category(method_name: str) -> str:
-    """Categorize a sink by the type of danger it represents."""
-    if "script" in method_name or "command" in method_name:
-        return "code_execution"
-    if "network" in method_name or "request" in method_name:
-        return "network"
-    if "file" in method_name:
-        return "filesystem"
+    for hint, category in SINK_CATEGORY_HINTS:
+        if hint in method_name:
+            return category
     return "unknown"
+
 
 def _has_path_segment(file_path: str, segment: str) -> bool:
     """True if `segment` is a path component anywhere in file_path.

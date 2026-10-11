@@ -10,111 +10,15 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..patterns import (
+    ALLOWED_HIDDEN_FILES,
+    EXCLUDE_DIRS,
+    EXCLUDE_EXTENSIONS,
+    FILENAME_LANGUAGE,
+    LANGUAGE_BY_EXTENSION,
+    MAX_FILE_SIZE,
+)
 from .target import Target
-
-
-# Directories never descended into. Matched by name at any depth.
-EXCLUDE_DIRS = frozenset({
-    ".git", ".hg", ".svn",
-    "node_modules",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".venv", "venv", "env",
-    "dist", "build", ".eggs",
-    ".idea", ".vscode",
-    ".ast-cache",
-})
-
-# File extensions we do not read.
-EXCLUDE_EXTENSIONS = frozenset({
-    # Binaries and compiled artifacts
-    ".pyc", ".pyo", ".so", ".dylib", ".dll", ".o", ".a",
-    # Images
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".ico",
-    ".bmp", ".tiff",
-    # Audio/Video
-    ".mp3", ".mp4", ".mov", ".avi", ".webm", ".wav",
-    # Archives
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    # Documents
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    # Fonts
-    ".woff", ".woff2", ".ttf", ".eot",
-    # Databases
-    ".db", ".sqlite", ".sqlite3",
-    # Web templates and styles — not relevant for AI graph
-    ".html", ".htm", ".css", ".scss", ".sass", ".less",
-    # Lock files — dependency pins, not source
-    ".lock",
-})
-
-# Extension → language hint. Used by TSA worker and classification heuristics.
-LANGUAGE_BY_EXTENSION: dict[str, str] = {
-    # Source code
-    ".py": "python",
-    ".pyi": "python",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".kt": "kotlin",
-    ".kts": "kotlin",
-    ".scala": "scala",
-    ".rb": "ruby",
-    ".php": "php",
-    ".cs": "csharp",
-    ".swift": "swift",
-    ".c": "c",
-    ".h": "c",
-    ".cc": "cpp",
-    ".cpp": "cpp",
-    ".cxx": "cpp",
-    ".hpp": "cpp",
-    # Shell — may contain curl to LLM, MCP startup
-    ".sh": "shell",
-    ".bash": "shell",
-    # Migration templates
-    ".mako": "mako",
-    # Config / data — used by LLM Extractor
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".json": "json",
-    ".toml": "toml",
-    ".ini": "ini",
-    ".env": "dotenv",
-    ".sql": "sql",
-    ".md": "markdown",
-}
-
-# Files without extension, matched by exact name.
-FILENAME_LANGUAGE: dict[str, str] = {
-    "Dockerfile": "dockerfile",
-    "dockerfile": "dockerfile",
-    "Makefile": "makefile",
-    "makefile": "makefile",
-    "README": "markdown",
-    # Files with no extension or with hidden-name-as-extension
-    ".env": "dotenv",
-    ".gitignore": "gitignore",
-    ".dockerignore": "dockerignore",
-}
-
-# Hidden files we DO want to process, despite leading dot.
-ALLOWED_HIDDEN_FILES = frozenset({
-    ".env",
-    ".gitignore",
-    ".dockerignore",
-})
-
-# Max file size to hash and parse (10 MiB). Larger files are skipped.
-MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
 @dataclass
