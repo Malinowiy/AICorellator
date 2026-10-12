@@ -104,7 +104,8 @@ def normalize(
     for symbol in tsa_output.symbols:
         if symbol.kind != "class":
             continue
-        c = classify_class(symbol.name, symbol.file_path)
+        symbol_caps = _caps_for_symbol(capabilities, symbol.file_path, symbol.name)
+        c = classify_class(symbol.name, symbol.file_path, capabilities=symbol_caps)
         if c is None:
             continue
         node = _node_from_class(symbol, c, capabilities)
@@ -117,7 +118,11 @@ def normalize(
     for symbol in tsa_output.symbols:
         if symbol.kind != "method":
             continue
-        c = classify_method(symbol.name, symbol.file_path, symbol.class_name)
+        symbol_caps = _caps_for_symbol(capabilities, symbol.file_path, symbol.name)
+        c = classify_method(
+            symbol.name, symbol.file_path, symbol.class_name,
+            capabilities=symbol_caps,
+        )
         if c is None:
             continue
         node = _node_from_method(symbol, c, capabilities)

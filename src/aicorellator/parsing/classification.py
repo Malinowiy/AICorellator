@@ -4,6 +4,16 @@ Heuristics are intentionally conservative: false positives are
 cheaper than false negatives here, because Phase 3 (LLM analysis)
 filters noise. A missed agent is worse than a spurious one.
 
+Two signals are used:
+
+  1. Name-based heuristics (class names, method names, file paths).
+  2. Capability-based refinement (ADR-0009): AST-derived
+     capabilities override or reinforce name-based decisions.
+
+Capabilities take precedence when they conflict with names.
+A class named `execute_script` without `executes_shell` is not a
+sink. A class named `RandomHelper` with `executes_shell` is.
+
 Rules are tuned against real projects (FinBot CTF). Update when
 new patterns emerge.
 """
@@ -16,12 +26,13 @@ from ..patterns import (
     EXCLUDED_CLASSES,
     EXCLUDED_CLASS_SUFFIXES,
     EXTRA_AGENT_CLASSES,
+    PROVIDER_HINTS,
+    SINK_CATEGORY_HINTS,
     SINK_METHOD_NAMES,
-    TOOL_METHOD_PREFIXES,
     SKIP_METHOD_NAMES,
+    TOOL_METHOD_PREFIXES,
 )
 
-from ..patterns import PROVIDER_HINTS, SINK_CATEGORY_HINTS
 
 @dataclass
 class Classification:
@@ -32,27 +43,92 @@ class Classification:
 
 
 # ============================================================
+# Capability sets (ADR-0009)
+# ============================================================
+
+# Capabilities that make a symbol a sink, regardless of name.
+SINK_CAPABILITIES: frozenset[str] = frozenset({
+    "executes_code",
+    "executes_shell",
+    "writes_filesystem",
+    "writes_db",
+})
+
+# Capabilities that make a symbol an agent, regardless of name.
+AGENT_CAPABILITIES: frozenset[str] = frozenset({
+    "calls_llm",
+    "invokes_mcp_tool",
+})
+
+# Capabilities that make a symbol an LLM endpoint, regardless of name.
+LLM_ENDPOINT_CAPABILITIES: frozenset[str] = frozenset({
+    "calls_llm",
+})
+
+# Capabilities that make a symbol a tool, regardless of name.
+TOOL_CAPABILITIES: frozenset[str] = frozenset({
+    "invokes_mcp_tool",
+})
+
+
+# ============================================================
 # Class classification
 # ============================================================
 
-def classify_class(class_name: str, file_path: str) -> Classification | None:
+def classify_class(
+    class_name: str,
+    file_path: str,
+    capabilities: list[str] | None = None,
+) -> Classification | None:
     """Classify a class symbol.
+
+    Args:
+        class_name: name of the class.
+        file_path: relative path.
+        capabilities: optional list of capabilities extracted from
+                      the class body (ADR-0009). When provided, they
+                      take precedence over name-based heuristics.
 
     Returns None if the class is not an AI infrastructure component.
     """
+    caps = set(capabilities or ())
+
+    # --- Exclusions (never classify, regardless of capabilities) ---
     if class_name in EXCLUDED_CLASSES:
         return None
     if class_name.endswith(EXCLUDED_CLASS_SUFFIXES):
         return None
 
-    # --- Agents ---
+    # --- Capability-based refinement (highest priority) ---
+    if caps & SINK_CAPABILITIES:
+        # executes_shell / executes_code / writes_* → sink.
+        # No name is required.
+        return Classification(
+            kind="sink",
+            attributes={"category": _sink_category_from_caps(caps)},
+        )
+
+    if caps & AGENT_CAPABILITIES:
+        # calls_llm + invokes_mcp_tool → agent.
+        return Classification(kind="agent")
+
+    if caps & LLM_ENDPOINT_CAPABILITIES:
+        # calls_llm alone, without MCP → llm_endpoint.
+        provider = _provider_from_name(class_name)
+        return Classification(
+            kind="llm_endpoint",
+            attributes={"provider": provider},
+        )
+
+    # --- Name-based heuristics (fall through if capabilities empty) ---
+
+    # Agents
     if class_name.endswith(("Agent", "Orchestrator")):
         return Classification(kind="agent")
-    # --- Agents (extra classes) ---
     if class_name in EXTRA_AGENT_CLASSES:
         return Classification(kind="agent")
 
-    # --- LLM endpoints (by explicit name) ---
+    # LLM endpoints (by explicit name)
     if class_name in (
         "LLMClient",
         "OllamaClient",
@@ -67,7 +143,7 @@ def classify_class(class_name: str, file_path: str) -> Classification | None:
             attributes={"provider": provider},
         )
 
-    # --- LLM endpoints (by path + suffix) ---
+    # LLM endpoints (by path + suffix)
     if _has_path_segment(file_path, "llm") and class_name.endswith(("Client", "Judge")):
         provider = _provider_from_name(class_name)
         return Classification(
@@ -75,12 +151,12 @@ def classify_class(class_name: str, file_path: str) -> Classification | None:
             attributes={"provider": provider},
         )
 
-    # --- MCP servers (by path) ---
+    # MCP servers (by path)
     if _has_path_segment(file_path, "servers") and _has_path_segment(file_path, "mcp"):
         if class_name.endswith(("Server", "Service")):
             return Classification(kind="mcp_server")
 
-    # --- Guardrails (by path + name keyword) ---
+    # Guardrails (by path + name keyword)
     if _has_path_segment(file_path, "guardrails"):
         if any(kw in class_name for kw in ("Guardrail", "Guard", "Hook")):
             return Classification(kind="guardrail")
@@ -92,28 +168,53 @@ def classify_class(class_name: str, file_path: str) -> Classification | None:
 # Method classification
 # ============================================================
 
-
 def classify_method(
     method_name: str,
     file_path: str,
     class_name: str | None,
+    capabilities: list[str] | None = None,
 ) -> Classification | None:
     """Classify a method symbol.
 
+    Args:
+        method_name: name of the method or function.
+        file_path: relative path.
+        class_name: enclosing class name, or None for module-level.
+        capabilities: optional list of capabilities (ADR-0009).
+                      When provided, they take precedence over names.
+
     Returns None if the method is not a tool or sink.
     """
+    caps = set(capabilities or ())
+
+    # --- Exclusions ---
     if method_name.startswith("_"):
         return None
 
-    # Skip serialization helpers — not tools
-    if method_name in ("to_dict", "to_summary_dict", "to_json", "to_yaml"):
+    # Skip serialization helpers — not tools.
+    if method_name in SKIP_METHOD_NAMES:
         return None
 
-    # Skip server factories — create_*_server
+    # Skip server factories — create_*_server.
     if method_name.startswith("create_") and method_name.endswith("_server"):
         return None
 
-    # --- Sinks (by explicit name) ---
+    # --- Capability-based refinement (highest priority) ---
+    if caps & SINK_CAPABILITIES:
+        return Classification(
+            kind="sink",
+            attributes={"category": _sink_category_from_caps(caps)},
+        )
+
+    if caps & TOOL_CAPABILITIES:
+        attrs: dict[str, str] = {}
+        if class_name:
+            attrs["parent_class"] = class_name
+        return Classification(kind="tool", attributes=attrs)
+
+    # --- Name-based heuristics ---
+
+    # Sinks (by explicit name)
     if method_name in SINK_METHOD_NAMES:
         category = _sink_category(method_name)
         return Classification(
@@ -121,14 +222,14 @@ def classify_method(
             attributes={"category": category},
         )
 
-    # --- Tools (in tools/ directory, by prefix) ---
+    # Tools (in tools/ directory, by prefix)
     if _has_path_segment(file_path, "tools") and method_name.startswith(TOOL_METHOD_PREFIXES):
-        attrs: dict[str, str] = {}
+        attrs = {}
         if class_name:
             attrs["parent_class"] = class_name
         return Classification(kind="tool", attributes=attrs)
 
-    # --- Tools (in MCP servers, non-private methods) ---
+    # Tools (in MCP servers, non-private methods)
     if (
         _has_path_segment(file_path, "mcp")
         and _has_path_segment(file_path, "servers")
@@ -140,6 +241,7 @@ def classify_method(
         return Classification(kind="tool", attributes=attrs)
 
     return None
+
 
 # ============================================================
 # File classification
@@ -160,13 +262,9 @@ def classify_file(file_path: str) -> Classification | None:
             servers_idx = parts.index("servers")
         except ValueError:
             return None
-        # Ensure there IS a server name segment after "servers"
         if servers_idx + 2 >= len(parts):
-            # file is mcp/servers/__init__.py or mcp/servers/foo.py
-            # — not a server subdirectory
             return None
         server_name = parts[servers_idx + 1]
-        # Exclude non-directory "names" (files at servers level)
         if server_name.endswith(".py"):
             return None
         return Classification(
@@ -175,6 +273,7 @@ def classify_file(file_path: str) -> Classification | None:
         )
 
     return None
+
 
 # ============================================================
 # Helpers
@@ -192,6 +291,19 @@ def _sink_category(method_name: str) -> str:
     for hint, category in SINK_CATEGORY_HINTS:
         if hint in method_name:
             return category
+    return "unknown"
+
+
+def _sink_category_from_caps(caps: set[str]) -> str:
+    """Derive a sink category from capabilities."""
+    if "executes_shell" in caps or "executes_code" in caps:
+        return "code_execution"
+    if "writes_db" in caps:
+        return "database"
+    if "writes_filesystem" in caps:
+        return "filesystem"
+    if "http_egress" in caps:
+        return "network"
     return "unknown"
 
 
