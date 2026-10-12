@@ -17,7 +17,7 @@ from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.reporting import write_bundle
 from aicorellator.workspace import open_workspace
-
+from aicorellator.parsing.capability_extractor import extract as extract_capabilities
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -60,6 +60,15 @@ def main() -> int:
     print(f"  yaml:           {len(manifest.by_language('yaml'))}")
     print(f"  toml:           {len(manifest.by_language('toml'))}")
     print()
+    capabilities = {}
+    for entry in manifest.files:
+        if entry.language != "python":
+            continue
+        fc = extract_capabilities(entry.abs_path, entry.path)
+        capabilities[entry.path] = fc
+
+    print(f"Capabilities: {len(capabilities)} files")
+    print()
 
     tsa = run_tsa(manifest, target.root)
     ep = run_entry_points(manifest)
@@ -72,7 +81,7 @@ def main() -> int:
     print(f"LLM endpoints: {len(llm.deduplicated())}")
     print()
 
-    delta = normalize(manifest, tsa, ep, llm)
+    delta = normalize(manifest, tsa, ep, llm, capabilities=capabilities)
 
     with GraphStore(ws.db_path) as store:
         result = write_graph(store, delta)

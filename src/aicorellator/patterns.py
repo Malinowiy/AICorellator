@@ -239,6 +239,208 @@ PROVIDER_HINTS: tuple[tuple[str, str], ...] = (
     ("judge", "judge"),
 )
 
+# ============================================================
+# Capabilities (ADR-0009)
+# ============================================================
+# Capabilities are derived from AST calls, not from names.
+# Each entry maps a capability to the call patterns that trigger
+# it. Patterns are matched against:
+#   - dotted call names:  subprocess.run, os.system, open
+#   - attribute access:   request.body, cursor.execute
+#
+# Matching is intentionally simple — false positives are accepted
+# (see ADR-0009). The LLM in Phase 3 filters noise.
+
+# --- Node capabilities ---
+
+CAPABILITY_EXECUTES_CODE: tuple[str, ...] = (
+    "subprocess.run",
+    "subprocess.call",
+    "subprocess.Popen",
+    "subprocess.check_output",
+    "subprocess.check_call",
+    "os.system",
+    "os.popen",
+    "os.execv",
+    "os.execve",
+    "os.spawnv",
+    "eval",
+    "exec",
+    "compile",
+    "pickle.loads",
+    "marshal.loads",
+    "yaml.unsafe_load",
+)
+
+# Calls that ALWAYS execute a shell — no keyword required.
+CAPABILITY_EXECUTES_SHELL_IMPLICIT: tuple[str, ...] = (
+    "os.system",
+    "os.popen",
+)
+
+# Calls that execute a shell only when shell=True is passed.
+CAPABILITY_EXECUTES_SHELL_EXPLICIT: tuple[str, ...] = (
+    "subprocess.run",
+    "subprocess.Popen",
+    "subprocess.call",
+)
+
+# Union — for tests that just want "any shell capability".
+CAPABILITY_EXECUTES_SHELL: tuple[str, ...] = (
+    CAPABILITY_EXECUTES_SHELL_IMPLICIT + CAPABILITY_EXECUTES_SHELL_EXPLICIT
+)
+
+CAPABILITY_READS_FILESYSTEM: tuple[str, ...] = (
+    "open",
+    "io.open",
+    "pathlib.Path.read_text",
+    "pathlib.Path.read_bytes",
+    "pathlib.Path.open",
+    "os.read",
+    "shutil.copy",
+    "shutil.copytree",
+)
+
+CAPABILITY_WRITES_FILESYSTEM: tuple[str, ...] = (
+    "pathlib.Path.write_text",
+    "pathlib.Path.write_bytes",
+    "os.write",
+    "shutil.move",
+    "shutil.rmtree",
+    "os.remove",
+    "os.unlink",
+    "os.rmdir",
+    "os.makedirs",
+)
+
+CAPABILITY_READS_DB: tuple[str, ...] = (
+    "cursor.execute",       # requires SQL prefix check
+    "connection.execute",
+    "session.execute",
+    "session.query",
+    "engine.execute",
+    "text",                 # SQLAlchemy
+)
+
+CAPABILITY_WRITES_DB: tuple[str, ...] = (
+    # Same call sites as reads_db; the distinction is the SQL
+    # keyword (INSERT / UPDATE / DELETE / DROP). The extractor
+    # inspects the first string argument.
+    "cursor.execute",
+    "connection.execute",
+    "session.execute",
+)
+
+CAPABILITY_HTTP_EGRESS: tuple[str, ...] = (
+    "requests.get",
+    "requests.post",
+    "requests.put",
+    "requests.patch",
+    "requests.delete",
+    "requests.head",
+    "requests.request",
+    "httpx.get",
+    "httpx.post",
+    "httpx.put",
+    "httpx.delete",
+    "httpx.request",
+    "aiohttp.ClientSession",
+    "urllib.request.urlopen",
+    "urllib.request.Request",
+)
+
+CAPABILITY_HTTP_INGRESS: tuple[str, ...] = (
+    # Entry points — detected by the entry-point detector, not by
+    # the capability extractor. Listed here for completeness.
+    # The extractor does not flag route decorators as a capability.
+)
+
+CAPABILITY_READS_ENV: tuple[str, ...] = (
+    "os.environ",
+    "os.getenv",
+    "os.environ.get",
+    "os.environb",
+)
+
+CAPABILITY_CALLS_LLM: tuple[str, ...] = (
+    "openai.chat.completions.create",
+    "openai.Completion.create",
+    "anthropic.messages.create",
+    "ollama.chat",
+    "ollama.generate",
+    "litellm.completion",
+    "litellm.acompletion",
+    "langchain.chat_models.ChatOpenAI",
+    "langchain.llms.Ollama",
+    "llama_cpp.Llama",
+    "vllm.LLM",
+)
+
+CAPABILITY_INVOKES_MCP_TOOL: tuple[str, ...] = (
+    "session.call_tool",
+    "client.call_tool",
+    "mcp_client.call_tool",
+    "server.call_tool",
+    "fastmcp.client.call_tool",
+)
+
+# --- Secret-like env variable names ---
+# Used to distinguish reads_env from reads_secrets.
+
+SECRET_ENV_KEY_SUBSTRINGS: tuple[str, ...] = (
+    "KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "API_KEY",
+    "ACCESS_KEY",
+    "PRIVATE_KEY",
+)
+
+# --- SQL keyword → capability ---
+
+SQL_READ_KEYWORDS: tuple[str, ...] = (
+    "SELECT",
+    "PRAGMA",
+    "EXPLAIN",
+)
+
+SQL_WRITE_KEYWORDS: tuple[str, ...] = (
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "CREATE",
+    "ALTER",
+    "TRUNCATE",
+    "REPLACE",
+)
+
+# --- Lethal trifecta combinations (ADR-0009) ---
+
+LETHAL_TRIFECTA_READ_CAPS: frozenset[str] = frozenset({
+    "reads_untrusted",
+})
+
+LETHAL_TRIFECTA_SECRET_CAPS: frozenset[str] = frozenset({
+    "reads_secrets",
+    "reads_env",
+})
+
+LETHAL_TRIFECTA_EGRESS_CAPS: frozenset[str] = frozenset({
+    "http_egress",
+    "writes_filesystem",
+    "executes_shell",
+    "executes_code",
+})
+
+# --- Edge-level capabilities (ADR-0009) ---
+
+EDGE_CAPABILITY_DATA_FLOWS_FORWARD = "data_flows_forward"
+EDGE_CAPABILITY_CONTROL_FLOWS_FORWARD = "control_flows_forward"
+EDGE_CAPABILITY_UNTRUSTED_PROPAGATES = "untrusted_propagates"
 
 # ============================================================
 # Method name patterns

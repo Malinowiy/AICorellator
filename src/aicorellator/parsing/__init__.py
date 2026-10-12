@@ -26,6 +26,11 @@ from .ast_normalizer import GraphDelta, normalize
 from .writer import set_phase1_done, write as write_graph
 from .entry_points import run as run_entry_points
 from .llm_extractor import run as run_llm_extractor
+from .capability_extractor import (
+    FileCapabilities,
+    SymbolCapabilities,
+    extract as extract_capabilities,
+)
 
 __all__ = [
     "TSASymbol",
@@ -41,4 +46,7 @@ __all__ = [
     "classify_file",
     "classify_method",
     "run_entry_points",
+    "FileCapabilities",
+    "SymbolCapabilities",
+    "extract_capabilities",
 ]

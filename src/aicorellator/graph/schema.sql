@@ -1,6 +1,6 @@
 -- ============================================================
 -- AICorellator — SQLite schema
--- Phase 0: Data Model
+-- Phase 2: capabilities, chain groups
 -- ============================================================
 -- Conventions:
 --   - Timestamps are SQLite-style UTC: 'YYYY-MM-DD HH:MM:SS'.
@@ -9,6 +9,8 @@
 --   - JSON columns are TEXT with a JSON validity CHECK
 --     (requires SQLite 3.38+).
 --   - confidence is REAL in [0.0, 1.0].
+--   - capabilities is a JSON array of capability strings
+--     (see ADR-0009).
 --   - host_id references hosts(id). In Phase 0, only 'localhost'.
 -- ============================================================
 
@@ -30,14 +32,13 @@ CREATE TABLE IF NOT EXISTS schema_version (
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS hosts (
-    id              TEXT PRIMARY KEY,          -- 'localhost' in Phase 0
+    id              TEXT PRIMARY KEY,
     hostname        TEXT NOT NULL,
     ip              TEXT,
-    platform        TEXT NOT NULL,             -- swarm | k8s | standalone
+    platform        TEXT NOT NULL,
     agent_version   TEXT,
     last_heartbeat  TIMESTAMP,
     status          TEXT NOT NULL DEFAULT 'active',
-                                               -- active | unreachable | stale
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (status IN ('active', 'unreachable', 'stale')),
     CHECK (platform IN ('swarm', 'k8s', 'standalone'))
@@ -46,7 +47,6 @@ CREATE TABLE IF NOT EXISTS hosts (
 CREATE INDEX IF NOT EXISTS idx_hosts_status ON hosts(status);
 CREATE INDEX IF NOT EXISTS idx_hosts_platform ON hosts(platform);
 
--- Bootstrap: Phase 0 always has exactly one host.
 INSERT OR IGNORE INTO hosts (id, hostname, platform, status)
 VALUES ('localhost', 'localhost', 'standalone', 'active');
 
@@ -61,20 +61,25 @@ VALUES ('localhost', 'localhost', 'standalone', 'active');
 --   credential:   sha256(source_file + var_name)
 --   sink:         sha256(call_target + file_path)
 --   entry_point:  sha256(file_path + route_path)
--- All derivations must include host_id in the hash input so that
--- two hosts with identical code produce distinct nodes.
+--
+-- capabilities (ADR-0009): JSON array of capability strings
+-- derived from AST calls, not from names. Examples:
+--   executes_code, executes_shell, reads_filesystem,
+--   writes_filesystem, reads_db, writes_db, http_egress,
+--   http_ingress, reads_env, reads_secrets, calls_llm,
+--   invokes_mcp_tool, reads_untrusted
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS nodes (
-    id           TEXT PRIMARY KEY,             -- kind-specific sha256, includes host_id
+    id           TEXT PRIMARY KEY,
     kind         TEXT NOT NULL,
     name         TEXT NOT NULL,
     host_id      TEXT NOT NULL,
     attributes   JSON NOT NULL DEFAULT '{}',
+    capabilities JSON NOT NULL DEFAULT '[]',
     confidence   REAL NOT NULL DEFAULT 1.0,
-    content_hash TEXT,                         -- for re-run caching
+    content_hash TEXT,
     status       TEXT NOT NULL DEFAULT 'active',
-                                               -- active | stale
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -86,7 +91,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     )),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),
-    CHECK (json_valid(attributes))
+    CHECK (json_valid(attributes)),
+    CHECK (json_valid(capabilities))
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
@@ -94,38 +100,26 @@ CREATE INDEX IF NOT EXISTS idx_nodes_host ON nodes(host_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_status ON nodes(status);
 CREATE INDEX IF NOT EXISTS idx_nodes_name ON nodes(name);
 CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
--- NOTE: idx_nodes_confidence is intentionally absent. confidence has
--- very low cardinality (defaults to 1.0) and SQLite's query planner
--- ignores it. If a query needs it, add it via a migration.
 
 -- ------------------------------------------------------------
 -- edges — graph relations (stored kinds only)
 -- ------------------------------------------------------------
--- Stored:  uses_model, provides_tool, delegates_to, has_access_to
--- Derived: reaches_sink, called_by — computed by Query Layer,
---          NOT stored. See C4_L3_Phase0.md.
+-- Stored:  uses_model, provides_tool, delegates_to, has_access_to, guards
+-- Derived: reaches_sink, called_by — computed by Query Layer.
 --
--- precision (ADR-002):
---   'syntactic'         — from TSA (tree-sitter-analyzer)
---   'compiler-verified' — from SCIP indexer
---
--- host_id semantics:
---   host_id is the "local" host for this edge — the host where the
---   relationship was observed. For same-host edges, host_id matches
---   source_id.host_id and target_id.host_id. For CROSS-HOST edges
---   (e.g., agent on host A calls LLM on host B), host_id may differ
---   from either endpoint's host_id. Such edges are allowed and must
---   be explicit — there is no CHECK enforcing equality.
+-- capabilities (ADR-0009): JSON array of edge-level capabilities:
+--   data_flows_forward, control_flows_forward, untrusted_propagates
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS edges (
-    id           TEXT PRIMARY KEY,             -- sha256(source + target + kind + host_id)
+    id           TEXT PRIMARY KEY,
     source_id    TEXT NOT NULL,
     target_id    TEXT NOT NULL,
     kind         TEXT NOT NULL,
     host_id      TEXT NOT NULL,
     precision    TEXT NOT NULL DEFAULT 'syntactic',
     attributes   JSON NOT NULL DEFAULT '{}',
+    capabilities JSON NOT NULL DEFAULT '[]',
     confidence   REAL NOT NULL DEFAULT 1.0,
     status       TEXT NOT NULL DEFAULT 'active',
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -142,6 +136,7 @@ CREATE TABLE IF NOT EXISTS edges (
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(attributes)),
+    CHECK (json_valid(capabilities)),
     CHECK (source_id <> target_id)
 );
 
@@ -152,28 +147,18 @@ CREATE INDEX IF NOT EXISTS idx_edges_status ON edges(status);
 CREATE INDEX IF NOT EXISTS idx_edges_host ON edges(host_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_edges_unique
     ON edges(source_id, target_id, kind, host_id);
--- NOTE: idx_edges_precision is intentionally absent. precision has
--- two possible values and SQLite ignores low-cardinality indexes.
 
 -- ------------------------------------------------------------
 -- findings — scanner-reported weaknesses
--- ------------------------------------------------------------
--- A finding is a weakness reported by a scanner (AAK, LLM-scanner,
--- MCP-scanner) attached to EITHER a node OR an edge — never both,
--- never neither. The CHECK enforces strict exclusivity.
---
--- updated_at is used by the cleanup policy (see C4_L3_Phase0.md:
--- "Delete findings with status = 'stale' older than N days").
--- It is maintained by trg_findings_updated_at.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS findings (
     id           TEXT PRIMARY KEY,
     node_id      TEXT,
     edge_id      TEXT,
-    scanner      TEXT NOT NULL,                -- aak | llm-scanner | mcp-scanner
-    rule_id      TEXT,                         -- e.g. 'AAK-LLM-SQL-RCE-001'
-    severity     TEXT NOT NULL,                -- critical | high | medium | low
+    scanner      TEXT NOT NULL,
+    rule_id      TEXT,
+    severity     TEXT NOT NULL,
     title        TEXT NOT NULL,
     description  TEXT,
     evidence     JSON NOT NULL DEFAULT '{}',
@@ -206,38 +191,25 @@ CREATE INDEX IF NOT EXISTS idx_findings_updated ON findings(updated_at);
 -- ------------------------------------------------------------
 -- chains — correlator-evaluated compromise chains
 -- ------------------------------------------------------------
--- A chain is an evaluated compromise path produced by the
--- correlator (ADR-0005, ADR-0006). Candidate chains are NOT
--- stored — only evaluated ones.
+-- A chain is an evaluated compromise path (ADR-0005, ADR-0006).
+-- Candidate chains are NOT stored — only evaluated ones.
 --
--- NO FOREIGN KEYS on chain_nodes / chain_edges.
--- Validation is Layer 3 app logic (ADR-0006). Chains with
--- validated = 0 may reference non-existent nodes/edges — these
--- are hallucinated chains kept for provenance, not for reports.
---
--- NOTE: chain_nodes and chain_edges are JSON arrays of IDs.
--- No FK validation is possible on JSON contents. After a CASCADE
--- delete of a referenced node/edge, these arrays may contain
--- dangling IDs. Validation happens at query time (see QueryLayer)
--- or via periodic integrity checks.
---
--- validated:
---   0 — rejected as hallucination (Layer 3, ADR-0006)
---   1 — all edges confirmed to exist in the edges table
+-- No foreign keys on chain_nodes / chain_edges. Validation is
+-- Layer 3 app logic. Chains with validated = 0 may reference
+-- non-existent nodes/edges — kept for provenance, not for reports.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chains (
-    id              TEXT PRIMARY KEY,          -- chain_id from Layer 1 (ADR-0006)
-    chain_nodes     JSON NOT NULL,             -- ordered list of node IDs
-    chain_edges     JSON NOT NULL,             -- ordered list of edge IDs
-    verdict         TEXT NOT NULL,             -- exploitable | not_exploitable | uncertain
+    id              TEXT PRIMARY KEY,
+    chain_nodes     JSON NOT NULL,
+    chain_edges     JSON NOT NULL,
+    verdict         TEXT NOT NULL,
     confidence      REAL NOT NULL DEFAULT 0.0,
     reasoning       TEXT,
-    voter_outputs   JSON NOT NULL DEFAULT '[]',-- raw voter responses (ADR-0005)
-    prompt_version  TEXT NOT NULL,             -- prompt version used (ADR-0005)
-    validated       INTEGER NOT NULL DEFAULT 0,-- 0 | 1 (Layer 3 result, ADR-0006)
+    voter_outputs   JSON NOT NULL DEFAULT '[]',
+    prompt_version  TEXT NOT NULL,
+    validated       INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'active',
-                                               -- active | stale
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -257,17 +229,67 @@ CREATE INDEX IF NOT EXISTS idx_chains_validated ON chains(validated);
 CREATE INDEX IF NOT EXISTS idx_chains_prompt_version ON chains(prompt_version);
 
 -- ------------------------------------------------------------
--- state — per-host pipeline flags
+-- chain_groups — multi-chain attack groups (ADR-0010, ADR-0012)
 -- ------------------------------------------------------------
--- Primary key is (host_id, key). Global flags are DERIVED by
--- query, not stored. See C4_L3_Phase0.md.
+-- A chain group is a set of chains that meet through an
+-- untrusted_source. Dangerous when one chain WRITES to the
+-- source and another READS from it, reaching a sink.
 --
--- CHECK on key enforces the documented key set. Adding a new key
--- requires a migration — this is intentional: it catches typos
--- (e.g., 'Phase1_Done') at insert time.
+-- write_chain_ids / read_chain_ids: JSON arrays of chain IDs.
+-- No FKs — chains may be re-evaluated between runs.
 --
--- value is nullable to allow 'last_report_at' = NULL before the
--- first report is generated.
+-- score / score_components: from ADR-0012 (deterministic
+-- prioritization). score_components is a JSON object with the
+-- breakdown of contributing signals.
+--
+-- lethal_trifecta: 1 if the reading side passes through a node
+-- with reads_untrusted + reads_secrets + egress capability.
+-- ------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS chain_groups (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT,
+    untrusted_source_id TEXT NOT NULL,
+    write_chain_ids     JSON NOT NULL DEFAULT '[]',
+    read_chain_ids      JSON NOT NULL DEFAULT '[]',
+    lethal_trifecta     INTEGER NOT NULL DEFAULT 0,
+    score               REAL NOT NULL DEFAULT 0.0,
+    score_components    JSON NOT NULL DEFAULT '{}',
+    verdict             TEXT,
+    confidence          REAL NOT NULL DEFAULT 0.0,
+    reasoning           TEXT,
+    validated           INTEGER NOT NULL DEFAULT 0,
+    priority            TEXT,
+    status              TEXT NOT NULL DEFAULT 'active',
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (untrusted_source_id) REFERENCES nodes(id) ON DELETE CASCADE,
+
+    CHECK (lethal_trifecta IN (0, 1)),
+    CHECK (validated IN (0, 1)),
+    CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    CHECK (verdict IS NULL OR verdict IN (
+        'exploitable', 'not_exploitable', 'uncertain'
+    )),
+    CHECK (priority IS NULL OR priority IN ('low', 'medium', 'high')),
+    CHECK (status IN ('active', 'stale')),
+    CHECK (json_valid(write_chain_ids)),
+    CHECK (json_valid(read_chain_ids)),
+    CHECK (json_valid(score_components))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chain_groups_source
+    ON chain_groups(untrusted_source_id);
+CREATE INDEX IF NOT EXISTS idx_chain_groups_score
+    ON chain_groups(score DESC);
+CREATE INDEX IF NOT EXISTS idx_chain_groups_verdict
+    ON chain_groups(verdict);
+CREATE INDEX IF NOT EXISTS idx_chain_groups_status
+    ON chain_groups(status);
+
+-- ------------------------------------------------------------
+-- state — per-host pipeline flags
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS state (
@@ -294,8 +316,6 @@ CREATE TABLE IF NOT EXISTS state (
 
 CREATE INDEX IF NOT EXISTS idx_state_key ON state(key);
 
--- Bootstrap: default flags and cleanup parameters for localhost.
--- last_report_at is NULL — set on first report generation.
 INSERT OR IGNORE INTO state (host_id, key, value) VALUES
     ('localhost', 'phase1_done',           'false'),
     ('localhost', 'scan_done',             'false'),
@@ -309,15 +329,6 @@ INSERT OR IGNORE INTO state (host_id, key, value) VALUES
 
 -- ------------------------------------------------------------
 -- task_state — queue counters, per host per kind
--- ------------------------------------------------------------
--- kind: static | dynamic
--- scan_done is defined as "all tasks in terminal state
--- (done | failed | timeout)", not "active_count = 0".
--- Terminal-state counters are populated in Phase 2.
---
--- last_completed_at is NULL until the first task in this kind
--- completes (done, failed, or timeout) — or until a dynamic
--- worker finishes its first monitoring cycle.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS task_state (
@@ -340,7 +351,6 @@ CREATE TABLE IF NOT EXISTS task_state (
     CHECK (timeout_count >= 0)
 );
 
--- Bootstrap: two rows per host
 INSERT OR IGNORE INTO task_state (host_id, kind) VALUES
     ('localhost', 'static'),
     ('localhost', 'dynamic');
@@ -348,19 +358,13 @@ INSERT OR IGNORE INTO task_state (host_id, kind) VALUES
 -- ------------------------------------------------------------
 -- reports — metadata for generated report bundles
 -- ------------------------------------------------------------
--- The report itself is a bundle directory on disk:
---   <bundle_dir>/report.md, report.json, report.sarif, assets/
--- bundle_dir is 'current' for the live report, or '<timestamp>'
--- for archived ones.
--- Phase 0: only metadata is stored.
--- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS reports (
     id           TEXT PRIMARY KEY,
     host_id      TEXT NOT NULL,
-    bundle_dir   TEXT NOT NULL,                -- 'current' | '<timestamp>'
-    tier         TEXT NOT NULL,                -- fast | full
-    is_current   INTEGER NOT NULL DEFAULT 0,   -- 0 | 1
+    bundle_dir   TEXT NOT NULL,
+    tier         TEXT NOT NULL,
+    is_current   INTEGER NOT NULL DEFAULT 0,
     generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     metadata     JSON NOT NULL DEFAULT '{}',
 
@@ -376,20 +380,12 @@ CREATE INDEX IF NOT EXISTS idx_reports_tier ON reports(tier);
 CREATE INDEX IF NOT EXISTS idx_reports_generated ON reports(generated_at);
 CREATE INDEX IF NOT EXISTS idx_reports_bundle ON reports(bundle_dir);
 
--- Only one current report per host
 CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_current
     ON reports(host_id) WHERE is_current = 1;
 
 -- ------------------------------------------------------------
 -- Triggers — keep updated_at fresh
 -- ------------------------------------------------------------
--- The WHEN clause prevents the trigger from firing on its own
--- UPDATE (infinite recursion guard).
---
--- NOTE: GraphStore is not thread-safe by design (one connection
--- per thread). Parallel updates to the same row do not occur,
--- so the trigger does not race. If causal ordering becomes a
--- requirement, an ADR is needed.
 
 CREATE TRIGGER IF NOT EXISTS trg_nodes_updated_at
 AFTER UPDATE ON nodes
@@ -423,12 +419,23 @@ BEGIN
     UPDATE chains SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 
+CREATE TRIGGER IF NOT EXISTS trg_chain_groups_updated_at
+AFTER UPDATE ON chain_groups
+FOR EACH ROW
+WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE chain_groups SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
 -- ------------------------------------------------------------
 -- Seed schema_version
 -- ------------------------------------------------------------
 
 INSERT OR IGNORE INTO schema_version (version, description)
 VALUES (1, 'Phase 0: initial schema');
+
+INSERT OR IGNORE INTO schema_version (version, description)
+VALUES (2, 'Phase 2: capabilities + chain_groups');
 
 -- ============================================================
 -- End of schema

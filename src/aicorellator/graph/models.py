@@ -16,8 +16,8 @@ def utcnow() -> str:
     """ISO 8601 UTC timestamp, matching SQLite CURRENT_TIMESTAMP format."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+
 # Valid node kinds. Mirrors the CHECK constraint in schema.sql.
-# Update both when adding a new kind.
 VALID_NODE_KINDS = frozenset({
     "agent",
     "llm_endpoint",
@@ -30,8 +30,6 @@ VALID_NODE_KINDS = frozenset({
 })
 
 # Valid edge kinds. Mirrors the CHECK constraint in schema.sql.
-# Only stored kinds — derived kinds (reaches_sink, called_by) are
-# computed by the Query Layer and are not written to the DB.
 VALID_EDGE_KINDS = frozenset({
     "uses_model",
     "provides_tool",
@@ -39,6 +37,8 @@ VALID_EDGE_KINDS = frozenset({
     "has_access_to",
     "guards",
 })
+
+
 # ------------------------------------------------------------
 # Host
 # ------------------------------------------------------------
@@ -47,11 +47,11 @@ VALID_EDGE_KINDS = frozenset({
 class Host:
     id: str
     hostname: str
-    platform: str                       # swarm | k8s | standalone
+    platform: str
     ip: str | None = None
     agent_version: str | None = None
     last_heartbeat: str | None = None
-    status: str = "active"              # active | unreachable | stale
+    status: str = "active"
     created_at: str = field(default_factory=utcnow)
 
     @classmethod
@@ -74,20 +74,22 @@ class Host:
 
 @dataclass
 class Node:
-    id: str                             # kind-specific sha256, includes host_id
-    kind: str                           # agent | llm_endpoint | mcp_server | tool | credential | sink | entry_point
+    id: str
+    kind: str
     name: str
     host_id: str
     attributes: dict[str, Any] = field(default_factory=dict)
+    capabilities: list[str] = field(default_factory=list)
     confidence: float = 1.0
     content_hash: str | None = None
-    status: str = "active"              # active | stale
+    status: str = "active"
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
 
     def to_row(self) -> dict[str, Any]:
         row = asdict(self)
         row["attributes"] = json.dumps(self.attributes)
+        row["capabilities"] = json.dumps(self.capabilities)
         return row
 
     @classmethod
@@ -98,6 +100,7 @@ class Node:
             name=row["name"],
             host_id=row["host_id"],
             attributes=json.loads(row["attributes"]),
+            capabilities=json.loads(row["capabilities"] or "[]"),
             confidence=row["confidence"],
             content_hash=row["content_hash"],
             status=row["status"],
@@ -112,13 +115,14 @@ class Node:
 
 @dataclass
 class Edge:
-    id: str                             # sha256(source + target + kind + host_id)
+    id: str
     source_id: str
     target_id: str
-    kind: str                           # uses_model | provides_tool | delegates_to | has_access_to
+    kind: str
     host_id: str
-    precision: str = "syntactic"        # syntactic | compiler-verified
+    precision: str = "syntactic"
     attributes: dict[str, Any] = field(default_factory=dict)
+    capabilities: list[str] = field(default_factory=list)
     confidence: float = 1.0
     status: str = "active"
     created_at: str = field(default_factory=utcnow)
@@ -127,6 +131,7 @@ class Edge:
     def to_row(self) -> dict[str, Any]:
         row = asdict(self)
         row["attributes"] = json.dumps(self.attributes)
+        row["capabilities"] = json.dumps(self.capabilities)
         return row
 
     @classmethod
@@ -139,6 +144,7 @@ class Edge:
             host_id=row["host_id"],
             precision=row["precision"],
             attributes=json.loads(row["attributes"]),
+            capabilities=json.loads(row["capabilities"] or "[]"),
             confidence=row["confidence"],
             status=row["status"],
             created_at=row["created_at"],
@@ -153,8 +159,8 @@ class Edge:
 @dataclass
 class Finding:
     id: str
-    scanner: str                        # aak | llm-scanner | mcp-scanner
-    severity: str                       # critical | high | medium | low
+    scanner: str
+    severity: str
     title: str
     node_id: str | None = None
     edge_id: str | None = None
@@ -199,7 +205,7 @@ class Chain:
     id: str
     chain_nodes: list[str]
     chain_edges: list[str]
-    verdict: str                        # exploitable | not_exploitable | uncertain
+    verdict: str
     prompt_version: str
     confidence: float = 0.0
     reasoning: str | None = None
@@ -211,11 +217,7 @@ class Chain:
 
     @property
     def length(self) -> int:
-        """Number of hops. Derived from chain_nodes.
-
-        Computed, not stored — the chains table has no length column.
-        A chain of N nodes has N-1 edges, hence N-1 hops.
-        """
+        """Number of hops. Derived from chain_nodes."""
         return max(0, len(self.chain_nodes) - 1)
 
     def to_row(self) -> dict[str, Any]:
@@ -252,8 +254,8 @@ class Chain:
 class Report:
     id: str
     host_id: str
-    bundle_dir: str                     # 'current' | '<timestamp>'
-    tier: str                           # fast | full
+    bundle_dir: str
+    tier: str
     is_current: bool = False
     generated_at: str = field(default_factory=utcnow)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -284,7 +286,7 @@ class Report:
 @dataclass
 class TaskCounter:
     host_id: str
-    kind: str                           # static | dynamic
+    kind: str
     active_count: int = 0
     done_count: int = 0
     failed_count: int = 0

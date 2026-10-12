@@ -3,6 +3,7 @@
 Responsibilities:
   1. Create Node objects for classified symbols.
   2. Create edges between nodes using simple heuristics.
+  3. Attach capabilities (ADR-0009) to nodes.
 
 Edges derived here:
   - provides_tool  (mcp_server → tool)
@@ -31,6 +32,7 @@ from dataclasses import dataclass, field
 from ..graph.models import Edge, Node
 from ..ingestion.discovery import FileManifest
 from ..patterns import MCP_DIR_SEGMENT, MCP_SERVERS_SEGMENT
+from .capability_extractor import FileCapabilities
 from .classification import (
     Classification,
     classify_class,
@@ -57,8 +59,9 @@ def normalize(
     tsa_output: TSAOutput,
     entry_points: EntryPointOutput | None = None,
     llm_output: LLMExtractorOutput | None = None,
+    capabilities: dict[str, FileCapabilities] | None = None,
 ) -> GraphDelta:
-    """Build graph delta from manifest, TSA output, entry points, and LLM configs.
+    """Build graph delta from manifest, TSA output, entry points, LLM configs.
 
     Args:
         manifest: file list from ingestion.discover()
@@ -67,10 +70,14 @@ def normalize(
                       parsing.entry_points.run(). Pass None to skip.
         llm_output: LLM endpoints from parsing.llm_extractor.run().
                     Pass None to skip.
+        capabilities: per-file capabilities from
+                      parsing.capability_extractor.extract().
+                      Keys are relative file paths. Pass None to skip.
     """
     delta = GraphDelta()
     entry_points = entry_points or EntryPointOutput()
     llm_output = llm_output or LLMExtractorOutput()
+    capabilities = capabilities or {}
 
     # --- MCP servers from files ---
     # One node per server name, deduplicated across files.
@@ -100,7 +107,7 @@ def normalize(
         c = classify_class(symbol.name, symbol.file_path)
         if c is None:
             continue
-        node = _node_from_class(symbol, c)
+        node = _node_from_class(symbol, c, capabilities)
         delta.nodes.append(node)
 
     # --- Methods (tools and sinks) ---
@@ -113,7 +120,7 @@ def normalize(
         c = classify_method(symbol.name, symbol.file_path, symbol.class_name)
         if c is None:
             continue
-        node = _node_from_method(symbol, c)
+        node = _node_from_method(symbol, c, capabilities)
         delta.nodes.append(node)
 
         if c.kind == "tool":
@@ -251,6 +258,29 @@ def normalize(
 
 
 # ============================================================
+# Capability lookup
+# ============================================================
+
+def _caps_for_symbol(
+    capabilities: dict[str, FileCapabilities],
+    file_path: str,
+    symbol_name: str,
+) -> list[str]:
+    """Return the sorted capability list for a symbol.
+
+    Returns [] if the file is not in the capabilities map, or if the
+    symbol is not found in that file.
+    """
+    fc = capabilities.get(file_path)
+    if fc is None:
+        return []
+    for sym in fc.symbols:
+        if sym.symbol_name == symbol_name:
+            return sorted(sym.capabilities)
+    return []
+
+
+# ============================================================
 # Canonical ID derivation (from C4_L3_Phase1)
 # ============================================================
 
@@ -282,9 +312,14 @@ def _llm_endpoint_name(llm_ep) -> str:
     return llm_ep.provider
 
 
-def _node_from_class(symbol: TSASymbol, c: Classification) -> Node:
+def _node_from_class(
+    symbol: TSASymbol,
+    c: Classification,
+    capabilities: dict[str, FileCapabilities] | None = None,
+) -> Node:
     h = _sha256(f"{c.kind}:{symbol.file_path}:{symbol.name}:{HOST_ID}")
     node_id = f"{c.kind}:{h}"
+    symbol_caps = _caps_for_symbol(capabilities or {}, symbol.file_path, symbol.name)
     return Node(
         id=node_id,
         kind=c.kind,
@@ -295,16 +330,22 @@ def _node_from_class(symbol: TSASymbol, c: Classification) -> Node:
             "line_start": symbol.line_start,
             **c.attributes,
         },
+        capabilities=symbol_caps,
     )
 
 
-def _node_from_method(symbol: TSASymbol, c: Classification) -> Node:
+def _node_from_method(
+    symbol: TSASymbol,
+    c: Classification,
+    capabilities: dict[str, FileCapabilities] | None = None,
+) -> Node:
     key_parts = [c.kind, symbol.file_path, symbol.name]
     if symbol.class_name:
         key_parts.append(symbol.class_name)
     key_parts.append(HOST_ID)
     h = _sha256(":".join(key_parts))
     node_id = f"{c.kind}:{h}"
+    symbol_caps = _caps_for_symbol(capabilities or {}, symbol.file_path, symbol.name)
     return Node(
         id=node_id,
         kind=c.kind,
@@ -315,6 +356,7 @@ def _node_from_method(symbol: TSASymbol, c: Classification) -> Node:
             "line_start": symbol.line_start,
             **c.attributes,
         },
+        capabilities=symbol_caps,
     )
 
 
