@@ -29,7 +29,14 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-ws = open_workspace()
+parser.add_argument(
+    "--workdir",
+    default=None,
+    help="workspace directory (default: ./aicorellator_data/)",
+)
+args = parser.parse_args()
+
+ws = open_workspace(root=args.workdir)
 config = load_config(ws.models_config_path, mode=args.mode)
 
 print(f"Mode: {config.mode}")
