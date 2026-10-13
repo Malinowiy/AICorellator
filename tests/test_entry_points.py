@@ -286,3 +286,136 @@ def test_call_graph_empty_for_plain_module(tmp_manifest) -> None:
     _add_py(manifest, target, "empty.py", "x = 1\n")
     out = run(manifest)
     assert out.call_graph == {}
+
+    # ============================================================
+# CLI entry points
+# ============================================================
+
+def test_detect_cli_entry(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "cli.py", """\
+from app.menu import run
+
+if __name__ == "__main__":
+    run()
+""")
+    out = run(manifest)
+    cli = [ep for ep in out.entry_points if ep.method == "CLI"]
+    assert len(cli) == 1
+    assert cli[0].path == "cli.py"
+    assert cli[0].handler == "<module>"
+
+
+def test_detect_cli_entry_reversed_guard(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "cli.py", """\
+if "__main__" == __name__:
+    print("hello")
+""")
+    out = run(manifest)
+    cli = [ep for ep in out.entry_points if ep.method == "CLI"]
+    assert len(cli) == 1
+
+
+def test_no_cli_entry_without_guard(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "lib.py", """\
+def run():
+    print("hi")
+""")
+    out = run(manifest)
+    cli = [ep for ep in out.entry_points if ep.method == "CLI"]
+    assert cli == []
+
+
+def test_no_cli_entry_for_nested_guard(tmp_manifest) -> None:
+    """A `if __name__` inside a function is not a script entry."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "lib.py", """\
+def main():
+    if __name__ == "__main__":
+        print("nested")
+""")
+    out = run(manifest)
+    cli = [ep for ep in out.entry_points if ep.method == "CLI"]
+    assert cli == []
+
+
+def test_call_graph_after_cli_change(tmp_manifest) -> None:
+    """Call graph is still collected after the CLI change."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "cli.py", """\
+def main():
+    helper()
+
+def helper():
+    return 42
+
+if __name__ == "__main__":
+    main()
+""")
+    out = run(manifest)
+    assert "main" in out.call_graph
+    assert "helper" in out.call_graph["main"]
+
+
+def test_imports_collected(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "cli.py", """\
+import os
+from app.menu import run
+from app.runner import Runner
+""")
+    out = run(manifest)
+    imports = out.imports.get("cli.py", [])
+    assert "os" in imports
+    assert "app.menu" in imports
+    assert "app.runner" in imports
+
+
+# ============================================================
+# Streamlit entry points
+# ============================================================
+
+def test_detect_streamlit_chat_input(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", """\
+import streamlit as st
+
+if prompt := st.chat_input("Ask"):
+    st.write(prompt)
+""")
+    out = run(manifest)
+    sl = [ep for ep in out.entry_points if ep.method == "STREAMLIT"]
+    assert len(sl) == 1
+    assert sl[0].path == "chat_input"
+
+
+def test_detect_streamlit_multiple_calls(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", """\
+import streamlit as st
+
+if st.button("Go"):
+    st.write("go")
+if st.file_uploader("File"):
+    st.write("uploaded")
+""")
+    out = run(manifest)
+    sl = sorted(ep.path for ep in out.entry_points if ep.method == "STREAMLIT")
+    assert sl == ["button", "file_uploader"]
+
+
+def test_no_streamlit_entry_without_import(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", """\
+class st:
+    @staticmethod
+    def chat_input(x):
+        return x
+
+st.chat_input("test")
+""")
+    out = run(manifest)
+    sl = [ep for ep in out.entry_points if ep.method == "STREAMLIT"]
+    assert sl == []

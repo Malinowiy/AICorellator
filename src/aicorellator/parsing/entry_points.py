@@ -95,13 +95,11 @@ class EntryPointOutput:
     entry_points: list[EntryPoint] = field(default_factory=list)
     agent_calls: list[AgentCall] = field(default_factory=list)
     mcp_usages: list[MCPUsage] = field(default_factory=list)
+    call_graph: dict[str, set[str]] = field(default_factory=dict)
+    imports: dict[str, list[str]] = field(default_factory=dict)
     files_parsed: int = 0
     files_failed: int = 0
-    call_graph: dict[str, set[str]] = field(default_factory=dict)
-    # call_graph: module-level function name → set of called names.
-    # Populated for every FunctionDef / AsyncFunctionDef in each file,
-    # not only for route handlers. Used by the normalizer to resolve
-    # route-handler-to-sink reachability (ADR-0004 note in ADR-0013).
+
 
 
 def run(manifest, known_agents: set[str] | None = None) -> EntryPointOutput:
@@ -148,24 +146,28 @@ def _walk_module(
     output: EntryPointOutput,
     known_agents: set[str] | None,
 ) -> None:
-    """Walk a module: detect routes, agent calls, and MCP usages.
-
-    Also builds a per-file call graph: for every function (route
-    handler or not), the set of names it calls. This is used by the
-    normalizer to resolve route-handler-to-sink reachability across
-    local helper functions.
-    """
+    """Walk a module: detect routes, agent calls, MCP usages, CLI entries,
+    Streamlit entries; build a per-file call graph and import table."""
     is_agent_module = _is_agent_module(file_path)
+
+    # Imports — collected once per file, used by cross-file resolution.
+    output.imports[file_path] = _collect_module_imports(tree)
+
+    # CLI entry: `if __name__ == "__main__":`.
+    cli_entry = _detect_cli_entry(tree, file_path)
+    if cli_entry is not None:
+        output.entry_points.append(cli_entry)
+
+    # Streamlit entry: `st.chat_input(...)`, `st.form_submit_button(...)`, etc.
+    streamlit_entries = _detect_streamlit_entries(tree, file_path)
+    output.entry_points.extend(streamlit_entries)
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # Call graph entry for every function, including helpers.
             output.call_graph[node.name] = _collect_call_names(node)
 
-            # Route, agent-call, and MCP detection for handler-level
-            # heuristics. Unchanged from before.
-            _process_function(node, file_path, output, known_agents, is_agent_module)
 
+            _process_function(node, file_path, output, known_agents, is_agent_module)
 
 def _is_agent_module(file_path: str) -> bool:
     """True if the file lives under agents/ — agent-to-agent calls."""
@@ -414,3 +416,162 @@ def _collect_call_names(
         if isinstance(node.func, ast.Name):
             calls.add(node.func.id)
     return calls
+
+# ============================================================
+# Module imports
+# ============================================================
+
+def _collect_module_imports(tree: ast.Module) -> list[str]:
+    """Dotted module names imported by a file.
+
+    Handles:
+        import tools                  → "tools"
+        import mcp.servers.foo        → "mcp.servers.foo"
+        from tools import X           → "tools"
+        from mcp.servers.foo import X → "mcp.servers.foo"
+
+    Relative imports are skipped: resolving them requires a package
+    root, which the manifest does not provide.
+    """
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                out.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level > 0:
+                continue
+            if node.module:
+                out.append(node.module)
+    return list(dict.fromkeys(out))
+
+
+# ============================================================
+# CLI entry point
+# ============================================================
+
+def _detect_cli_entry(tree: ast.Module, file_path: str) -> EntryPoint | None:
+    """Detect `if __name__ == "__main__":` at module level.
+
+    Returns an EntryPoint with method="CLI" and path set to the
+    file's relative path. The handler is the file itself (there is
+    no function name), recorded as "<module>" so downstream
+    components can distinguish it.
+
+    Only module-level `if` blocks are considered. A nested
+    `if __name__ == "__main__":` inside a function is unusual and
+    is not treated as a script entry.
+    """
+    for node in tree.body:
+        if not isinstance(node, ast.If):
+            continue
+        if _is_name_main_guard(node):
+            return EntryPoint(
+                method="CLI",
+                path=file_path,
+                handler="<module>",
+                file_path=file_path,
+                line=node.lineno,
+            )
+    return None
+
+
+def _is_name_main_guard(node: ast.If) -> bool:
+    """True if the `if` test is `__name__ == "__main__"`.
+
+    Matches both orders:
+        __name__ == "__main__"
+        "__main__" == __name__
+    """
+    test = node.test
+    if not isinstance(test, ast.Compare):
+        return False
+    if len(test.ops) != 1 or not isinstance(test.ops[0], ast.Eq):
+        return False
+    left, right = test.left, test.comparators[0]
+
+    def is_name_main(n: ast.expr) -> bool:
+        return isinstance(n, ast.Name) and n.id == "__name__"
+
+    def is_str_main(n: ast.expr) -> bool:
+        return isinstance(n, ast.Constant) and n.value == "__main__"
+
+    return (is_name_main(left) and is_str_main(right)) or (
+        is_str_main(left) and is_name_main(right)
+    )
+
+
+# ============================================================
+# Streamlit entry points
+# ============================================================
+
+# Streamlit calls that represent user-facing entry points.
+# `st.chat_input` — chat prompt submission.
+# `st.form_submit_button` — form submission.
+# `st.button` — button press.
+# `st.file_uploader` — file upload.
+STREAMLIT_ENTRY_CALLS: frozenset[str] = frozenset({
+    "chat_input",
+    "form_submit_button",
+    "button",
+    "file_uploader",
+})
+
+
+def _detect_streamlit_entries(
+    tree: ast.Module,
+    file_path: str,
+) -> list[EntryPoint]:
+    """Detect Streamlit user-facing entry points.
+
+    Returns one EntryPoint per distinct `st.<entry_call>(...)` found
+    at module level. Method is "STREAMLIT", path is the call name
+    (e.g. "chat_input"), handler is "<module>".
+
+    Only detected if the file imports `streamlit` (as `st` or as
+    `streamlit`), to avoid false positives on unrelated `.chat_input`
+    attributes.
+    """
+    if not _has_streamlit_import(tree):
+        return []
+
+    found: list[EntryPoint] = []
+    seen: set[str] = set()
+
+    for node in tree.body:
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            if not isinstance(child.func, ast.Attribute):
+                continue
+            if not isinstance(child.func.value, ast.Name):
+                continue
+            if child.func.value.id not in ("st", "streamlit"):
+                continue
+            if child.func.attr not in STREAMLIT_ENTRY_CALLS:
+                continue
+            if child.func.attr in seen:
+                continue
+            seen.add(child.func.attr)
+            found.append(EntryPoint(
+                method="STREAMLIT",
+                path=child.func.attr,
+                handler="<module>",
+                file_path=file_path,
+                line=child.lineno,
+            ))
+
+    return found
+
+
+def _has_streamlit_import(tree: ast.Module) -> bool:
+    """True if the file imports streamlit (any form)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "streamlit":
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "streamlit":
+                return True
+    return False

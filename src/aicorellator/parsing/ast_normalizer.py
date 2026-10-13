@@ -178,22 +178,45 @@ def normalize(
     # --- Entry points ---
     entry_node_by_handler: dict[str, str] = {}
     for ep in entry_points.entry_points:
-        node_id = _entry_point_id(ep)
-        entry_node_by_handler[ep.handler] = node_id
-        delta.nodes.append(Node(
-            id=node_id,
-            kind="entry_point",
-            name=f"{ep.method} {ep.path}",
-            host_id=HOST_ID,
-            attributes={
+        if ep.method == "CLI":
+            node_id = _cli_entry_point_id(ep.file_path)
+            attrs = {
+                "source_file": ep.file_path,
+                "line_start": ep.line,
+                "method": "CLI",
+                "entry_kind": "cli",
+                "path": ep.path,
+            }
+            name = f"CLI:{ep.file_path}"
+        elif ep.method == "STREAMLIT":
+            node_id = _streamlit_entry_point_id(ep.file_path, ep.path)
+            attrs = {
+                "source_file": ep.file_path,
+                "line_start": ep.line,
+                "method": "STREAMLIT",
+                "entry_kind": "streamlit",
+                "path": ep.path,
+            }
+            name = f"Streamlit:{ep.file_path}:{ep.path}"
+        else:
+            node_id = _entry_point_id(ep)
+            attrs = {
                 "source_file": ep.file_path,
                 "line_start": ep.line,
                 "method": ep.method,
                 "path": ep.path,
                 "handler": ep.handler,
-            },
-        ))
+            }
+            name = f"{ep.method} {ep.path}"
 
+        entry_node_by_handler[ep.handler] = node_id
+        delta.nodes.append(Node(
+            id=node_id,
+            kind="entry_point",
+            name=name,
+            host_id=HOST_ID,
+            attributes=attrs,
+        ))
     # --- LLM endpoints from configs ---
     for llm_ep in llm_output.deduplicated():
         node_id = _llm_endpoint_id(llm_ep)
@@ -277,6 +300,7 @@ def normalize(
         entry_points=entry_points,
         sinks_by_file=sinks_by_file,
         entry_node_by_handler=entry_node_by_handler,
+        imports_by_file=entry_points.imports,
     )
     delta.edges.extend(entry_sink_edges)
 
@@ -462,6 +486,16 @@ def _entry_point_id(ep) -> str:
     key = f"entry_point:{ep.file_path}:{ep.method}:{ep.path}:{HOST_ID}"
     return f"entry_point:{_sha256(key)}"
 
+def _cli_entry_point_id(file_path: str) -> str:
+    """Canonical ID for a CLI entry point (one per script)."""
+    key = f"entry_point:cli:{file_path}:{HOST_ID}"
+    return f"entry_point:{_sha256(key)}"
+
+
+def _streamlit_entry_point_id(file_path: str, call: str) -> str:
+    """Canonical ID for a Streamlit entry point (one per call name)."""
+    key = f"entry_point:streamlit:{file_path}:{call}:{HOST_ID}"
+    return f"entry_point:{_sha256(key)}"
 
 def _llm_endpoint_id(llm_ep) -> str:
     """Canonical ID: sha256(provider + model + base_url + host)."""
@@ -610,15 +644,20 @@ def _link_entry_points_to_sinks(
     entry_points: EntryPointOutput,
     sinks_by_file: dict[str, list[Node]],
     entry_node_by_handler: dict[str, str],
+    imports_by_file: dict[str, list[str]],
 ) -> list[Edge]:
     """Resolve entry_point → sink edges via same-file call reachability.
 
-    For each entry point, BFS from the handler through the file's
-    call graph. For each sink node in the same file whose name is
-    reachable, emit a has_access_to edge.
+    For HTTP routes and Streamlit entries: BFS from the handler (or
+    module for module-level entries) through the file's call graph.
 
-    Control-flow reachability, not dataflow. Same-file only. False
-    positives accepted (ADR-0009).
+    For CLI entries: the handler is the module itself. BFS starts at
+    every top-level function and every name imported from another
+    module, so a CLI script that calls `run()` imported from a
+    helper module can reach sinks in that helper.
+
+    Control-flow reachability, not dataflow. False positives accepted
+    (ADR-0009).
     """
     edges: list[Edge] = []
 
@@ -631,10 +670,27 @@ def _link_entry_points_to_sinks(
         if not sinks_here:
             continue
 
-        reachable = _reachable_functions(
-            start=ep.handler,
-            call_graph=entry_points.call_graph,
-        )
+        # Determine BFS start nodes.
+        if ep.method in ("CLI", "STREAMLIT"):
+            # Module-level entry: start from every function defined
+            # in the file and every imported name that could resolve
+            # to a function in another module.
+            starts: set[str] = set(entry_points.call_graph.keys())
+            for module in imports_by_file.get(ep.file_path, []):
+                # Imported module name; functions called via
+                # `module.func(...)` are recorded by their last segment
+                # in the call graph. Add the module's last segment too,
+                # in case the call graph recorded it as a Name call.
+                starts.add(module.split(".")[-1])
+        else:
+            starts = {ep.handler}
+
+        reachable: set[str] = set()
+        for start in starts:
+            reachable |= _reachable_functions(
+                start=start,
+                call_graph=entry_points.call_graph,
+            )
 
         for sink_node in sinks_here:
             if sink_node.name in reachable:
@@ -645,7 +701,39 @@ def _link_entry_points_to_sinks(
                     kind="has_access_to",
                     host_id=HOST_ID,
                 ))
+    # Fallback for CLI and Streamlit entries with no same-file sinks:
+    # link to all sinks in the project. The rationale is the same as
+    # for the orphan-entry resolver: a CLI script can call into any
+    # module, and we do not track cross-file calls here. False
+    # positives are accepted (ADR-0009).
+    all_sinks: list[Node] = []
+    for sinks in sinks_by_file.values():
+        all_sinks.extend(sinks)
 
+    if all_sinks:
+        for ep in entry_points.entry_points:
+            if ep.method not in ("CLI", "STREAMLIT"):
+                continue
+            entry_id = entry_node_by_handler.get(ep.handler)
+            if entry_id is None:
+                continue
+            # Only add fallback edges if this entry has no outgoing
+            # has_access_to edge yet.
+            has_edge = any(
+                e.source_id == entry_id and e.kind == "has_access_to"
+                for e in edges
+            )
+            if has_edge:
+                continue
+            for sink_node in all_sinks:
+                edges.append(Edge(
+                    id=_edge_id(entry_id, sink_node.id, "has_access_to"),
+                    source_id=entry_id,
+                    target_id=sink_node.id,
+                    kind="has_access_to",
+                    host_id=HOST_ID,
+                    attributes={"resolved_via": "cli_fallback"},
+                ))
     return edges
 
 def _link_mcp_entries_to_tools(delta: GraphDelta) -> list[Edge]:

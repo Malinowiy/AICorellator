@@ -826,3 +826,79 @@ def test_mcp_entry_point_not_created_for_path_heuristic(target: Target) -> None:
         and n.attributes.get("entry_kind") == "mcp"
     ]
     assert mcp_entries == []
+
+def test_cli_entry_point_created(target: Target) -> None:
+    """A CLI entry point is created with method=CLI."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="CLI", path="cli.py", handler="<module>",
+                file_path="cli.py", line=10,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    cli_nodes = [
+        n for n in delta.nodes
+        if n.kind == "entry_point"
+        and n.attributes.get("entry_kind") == "cli"
+    ]
+    assert len(cli_nodes) == 1
+    assert cli_nodes[0].name == "CLI:cli.py"
+
+
+def test_streamlit_entry_point_created(target: Target) -> None:
+    """A Streamlit entry point is created with method=STREAMLIT."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="STREAMLIT", path="chat_input", handler="<module>",
+                file_path="app.py", line=5,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    sl_nodes = [
+        n for n in delta.nodes
+        if n.kind == "entry_point"
+        and n.attributes.get("entry_kind") == "streamlit"
+    ]
+    assert len(sl_nodes) == 1
+    assert sl_nodes[0].name == "Streamlit:app.py:chat_input"
+
+
+def test_cli_entry_fallback_to_all_sinks(target: Target) -> None:
+    """A CLI entry with no same-file sinks links to all project sinks."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="execute_script", kind="method",
+            file_path="helpers.py", line_start=5, line_end=10,
+            class_name=None,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="CLI", path="cli.py", handler="<module>",
+                file_path="cli.py", line=10,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    has_access = [e for e in delta.edges if e.kind == "has_access_to"]
+    assert len(has_access) == 1
+    assert has_access[0].attributes.get("resolved_via") == "cli_fallback"
