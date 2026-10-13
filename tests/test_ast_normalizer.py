@@ -754,3 +754,75 @@ def test_entry_point_to_sink_cycle_safe(target: Target) -> None:
     delta = normalize(manifest, tsa, ep)
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 1
+
+def test_mcp_entry_point_created_for_framework_server(target: Target) -> None:
+    """A framework-detected mcp_server gets a virtual MCP entry point."""
+    from aicorellator.graph.models import Node
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+
+    detection = DetectionResult(framework="fastmcp")
+    detection.nodes = [
+        Node(
+            id="mcp_server:abc", kind="mcp_server", name="my-server",
+            host_id="localhost",
+            attributes={"source_file": "server.py", "framework": "fastmcp"},
+        ),
+        Node(
+            id="tool:1", kind="tool", name="search",
+            host_id="localhost",
+            attributes={
+                "source_file": "server.py",
+                "framework": "fastmcp",
+                "parent_server": "my-server",
+            },
+        ),
+    ]
+
+    delta = normalize(manifest, tsa, framework_detection=detection)
+
+    mcp_entries = [
+        n for n in delta.nodes
+        if n.kind == "entry_point"
+        and n.attributes.get("entry_kind") == "mcp"
+    ]
+    assert len(mcp_entries) == 1
+    assert mcp_entries[0].name == "MCP:my-server"
+
+    delegates = [
+        e for e in delta.edges
+        if e.kind == "delegates_to"
+        and e.source_id == mcp_entries[0].id
+    ]
+    assert len(delegates) == 1
+    assert delegates[0].target_id == "tool:1"
+
+
+def test_mcp_entry_point_not_created_for_path_heuristic(target: Target) -> None:
+    """mcp_servers found via file path do not get virtual entry points."""
+    from aicorellator.graph.models import Node
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+
+    detection = DetectionResult(framework="")
+    detection.nodes = [
+        Node(
+            id="mcp_server:abc", kind="mcp_server", name="findrive",
+            host_id="localhost",
+            attributes={"source_file": "mcp/servers/findrive/server.py"},
+            # no framework attribute
+        ),
+    ]
+
+    delta = normalize(manifest, tsa, framework_detection=detection)
+
+    mcp_entries = [
+        n for n in delta.nodes
+        if n.kind == "entry_point"
+        and n.attributes.get("entry_kind") == "mcp"
+    ]
+    assert mcp_entries == []

@@ -365,6 +365,20 @@ def normalize(
         delta.edges.append(edge)
         existing_edge_ids.add(edge.id)
 
+    # --- Edges: MCP entry point → tool (A3, ADR-0013) ---
+    # A framework-detected MCP server (from FastMCP or the MCP Python
+    # SDK) has no HTTP route. To let chain enumeration start at it, we
+    # synthesize a virtual entry point per server and link it to every
+    # tool whose parent_server matches. The chain semantics are: "an
+    # MCP client can invoke any tool this server exposes".
+    #
+    # Only detector-created mcp_servers (those carrying a `framework`
+    # attribute) get virtual entry points. Servers discovered via the
+    # file-path heuristic (mcp/servers/*/server.py) already carry
+    # provides_tool edges and are left alone.
+    mcp_entry_edges = _link_mcp_entries_to_tools(delta=delta)
+    delta.edges.extend(mcp_entry_edges)
+
     # --- Cross-file edges: agent → tool (uses_tool) ---
     # Framework detectors are per-file (ADR-0011): an agent created
     # in agent.py that uses tools imported from tools.py has no
@@ -433,6 +447,15 @@ def _caps_for_symbol(
 def _mcp_server_id(server_name: str) -> str:
     h = _sha256(f"mcp_server:{server_name}:{HOST_ID}")
     return f"mcp_server:{h}"
+
+def _mcp_entry_point_id(server_name: str) -> str:
+    """Canonical ID for the virtual MCP entry point of a server.
+
+    Distinct from `_entry_point_id` (HTTP routes) so that an MCP entry
+    and an HTTP route can never collide, even if they share a name.
+    """
+    key = f"entry_point:mcp:{server_name}:{HOST_ID}"
+    return f"entry_point:{_sha256(key)}"
 
 
 def _entry_point_id(ep) -> str:
@@ -622,6 +645,58 @@ def _link_entry_points_to_sinks(
                     kind="has_access_to",
                     host_id=HOST_ID,
                 ))
+
+    return edges
+
+def _link_mcp_entries_to_tools(delta: GraphDelta) -> list[Edge]:
+    """Create virtual entry points for framework-detected MCP servers
+    and link them to the tools they expose.
+
+    Side effects: appends the new entry_point nodes to `delta.nodes`.
+    Returns only the new edges (the caller appends them).
+    """
+    edges: list[Edge] = []
+
+    # Index tools by parent_server, only those with framework provenance.
+    tools_by_parent: dict[str, list[Node]] = {}
+    for node in delta.nodes:
+        if node.kind != "tool":
+            continue
+        parent = node.attributes.get("parent_server")
+        if parent:
+            tools_by_parent.setdefault(parent, []).append(node)
+
+    for mcp_node in delta.nodes:
+        if mcp_node.kind != "mcp_server":
+            continue
+        framework = mcp_node.attributes.get("framework")
+        if not framework:
+            continue
+
+        entry_id = _mcp_entry_point_id(mcp_node.name)
+
+        delta.nodes.append(Node(
+            id=entry_id,
+            kind="entry_point",
+            name=f"MCP:{mcp_node.name}",
+            host_id=HOST_ID,
+            attributes={
+                "source_file": mcp_node.attributes.get("source_file", ""),
+                "mcp_server_name": mcp_node.name,
+                "framework": framework,
+                "entry_kind": "mcp",
+            },
+        ))
+
+        for tool_node in tools_by_parent.get(mcp_node.name, []):
+            edges.append(Edge(
+                id=_edge_id(entry_id, tool_node.id, "delegates_to"),
+                source_id=entry_id,
+                target_id=tool_node.id,
+                kind="delegates_to",
+                host_id=HOST_ID,
+                attributes={"resolved_via": "mcp_entry"},
+            ))
 
     return edges
 
