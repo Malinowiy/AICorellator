@@ -10,13 +10,13 @@ Phase 1 covers **graph population from source code and configs**. It takes a tar
 
 No enrichment (Phase 2). No analysis (Phase 3). No reporting (Phase 3).
 
-The phase has two classification layers (ADR-0009, ADR-0011):
+The phase has three classification layers (ADR-0009, ADR-0011):
 
 - **Level 1** — framework detectors, per-file, framework-specific.
 - **Level 2** — capability extraction, framework-agnostic.
 - **Level 3** — name-based heuristics, the original FinBot-tuned rules.
 
-Cross-file edges are resolved by the normalizer after detector merge (ADR-0013).
+Cross-file edges and MCP entry synthesis are resolved by the normalizer after detector merge (ADR-0013).
 
 ---
 
@@ -29,12 +29,13 @@ flowchart TB
         DISC[File Discovery<br/>walk, filter, hash]
         CAP[Capability Extractor<br/>AST-derived capabilities]
         TSA[TSA Worker<br/>tree-sitter-analyzer]
-        DET[Framework Detectors<br/>langchain, langgraph]
+        DET[Framework Detectors<br/>langchain, langgraph,<br/>fastmcp, mcp_python]
         RUN[Detectors Runner<br/>orchestrates detectors]
-        EP[Entry Points Detector<br/>routes, agent calls, MCP usages]
+        EP[Entry Points Detector<br/>routes, agent calls,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
-        NORM[AST Normalizer<br/>merge + cross-file resolution]
+        NORM[AST Normalizer<br/>merge + cross-file +<br/>MCP entry synthesis]
         XF[Cross-File Resolver<br/>imports → uses_tool]
+        MCPENT[MCP Entry Synthesis<br/>mcp_server → entry_point]
         ORPH[Orphan Entry Resolver<br/>entry_points → single agent]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
@@ -54,7 +55,8 @@ flowchart TB
     EP --> NORM
     LLMX --> NORM
     NORM --> XF
-    XF --> ORPH
+    XF --> MCPENT
+    MCPENT --> ORPH
     ORPH --> WRITE
     WRITE --> GS[(Graph Store)]
     WRITE --> FLAG
@@ -155,16 +157,16 @@ flowchart TB
 - `DetectionResult.framework: str`
 - `DetectionResult.detected_version: str | None`
 
-**Implemented detectors:** LangChain, LangGraph.
+**Implemented detectors:** LangChain, LangGraph, FastMCP, MCP Python SDK.
 
 **Per-file contract.** A detector receives one file and returns nodes and edges from that file alone. No import resolution, no global state, safe for parallel execution.
 
 **What detectors emit:**
 
-- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities.
+- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities. Within-file `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file.
 - **LangGraph**: graph nodes from `graph.add_node(...)`, graph edges from `graph.add_edge(...)` and `graph.add_conditional_edges(...)`, entry points from `graph.set_entry_point(...)`. Node kind is inferred from the node name.
-
-**Within-file edges:** the LangChain detector emits `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file, either as a literal list or as a module-level assignment.
+- **FastMCP**: `mcp_server` nodes from `FastMCP(...)`; `tool` nodes from `@<var>.tool(...)` decorators, with `parent_server` set. Tool bodies are scanned for capabilities.
+- **MCP Python SDK**: `mcp_server` nodes from `Server(...)`; `tool` nodes from `@<var>.call_tool()` decorators, with `parent_server` set. Other server-bound decorators (`list_resources`, `read_resource`) are recognized but not emitted as tools.
 
 **Cross-file edges are not the detector's job.** They are resolved by the normalizer (ADR-0013).
 
@@ -192,7 +194,7 @@ flowchart TB
 
 ### 7. Entry Points Detector
 
-**Responsibility:** Finds HTTP routes, WebSocket handlers, agent calls inside route bodies, and MCP usages (`create_mcp_server` calls) in Python code.
+**Responsibility:** Finds HTTP routes, WebSocket handlers, agent calls inside route bodies, MCP usages (`create_mcp_server` calls) in Python code, and builds a per-file call graph.
 
 **Interface:**
 
@@ -200,20 +202,23 @@ flowchart TB
 - `EntryPointOutput.entry_points: list[EntryPoint]`
 - `EntryPointOutput.agent_calls: list[AgentCall]`
 - `EntryPointOutput.mcp_usages: list[MCPUsage]`
+- `EntryPointOutput.call_graph: dict[str, set[str]]`
 
 **Route detection:** decorators whose attribute is an HTTP method or `websocket`. Handler name, path, method, and line are recorded.
 
 **Agent call detection:** four heuristics — delegation suffix (`delegate_to_*`), runner-function mapping (`run_*_agent`), extra agent classes, and direct class calls. Calls inside agent modules are flagged as agent-to-agent.
 
-**MCP usage detection:** calls to `create_mcp_server("name", ...)` record the enclosing handler and the server name. MCP usages inside agent modules are flagged as agent-scoped.
+**MCP usage detection:** calls to `create_mcp_server("name", ...)` record the enclosing handler and the server name.
 
-**Not in scope:** entry points from factory functions (`get_agent(...)`) that are not named in the heuristics. This is handled by the orphan-entry resolver (ADR-0013).
+**Call graph:** for every `FunctionDef`/`AsyncFunctionDef` in the file (route handler or not), the set of names it calls via `ast.Name` targets. Used by the normalizer to resolve entry-point-to-sink reachability (ADR-0013, cross-file reachability resolver).
+
+**Not in scope:** entry points from factory functions (`get_agent(...)`) not named in the heuristics. This is handled by the orphan-entry resolver (ADR-0013).
 
 ---
 
 ### 8. LLM Extractor
 
-**Responsibility:** Reads config files and extracts LLM endpoint information. This is the component that closes the "agent → model" gap.
+**Responsibility:** Reads config files and extracts LLM endpoint information. This is the component that closes the "agent to model" gap.
 
 **Interface:**
 
@@ -249,14 +254,17 @@ flowchart TB
 6. **LLM endpoint nodes** — from the LLM extractor.
 7. **Delegation edges** — entry point to agent, agent to agent, agent to MCP server.
 8. **Detector node merge** — detector nodes are authoritative for kind. When a detector node and a TSA node share name and source file, the detector node replaces the TSA node. Capabilities are merged from the TSA node if the detector node has none. Edges pointing at the removed node are re-pointed to the replacement, and their IDs are recomputed and deduplicated.
-9. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013).
-10. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013).
+9. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1).
+10. **MCP entry synthesis** — for each `mcp_server` node carrying a `framework` attribute, create a virtual `entry_point` node named `MCP:<server_name>` and emit `delegates_to` edges to every tool whose `parent_server` matches (ADR-0013, Resolver 3).
+11. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013, Resolver 2).
+12. **Entry-point-to-sink reachability** — `has_access_to` edges from entry points (HTTP and MCP) to sinks reachable through same-file calls (ADR-0013, cross-file reachability resolver).
 
 **Key invariants:**
 
 - All IDs are deterministic. Same input produces the same delta.
 - Detector nodes are authoritative for kind; capabilities are preserved across the merge.
 - Removed nodes do not leave dangling edges.
+- MCP entries are marked with `entry_kind = "mcp"`; HTTP routes remain unmarked.
 
 ---
 
@@ -273,8 +281,6 @@ flowchart TB
 **Algorithm:** index tools by source file, index framework agents, collect per-file imports, match imported module names to file paths by trailing segments, emit `uses_tool` edges from each agent to every tool in each matched file.
 
 **Design:** false positives accepted. An agent that imports a module with twenty tools receives edges to all twenty. Phase 3 filters.
-
-**Orphan entry resolver:** implemented in the normalizer. Links entry points with no outgoing delegation edge to the single framework agent in the project. When there are zero or more than one framework agents, the case is ambiguous and the resolver does nothing.
 
 ---
 
@@ -310,7 +316,7 @@ flowchart TB
 | Capability Extractor | manifest | per-file `FileCapabilities` |
 | TSA Worker | manifest + root | `TSAOutput` (symbols) |
 | Framework Detectors | manifest | `DetectionResult` (nodes + edges) |
-| Entry Points Detector | manifest | `EntryPointOutput` |
+| Entry Points Detector | manifest | `EntryPointOutput` (routes, agent calls, call graph) |
 | LLM Extractor | manifest | `LLMExtractorOutput` |
 | AST Normalizer | all of the above | `GraphDelta` |
 | Graph Writer | `GraphDelta` | rows in `nodes`, `edges` |
@@ -336,6 +342,7 @@ flowchart TB
 - **Multi-host delivery** — Phase 3.
 - **SCIP worker** — deferred (ADR-0002, ADR-0003).
 - **Precision merge** — deferred with SCIP.
+- **Cross-file tool to sink.** Same-file reachability is implemented; cross-file requires call-graph extension across imports. Deferred.
 
 ---
 
@@ -351,6 +358,9 @@ flowchart TB
 8. **False positives are accepted.** Both capability extraction and cross-file resolution prefer a spurious edge over a missing one. The LLM ensemble in Phase 3 prioritizes and filters.
 9. **Capabilities override kind at chain time.** A tool with `executes_code` is a valid chain endpoint, even though its kind is `tool` (ADR-0014).
 10. **`uses_tool` is a stored edge kind.** Introduced for cross-file agent-to-tool edges (ADR-0013).
+11. **MCP entries are virtual.** They do not correspond to an HTTP route; they model "an MCP client can invoke this server's tools". Marked with `entry_kind = "mcp"` so downstream can distinguish.
+12. **Two MCP detectors, one entry synthesis.** FastMCP and the Python SDK are detected separately (different imports, different decorators), but the MCP entry synthesis is shared. Adding a third MCP SDK means adding one detector; the synthesis already works.
+13. **Call-graph reachability extends to MCP.** The `_link_entry_points_to_sinks` resolver operates on any entry point, including synthesized MCP entries. A chain can start at an MCP tool and reach a sink through same-file calls.
 
 ---
 
