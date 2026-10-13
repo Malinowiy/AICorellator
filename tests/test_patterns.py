@@ -46,3 +46,23 @@ def test_tsa_languages_include_python() -> None:
 
 def test_excluded_classes_include_base_agent() -> None:
     assert "BaseAgent" in patterns.EXCLUDED_CLASSES
+
+def test_capability_sets_not_empty() -> None:
+    assert len(patterns.SINK_CAPABILITIES) > 0
+    assert len(patterns.AGENT_CAPABILITIES) > 0
+    assert len(patterns.LLM_ENDPOINT_CAPABILITIES) > 0
+    assert len(patterns.TOOL_CAPABILITIES) > 0
+
+
+def test_sink_capabilities_include_egress() -> None:
+    """http_egress is a sink capability (ADR-0009: exfiltration)."""
+    assert "http_egress" in patterns.SINK_CAPABILITIES
+
+
+def test_agent_capabilities_subset_of_llm_or_mcp() -> None:
+    """Agent capabilities are a union of LLM and MCP triggers."""
+    expected = (
+        patterns.LLM_ENDPOINT_CAPABILITIES
+        | patterns.TOOL_CAPABILITIES
+    )
+    assert patterns.AGENT_CAPABILITIES == expected

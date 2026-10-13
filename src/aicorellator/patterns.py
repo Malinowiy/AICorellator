@@ -45,6 +45,7 @@ NODE_KINDS: frozenset[str] = frozenset({
 # Note: reaches_sink and called_by are derived, not stored.
 EDGE_KINDS: frozenset[str] = frozenset({
     "uses_model",
+    "uses_tool",
     "provides_tool",
     "delegates_to",
     "has_access_to",
@@ -441,6 +442,44 @@ LETHAL_TRIFECTA_EGRESS_CAPS: frozenset[str] = frozenset({
 EDGE_CAPABILITY_DATA_FLOWS_FORWARD = "data_flows_forward"
 EDGE_CAPABILITY_CONTROL_FLOWS_FORWARD = "control_flows_forward"
 EDGE_CAPABILITY_UNTRUSTED_PROPAGATES = "untrusted_propagates"
+
+# ============================================================
+# Capability sets for classification and chain enumeration
+# ============================================================
+# These are data, not logic. classification.py uses them to
+# decide what kind a symbol is; query.py uses SINK_CAPABILITIES
+# to decide which nodes terminate a chain (ADR-0009).
+#
+# Keeping them here — not in classification.py — means there is
+# a single source of truth. Adding a new capability means
+# touching this file only, not two.
+
+# Capabilities that make a symbol a sink, regardless of name.
+# A node of any kind that exercises one of these is a valid
+# chain endpoint for find_chains.
+SINK_CAPABILITIES: frozenset[str] = frozenset({
+    "executes_code",
+    "executes_shell",
+    "writes_filesystem",
+    "writes_db",
+    "http_egress",
+})
+
+# Capabilities that make a symbol an agent, regardless of name.
+AGENT_CAPABILITIES: frozenset[str] = frozenset({
+    "calls_llm",
+    "invokes_mcp_tool",
+})
+
+# Capabilities that make a symbol an LLM endpoint, regardless of name.
+LLM_ENDPOINT_CAPABILITIES: frozenset[str] = frozenset({
+    "calls_llm",
+})
+
+# Capabilities that make a symbol a tool, regardless of name.
+TOOL_CAPABILITIES: frozenset[str] = frozenset({
+    "invokes_mcp_tool",
+})
 
 # ============================================================
 # Method name patterns

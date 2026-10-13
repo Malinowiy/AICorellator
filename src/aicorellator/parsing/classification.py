@@ -23,13 +23,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..patterns import (
+    AGENT_CAPABILITIES,
     EXCLUDED_CLASSES,
     EXCLUDED_CLASS_SUFFIXES,
     EXTRA_AGENT_CLASSES,
+    LLM_ENDPOINT_CAPABILITIES,
     PROVIDER_HINTS,
+    SINK_CAPABILITIES,
     SINK_CATEGORY_HINTS,
     SINK_METHOD_NAMES,
     SKIP_METHOD_NAMES,
+    TOOL_CAPABILITIES,
     TOOL_METHOD_PREFIXES,
 )
 
@@ -40,36 +44,6 @@ class Classification:
 
     kind: str
     attributes: dict[str, str] = field(default_factory=dict)
-
-
-# ============================================================
-# Capability sets (ADR-0009)
-# ============================================================
-
-# Capabilities that make a symbol a sink, regardless of name.
-SINK_CAPABILITIES: frozenset[str] = frozenset({
-    "executes_code",
-    "executes_shell",
-    "writes_filesystem",
-    "writes_db",
-})
-
-# Capabilities that make a symbol an agent, regardless of name.
-AGENT_CAPABILITIES: frozenset[str] = frozenset({
-    "calls_llm",
-    "invokes_mcp_tool",
-})
-
-# Capabilities that make a symbol an LLM endpoint, regardless of name.
-LLM_ENDPOINT_CAPABILITIES: frozenset[str] = frozenset({
-    "calls_llm",
-})
-
-# Capabilities that make a symbol a tool, regardless of name.
-TOOL_CAPABILITIES: frozenset[str] = frozenset({
-    "invokes_mcp_tool",
-})
-
 
 # ============================================================
 # Class classification

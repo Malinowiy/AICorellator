@@ -92,3 +92,48 @@ a = AgentExecutor(agent=..., tools=[])
 """)
     for node in result.nodes:
         assert node.attributes.get("framework") == "langchain"
+
+def test_uses_model_from_local_assignment() -> None:
+    """LLM assigned inside a function is resolved."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain_ollama import ChatOllama
+
+def get_agent(role):
+    llm = ChatOllama(model="llama3")
+    return create_agent(model=llm, tools=[])
+""")
+    uses_model = [e for e in result.edges if e.kind == "uses_model"]
+    assert len(uses_model) == 1
+
+
+def test_uses_tool_from_local_assignment() -> None:
+    """Tool list assigned inside a function is resolved."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain.tools import tool
+
+@tool
+def search(q: str) -> str:
+    return ""
+
+def get_agent():
+    tools = [search]
+    return create_agent(tools=tools, model=None)
+""")
+    uses_tool = [e for e in result.edges if e.kind == "uses_tool"]
+    assert len(uses_tool) == 1
+
+
+def test_assignment_later_wins() -> None:
+    """When two assignments share a name, the later one is used."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain_ollama import ChatOllama
+
+llm = ChatOllama(model="first")
+llm = ChatOllama(model="second")
+agent = create_agent(model=llm, tools=[])
+""")
+    uses_model = [e for e in result.edges if e.kind == "uses_model"]
+    assert len(uses_model) == 1

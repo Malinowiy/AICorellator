@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import Edge, Node
+from ..patterns import SINK_CAPABILITIES
 
 
 # ============================================================
@@ -175,14 +176,19 @@ class QueryLayer:
         max_hops: int = 6,
         max_candidates: int = 1000,
     ) -> list[CandidateChain]:
-        """Enumerate all structural paths from entry nodes to sink nodes.
+        """Enumerate structural paths from entry nodes to sink nodes.
+
+        A sink is either:
+          - a node whose kind is in `sink_kinds` (default: ["sink"]), or
+          - a node with an explicit dangerous capability
+            (executes_code / executes_shell / writes_filesystem /
+            writes_db / http_egress), per ADR-0009.
+
+        Capabilities take precedence: a node of kind "tool" with
+        executes_code is a valid sink for chain enumeration, because
+        the chain reaches a dangerous action through it.
 
         Deterministic. No LLM. Bounded by max_hops and max_candidates.
-        Returns candidate chains — NOT evaluated. Evaluation happens
-        in Layer 2 (ADR-0006).
-
-        A "path" here ends at a sink node. The path may pass through
-        any node kinds in between.
         """
         if entry_kinds is None:
             entry_kinds = ["entry_point"]
@@ -203,13 +209,19 @@ class QueryLayer:
         if not entry_ids:
             return []
 
+        # Sinks by kind.
         sink_rows = self._conn.execute(
             f"SELECT id FROM nodes WHERE kind IN ({sink_ph}) AND status = 'active'",
             sink_kinds,
         ).fetchall()
-        sink_id_set = {r["id"] for r in sink_rows}
+        sink_id_set: set[str] = {r["id"] for r in sink_rows}
+
+        # Sinks by capability (ADR-0009). This is what makes tools with
+        # executes_code / writes_filesystem / http_egress valid endpoints.
+        sink_id_set.update(self._nodes_with_sink_capabilities())
 
         if not sink_id_set:
+            return []
             return []
 
         candidates: list[CandidateChain] = []
@@ -427,3 +439,27 @@ class QueryLayer:
                 findings.extend(dict(r) for r in rows)
 
         return GraphSlice(nodes=nodes, edges=edges, findings=findings)
+    
+    def _nodes_with_sink_capabilities(self) -> set[str]:
+        """Active nodes whose capabilities include a sink capability.
+
+        Loads all active nodes and filters in Python. The graph is
+        small enough (thousands of nodes) that this is faster and
+        simpler than SQL JSON extraction.
+        """
+        rows = self._conn.execute(
+            "SELECT id, capabilities FROM nodes WHERE status = 'active'"
+        ).fetchall()
+
+        out: set[str] = set()
+        for row in rows:
+            caps_raw = row["capabilities"] or "[]"
+            try:
+                caps = json.loads(caps_raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(caps, list):
+                continue
+            if SINK_CAPABILITIES.intersection(caps):
+                out.add(row["id"])
+        return out

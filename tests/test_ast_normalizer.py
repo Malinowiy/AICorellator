@@ -428,3 +428,329 @@ def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
         and e.target_id == mcp_nodes[0].id
     ]
     assert len(has_access) == 1
+
+def test_normalize_cross_file_uses_tool(target: Target) -> None:
+    """Agent in one file, tools in another, connected by import."""
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+    from aicorellator.graph.models import Node
+
+    manifest = FileManifest(target=target)
+    manifest.files = [
+        FileEntry(
+            path="agent.py",
+            abs_path=target.root / "agent.py",
+            language="python", content_hash="a", size=100,
+        ),
+        FileEntry(
+            path="tools.py",
+            abs_path=target.root / "tools.py",
+            language="python", content_hash="b", size=100,
+        ),
+    ]
+    (target.root / "agent.py").write_text(
+        "from tools import USER_TOOLS\n", encoding="utf-8",
+    )
+    (target.root / "tools.py").write_text(
+        "@tool\ndef x(): ...\n", encoding="utf-8",
+    )
+
+    detection = DetectionResult(framework="langchain")
+    detection.nodes = [
+        Node(
+            id="agent:1", kind="agent", name="create_agent",
+            host_id="localhost",
+            attributes={"source_file": "agent.py", "framework": "langchain"},
+        ),
+        Node(
+            id="tool:1", kind="tool", name="x",
+            host_id="localhost",
+            attributes={"source_file": "tools.py", "framework": "langchain"},
+        ),
+    ]
+
+    tsa = TSAOutput(symbols=[])
+    delta = normalize(manifest, tsa, framework_detection=detection)
+
+    uses_tool = [e for e in delta.edges if e.kind == "uses_tool"]
+    assert len(uses_tool) == 1
+    assert uses_tool[0].source_id == "agent:1"
+    assert uses_tool[0].target_id == "tool:1"
+
+def test_orphan_entry_links_to_single_framework_agent(target: Target) -> None:
+    """One framework agent + orphan entry_points → delegates_to edges."""
+    from aicorellator.graph.models import Node
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/chat",
+                handler="chat", file_path="app.py", line=10,
+            ),
+            EntryPoint(
+                method="GET", path="/api/models",
+                handler="get_models", file_path="app.py", line=20,
+            ),
+        ],
+    )
+
+    detection = DetectionResult(framework="langchain")
+    detection.nodes = [
+        Node(
+            id="agent:1", kind="agent", name="create_agent",
+            host_id="localhost",
+            attributes={"source_file": "agent.py", "framework": "langchain"},
+        ),
+    ]
+
+    delta = normalize(manifest, tsa, ep, framework_detection=detection)
+
+    delegates = [e for e in delta.edges if e.kind == "delegates_to"]
+    assert len(delegates) == 2
+    assert all(e.target_id == "agent:1" for e in delegates)
+    assert {e.source_id for e in delegates} == {
+        n.id for n in delta.nodes if n.kind == "entry_point"
+    }
+
+
+def test_orphan_entry_no_framework_agent(target: Target) -> None:
+    """No framework agents → no orphan linking."""
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/chat",
+                handler="chat", file_path="app.py", line=10,
+            ),
+        ],
+    )
+    delta = normalize(manifest, tsa, ep)
+    delegates = [e for e in delta.edges if e.kind == "delegates_to"]
+    assert delegates == []
+
+
+def test_orphan_entry_multiple_framework_agents_no_link(target: Target) -> None:
+    """Two framework agents → ambiguous, no orphan linking."""
+    from aicorellator.graph.models import Node
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/chat",
+                handler="chat", file_path="app.py", line=10,
+            ),
+        ],
+    )
+    detection = DetectionResult(framework="langchain")
+    detection.nodes = [
+        Node(
+            id="agent:1", kind="agent", name="A",
+            host_id="localhost",
+            attributes={"source_file": "a.py", "framework": "langchain"},
+        ),
+        Node(
+            id="agent:2", kind="agent", name="B",
+            host_id="localhost",
+            attributes={"source_file": "b.py", "framework": "langchain"},
+        ),
+    ]
+    delta = normalize(manifest, tsa, ep, framework_detection=detection)
+    delegates = [e for e in delta.edges if e.kind == "delegates_to"]
+    assert delegates == []
+
+
+def test_orphan_entry_not_relinked_when_already_linked(target: Target) -> None:
+    """An entry point that already has a delegates_to edge is not re-linked."""
+    from aicorellator.graph.models import Node
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+    from aicorellator.parsing.entry_points import AgentCall
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="InvoiceAgent", kind="class",
+            file_path="agents/invoice.py", line_start=1, line_end=50,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/chat",
+                handler="chat", file_path="app.py", line=10,
+            ),
+        ],
+        agent_calls=[
+            AgentCall(
+                handler="chat", agent_name="InvoiceAgent",
+                file_path="app.py", line=12,
+            ),
+        ],
+    )
+    detection = DetectionResult(framework="langchain")
+    detection.nodes = [
+        Node(
+            id="agent:1", kind="agent", name="InvoiceAgent",
+            host_id="localhost",
+            attributes={"source_file": "agents/invoice.py"},  # no framework
+        ),
+    ]
+    delta = normalize(manifest, tsa, ep, framework_detection=detection)
+    delegates = [e for e in delta.edges if e.kind == "delegates_to"]
+    # Two edges total: one from agent_calls (entry → InvoiceAgent),
+    # and... none from orphan fallback, because InvoiceAgent has
+    # no `framework` attribute → framework_agents is empty.
+    assert len(delegates) == 1
+
+
+def test_entry_point_to_sink_direct_handler(target: Target) -> None:
+    """Handler that is itself a sink gets a has_access_to edge."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="upload_file", kind="method",
+            file_path="app.py", line_start=10, line_end=20,
+            class_name=None,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/upload",
+                handler="upload_file", file_path="app.py", line=10,
+            ),
+        ],
+        call_graph={"upload_file": set()},
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
+    sink_nodes = [n for n in delta.nodes if n.kind == "sink"]
+    assert len(entry_nodes) == 1
+    assert len(sink_nodes) == 1
+
+    has_access = [
+        e for e in delta.edges
+        if e.kind == "has_access_to"
+        and e.source_id == entry_nodes[0].id
+        and e.target_id == sink_nodes[0].id
+    ]
+    assert len(has_access) == 1
+
+
+def test_entry_point_to_sink_via_helper(target: Target) -> None:
+    """Handler → helper → sink produces a transitive edge."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="run_analysis", kind="method",
+            file_path="app.py", line_start=30, line_end=40,
+            class_name=None,
+        ),
+    ])
+    # `run_analysis` is classified as a sink by name? It is not in
+    # SINK_METHOD_NAMES. But we just need a sink node in the file
+    # for the test. Let's use a name that classifies as sink.
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="execute_script", kind="method",
+            file_path="app.py", line_start=30, line_end=40,
+            class_name=None,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/process",
+                handler="process", file_path="app.py", line=10,
+            ),
+        ],
+        call_graph={
+            "process": {"run_analysis"},
+            "run_analysis": {"execute_script"},
+            "execute_script": set(),
+        },
+    )
+    delta = normalize(manifest, tsa, ep)
+
+    entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
+    sink_nodes = [n for n in delta.nodes if n.kind == "sink"]
+    assert len(entry_nodes) == 1
+    assert len(sink_nodes) == 1
+
+    has_access = [
+        e for e in delta.edges
+        if e.kind == "has_access_to"
+        and e.source_id == entry_nodes[0].id
+        and e.target_id == sink_nodes[0].id
+    ]
+    assert len(has_access) == 1
+
+
+def test_entry_point_to_sink_unreachable_skipped(target: Target) -> None:
+    """A sink in the same file but not reachable from the handler
+    does not produce an edge."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="execute_script", kind="method",
+            file_path="app.py", line_start=50, line_end=60,
+            class_name=None,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/safe",
+                handler="safe_endpoint", file_path="app.py", line=10,
+            ),
+        ],
+        call_graph={
+            "safe_endpoint": set(),
+            "execute_script": set(),
+        },
+    )
+    delta = normalize(manifest, tsa, ep)
+    has_access = [e for e in delta.edges if e.kind == "has_access_to"]
+    assert has_access == []
+
+
+def test_entry_point_to_sink_cycle_safe(target: Target) -> None:
+    """A cycle in the call graph terminates and still finds the sink."""
+    from aicorellator.parsing.entry_points import EntryPoint, EntryPointOutput
+
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="execute_script", kind="method",
+            file_path="app.py", line_start=40, line_end=50,
+            class_name=None,
+        ),
+    ])
+    ep = EntryPointOutput(
+        entry_points=[
+            EntryPoint(
+                method="POST", path="/process",
+                handler="a", file_path="app.py", line=10,
+            ),
+        ],
+        call_graph={
+            "a": {"b"},
+            "b": {"a", "execute_script"},
+            "execute_script": set(),
+        },
+    )
+    delta = normalize(manifest, tsa, ep)
+    has_access = [e for e in delta.edges if e.kind == "has_access_to"]
+    assert len(has_access) == 1

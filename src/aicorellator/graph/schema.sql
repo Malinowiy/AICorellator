@@ -104,7 +104,7 @@ CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
 -- ------------------------------------------------------------
 -- edges — graph relations (stored kinds only)
 -- ------------------------------------------------------------
--- Stored:  uses_model, provides_tool, delegates_to, has_access_to, guards
+-- Stored:  uses_model, uses_tool, provides_tool, delegates_to, has_access_to, guards
 -- Derived: reaches_sink, called_by — computed by Query Layer.
 --
 -- capabilities (ADR-0009): JSON array of edge-level capabilities:
@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS edges (
     FOREIGN KEY (host_id)   REFERENCES hosts(id) ON DELETE CASCADE,
 
     CHECK (kind IN (
-        'uses_model', 'provides_tool', 'delegates_to', 'has_access_to', 'guards'
+        'uses_model', 'uses_tool', 'provides_tool', 'delegates_to', 'has_access_to', 'guards'
     )),
     CHECK (precision IN ('syntactic', 'compiler-verified')),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),

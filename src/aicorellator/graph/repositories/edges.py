@@ -17,7 +17,7 @@ class EdgesRepository:
 
     Note on host_id semantics: host_id is the "local" host for this
     edge — where the relationship was observed. For cross-host edges
-    it may differ from either endpoint's host_id. 
+    it may differ from either endpoint's host_id.
     See src/aicorellator/graph/schema.sql.
     """
 
@@ -35,10 +35,12 @@ class EdgesRepository:
             """
             INSERT INTO edges (
                 id, source_id, target_id, kind, host_id, precision,
-                attributes, confidence, status, created_at, updated_at
+                attributes, capabilities, confidence, status,
+                created_at, updated_at
             ) VALUES (
                 :id, :source_id, :target_id, :kind, :host_id, :precision,
-                :attributes, :confidence, :status, :created_at, :updated_at
+                :attributes, :capabilities, :confidence, :status,
+                :created_at, :updated_at
             )
             """,
             edge.to_row(),
@@ -47,9 +49,13 @@ class EdgesRepository:
     def upsert(self, edge: Edge) -> None:
         """Insert or update an edge by id.
 
-        On conflict, attributes are MERGED. precision is upgraded:
-        'compiler-verified' wins over 'syntactic'. confidence takes
-        the max. Status is overwritten.
+        On conflict:
+          - attributes are MERGED.
+          - capabilities are UNIONED.
+          - precision is upgraded: 'compiler-verified' wins over
+            'syntactic'.
+          - confidence takes the max.
+          - status is overwritten.
         """
         existing = self.get(edge.id)
         if existing is None:
@@ -57,6 +63,7 @@ class EdgesRepository:
             return
 
         merged_attrs = {**existing.attributes, **edge.attributes}
+        merged_caps = sorted(set(existing.capabilities) | set(edge.capabilities))
         merged_confidence = max(existing.confidence, edge.confidence)
         merged_precision = (
             "compiler-verified"
@@ -67,14 +74,15 @@ class EdgesRepository:
         self._conn.execute(
             """
             UPDATE edges SET
-                source_id   = :source_id,
-                target_id   = :target_id,
-                kind        = :kind,
-                host_id     = :host_id,
-                precision   = :precision,
-                attributes  = :attributes,
-                confidence  = :confidence,
-                status      = :status
+                source_id    = :source_id,
+                target_id    = :target_id,
+                kind         = :kind,
+                host_id      = :host_id,
+                precision    = :precision,
+                attributes   = :attributes,
+                capabilities = :capabilities,
+                confidence   = :confidence,
+                status       = :status
             WHERE id = :id
             """,
             {
@@ -85,6 +93,7 @@ class EdgesRepository:
                 "host_id": edge.host_id,
                 "precision": merged_precision,
                 "attributes": json.dumps(merged_attrs),
+                "capabilities": json.dumps(merged_caps),
                 "confidence": merged_confidence,
                 "status": edge.status,
             },

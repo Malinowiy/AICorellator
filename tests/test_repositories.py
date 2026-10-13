@@ -270,3 +270,53 @@ def test_report_archive_current(store: GraphStore) -> None:
     assert old.is_current is False
     assert old.bundle_dir == "20261010_120000"
     assert store.reports.get_current("localhost") is None
+
+def test_node_add_persists_capabilities(store: GraphStore) -> None:
+    store.nodes.add(Node(
+        id="n:1", kind="tool", name="t", host_id="localhost",
+        capabilities=["executes_code"],
+    ))
+    assert store.nodes.get("n:1").capabilities == ["executes_code"]
+
+
+def test_node_upsert_unions_capabilities(store: GraphStore) -> None:
+    store.nodes.add(Node(
+        id="n:1", kind="tool", name="t", host_id="localhost",
+        capabilities=["executes_code"],
+    ))
+    store.nodes.upsert(Node(
+        id="n:1", kind="tool", name="t", host_id="localhost",
+        capabilities=["reads_filesystem"],
+    ))
+    assert sorted(store.nodes.get("n:1").capabilities) == [
+        "executes_code", "reads_filesystem",
+    ]
+
+
+def test_edge_add_persists_capabilities(store: GraphStore) -> None:
+    store.nodes.add(Node(id="n:1", kind="agent", name="a", host_id="localhost"))
+    store.nodes.add(Node(id="n:2", kind="tool", name="t", host_id="localhost"))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        capabilities=["data_flows_forward"],
+    ))
+    assert store.edges.get("e:1").capabilities == ["data_flows_forward"]
+
+
+def test_edge_upsert_unions_capabilities(store: GraphStore) -> None:
+    store.nodes.add(Node(id="n:1", kind="agent", name="a", host_id="localhost"))
+    store.nodes.add(Node(id="n:2", kind="tool", name="t", host_id="localhost"))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        capabilities=["data_flows_forward"],
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        capabilities=["control_flows_forward"],
+    ))
+    assert sorted(store.edges.get("e:1").capabilities) == [
+        "control_flows_forward", "data_flows_forward",
+    ]

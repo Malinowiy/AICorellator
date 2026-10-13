@@ -29,11 +29,11 @@ class NodesRepository:
         self._conn.execute(
             """
             INSERT INTO nodes (
-                id, kind, name, host_id, attributes,
+                id, kind, name, host_id, attributes, capabilities,
                 confidence, content_hash, status,
                 created_at, updated_at
             ) VALUES (
-                :id, :kind, :name, :host_id, :attributes,
+                :id, :kind, :name, :host_id, :attributes, :capabilities,
                 :confidence, :content_hash, :status,
                 :created_at, :updated_at
             )
@@ -44,10 +44,13 @@ class NodesRepository:
     def upsert(self, node: Node) -> None:
         """Insert or update a node by id.
 
-        On conflict, attributes are MERGED (not replaced): new keys
-        are added, existing keys are overwritten. confidence takes
-        the max of old and new. content_hash, status, kind, name,
-        host_id are overwritten.
+        On conflict:
+          - attributes are MERGED (not replaced): new keys are added,
+            existing keys are overwritten.
+          - capabilities are UNIONED (not replaced): capabilities
+            accumulated from different sources are preserved.
+          - confidence takes the max of old and new.
+          - content_hash, status, kind, name, host_id are overwritten.
         """
         existing = self.get(node.id)
         if existing is None:
@@ -55,6 +58,7 @@ class NodesRepository:
             return
 
         merged_attrs = {**existing.attributes, **node.attributes}
+        merged_caps = sorted(set(existing.capabilities) | set(node.capabilities))
         merged_confidence = max(existing.confidence, node.confidence)
 
         self._conn.execute(
@@ -64,6 +68,7 @@ class NodesRepository:
                 name         = :name,
                 host_id      = :host_id,
                 attributes   = :attributes,
+                capabilities = :capabilities,
                 confidence   = :confidence,
                 content_hash = :content_hash,
                 status       = :status
@@ -75,6 +80,7 @@ class NodesRepository:
                 "name": node.name,
                 "host_id": node.host_id,
                 "attributes": json.dumps(merged_attrs),
+                "capabilities": json.dumps(merged_caps),
                 "confidence": merged_confidence,
                 "content_hash": node.content_hash,
                 "status": node.status,

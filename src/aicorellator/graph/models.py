@@ -32,6 +32,7 @@ VALID_NODE_KINDS = frozenset({
 # Valid edge kinds. Mirrors the CHECK constraint in schema.sql.
 VALID_EDGE_KINDS = frozenset({
     "uses_model",
+    "uses_tool",
     "provides_tool",
     "delegates_to",
     "has_access_to",

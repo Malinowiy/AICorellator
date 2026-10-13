@@ -4,6 +4,7 @@ Responsibilities:
   1. Create Node objects for classified symbols.
   2. Create edges between nodes using simple heuristics.
   3. Attach capabilities (ADR-0009) to nodes.
+  4. Merge framework detector nodes and edges (ADR-0011).
 
 Edges derived here:
   - provides_tool  (mcp_server → tool)
@@ -19,6 +20,7 @@ Nodes derived here:
   - guardrail (from classification)
   - entry_point (from entry_points)
   - llm_endpoint (from llm_extractor configs)
+  - framework-specific nodes (from framework detectors)
 
 Edges NOT derived here (require source analysis beyond TSA):
   - uses_model     (agent → llm_endpoint)
@@ -40,8 +42,11 @@ from .classification import (
     classify_method,
 )
 from .entry_points import EntryPointOutput
+from .framework_detectors import DetectionResult
 from .llm_extractor import LLMExtractorOutput
 from .models import TSAOutput, TSASymbol
+from .framework_detectors.cross_file import resolve_agent_tool_edges
+from ..patterns import MCP_DIR_SEGMENT, MCP_SERVERS_SEGMENT, SINK_CAPABILITIES
 
 
 HOST_ID = "localhost"       # Phase 0/1 — single host
@@ -60,6 +65,7 @@ def normalize(
     entry_points: EntryPointOutput | None = None,
     llm_output: LLMExtractorOutput | None = None,
     capabilities: dict[str, FileCapabilities] | None = None,
+    framework_detection: DetectionResult | None = None,
 ) -> GraphDelta:
     """Build graph delta from manifest, TSA output, entry points, LLM configs.
 
@@ -73,15 +79,20 @@ def normalize(
         capabilities: per-file capabilities from
                       parsing.capability_extractor.extract().
                       Keys are relative file paths. Pass None to skip.
+        framework_detection: DetectionResult from
+                             parsing.detectors_runner.run().
+                             Contains framework-specific nodes
+                             (agent, tool, llm_endpoint) and
+                             edges. Pass None to skip.
     """
     delta = GraphDelta()
     entry_points = entry_points or EntryPointOutput()
     llm_output = llm_output or LLMExtractorOutput()
     capabilities = capabilities or {}
+    framework_detection = framework_detection or DetectionResult()
 
     # --- MCP servers from files ---
-    # One node per server name, deduplicated across files.
-    mcp_servers: dict[str, str] = {}   # server_name -> node_id
+    mcp_servers: dict[str, str] = {}
     for file_entry in manifest.files:
         c = classify_file(file_entry.path)
         if c is None:
@@ -97,7 +108,7 @@ def normalize(
             name=server_name,
             host_id=HOST_ID,
             attributes={"server_name": server_name},
-            content_hash=None,  # server spans multiple files
+            content_hash=None,
         ))
 
     # --- Classes ---
@@ -151,7 +162,6 @@ def normalize(
             ))
 
     # --- Edges: has_access_to (tool -> sink) ---
-    # Heuristic: if a tool and a sink are in the same file, link them.
     for file_path, tools in tools_by_file.items():
         sinks = sinks_by_file.get(file_path, [])
         for tool_node in tools:
@@ -163,6 +173,7 @@ def normalize(
                     kind="has_access_to",
                     host_id=HOST_ID,
                 ))
+
 
     # --- Entry points ---
     entry_node_by_handler: dict[str, str] = {}
@@ -243,6 +254,33 @@ def normalize(
             host_id=HOST_ID,
         ))
 
+    # --- Edges: entry_point → sink (same file, transitive) ---
+    # A route handler reaches a sink if the handler itself is a sink
+    # function, or if the handler can reach a sink function through
+    # a chain of local (same-file) calls.
+    #
+    # This is a control-flow reachability analysis over a per-file
+    # call graph. It is NOT a dataflow analysis: we track which
+    # functions a handler calls, not which values flow where.
+    # ADR-0001 forbids full dataflow; control-flow reachability is
+    # in scope, and the entry-point detector already does similar
+    # name-based call inspection.
+    #
+    # Cross-file sinks are not followed here. A handler that calls a
+    # helper in another module is not linked to sinks in that module.
+    # That is a separate problem; a cross-file resolver would need
+    # the import table and a project-wide call graph.
+    #
+    # False positives are accepted (ADR-0009): the LLM ensemble in
+    # Phase 3 filters them. Better a spurious edge than a missing one.
+    entry_sink_edges = _link_entry_points_to_sinks(
+        entry_points=entry_points,
+        sinks_by_file=sinks_by_file,
+        entry_node_by_handler=entry_node_by_handler,
+    )
+    delta.edges.extend(entry_sink_edges)
+
+
     # --- Edges: agent → mcp_server (has_access_to) ---
     for usage in entry_points.mcp_usages:
         if not usage.is_agent_module:
@@ -259,8 +297,111 @@ def normalize(
             host_id=HOST_ID,
         ))
 
-    return delta
+    # --- Framework detector nodes and edges ---
+    # Detector nodes are authoritative for kind. If a node with the
+    # same (name, source_file) already exists (from TSA heuristics),
+    # it is replaced. Capabilities from the existing node are
+    # preserved if the detector node has none.
+    existing_by_name_file: dict[tuple[str, str], Node] = {}
+    for node in delta.nodes:
+        key = (node.name, node.attributes.get("source_file", ""))
+        existing_by_name_file[key] = node
 
+    # Map old node id → new node id, for edges that need re-pointing.
+    id_remap: dict[str, str] = {}
+
+    for detector_node in framework_detection.nodes:
+        key = (
+            detector_node.name,
+            detector_node.attributes.get("source_file", ""),
+        )
+        existing = existing_by_name_file.get(key)
+
+        if existing is not None:
+            # Preserve capabilities from existing if detector has none.
+            if not detector_node.capabilities and existing.capabilities:
+                detector_node.capabilities = list(existing.capabilities)
+            # Remove existing node.
+            delta.nodes = [n for n in delta.nodes if n is not existing]
+            # Record id remap so edges can be re-pointed below.
+            id_remap[existing.id] = detector_node.id
+
+        delta.nodes.append(detector_node)
+        existing_by_name_file[key] = detector_node
+
+    # Re-point edges from removed nodes to their replacements.
+    # Without this, edges to a TSA node that got replaced by a
+    # detector node would be silently dropped.
+    if id_remap:
+        new_edges: list[Edge] = []
+        seen: set[str] = set()
+        for edge in delta.edges:
+            new_source = id_remap.get(edge.source_id, edge.source_id)
+            new_target = id_remap.get(edge.target_id, edge.target_id)
+            if new_source != edge.source_id or new_target != edge.target_id:
+                new_id = _edge_id(new_source, new_target, edge.kind)
+                if new_id in seen:
+                    continue
+                edge = Edge(
+                    id=new_id,
+                    source_id=new_source,
+                    target_id=new_target,
+                    kind=edge.kind,
+                    host_id=edge.host_id,
+                    precision=edge.precision,
+                    attributes=edge.attributes,
+                    capabilities=edge.capabilities,
+                    confidence=edge.confidence,
+                    status=edge.status,
+                )
+                seen.add(new_id)
+            new_edges.append(edge)
+        delta.edges = new_edges
+
+    existing_edge_ids = {e.id for e in delta.edges}
+    for edge in framework_detection.edges:
+        if edge.id in existing_edge_ids:
+            continue
+        delta.edges.append(edge)
+        existing_edge_ids.add(edge.id)
+
+    # --- Cross-file edges: agent → tool (uses_tool) ---
+    # Framework detectors are per-file (ADR-0011): an agent created
+    # in agent.py that uses tools imported from tools.py has no
+    # uses_tool edge from the detector alone. Resolve those here,
+    # using the manifest's import table. False positives are
+    # accepted (ADR-0009): Phase 3 (LLM ensemble) filters them.
+    cross_edges = resolve_agent_tool_edges(
+        manifest=manifest,
+        detector_nodes=framework_detection.nodes,
+        host_id=HOST_ID,
+    )
+    for edge in cross_edges:
+        if edge.id in existing_edge_ids:
+            continue
+        delta.edges.append(edge)
+        existing_edge_ids.add(edge.id)
+    # --- Edges: orphan entry_point → single agent (framework fallback) ---
+    # When a project has exactly one agent node with framework
+    # provenance, and some entry_points have no outgoing
+    # delegates_to edge, link them to that agent.
+    #
+    # Rationale: LangChain 1.0 creates agents through factories
+    # (create_agent, get_agent) that return a CompiledStateGraph.
+    # The route body then calls agent_graph.invoke(...). Neither
+    # the detector (per-file) nor entry_points.py (route-focused)
+    # can link them without cross-file dataflow. This resolves the
+    # ambiguity at the normalizer level.
+    #
+    # False positives are accepted (ADR-0009): the LLM ensemble in
+    # Phase 3 filters them. Better a spurious edge than no chains.
+    orphan_edges = _link_orphan_entry_points(
+        delta=delta,
+        host_id=HOST_ID,
+    )
+    delta.edges.extend(orphan_edges)
+
+    return delta
 
 # ============================================================
 # Capability lookup
@@ -389,3 +530,120 @@ def _server_name_for_file(file_path: str) -> str | None:
             return None
         return name
     return None
+
+def _link_orphan_entry_points(
+    delta: GraphDelta,
+    host_id: str,
+) -> list[Edge]:
+    """Link entry_points with no outgoing edges to the single framework agent.
+
+    Preconditions for linking (all must hold):
+      - Exactly one agent node with a `framework` attribute exists.
+      - At least one entry_point node exists.
+      - The entry_point has no outgoing `delegates_to` edge yet.
+
+    Returns an empty list if the preconditions do not hold. This is
+    a deliberate no-op in ambiguous cases (0 or ≥2 framework agents).
+    """
+    # 1. Find framework agents.
+    framework_agents = [
+        n for n in delta.nodes
+        if n.kind == "agent" and n.attributes.get("framework")
+    ]
+    if len(framework_agents) != 1:
+        return []
+
+    agent_node = framework_agents[0]
+
+    # 2. Find entry_points with no outgoing delegates_to edge.
+    sources_with_outgoing: set[str] = {
+        e.source_id for e in delta.edges if e.kind == "delegates_to"
+    }
+    orphan_entries = [
+        n for n in delta.nodes
+        if n.kind == "entry_point" and n.id not in sources_with_outgoing
+    ]
+    if not orphan_entries:
+        return []
+
+    # 3. Build edges.
+    edges: list[Edge] = []
+    for entry in orphan_entries:
+        edge_id = _edge_id(entry.id, agent_node.id, "delegates_to")
+        edges.append(Edge(
+            id=edge_id,
+            source_id=entry.id,
+            target_id=agent_node.id,
+            kind="delegates_to",
+            host_id=host_id,
+            attributes={
+                "framework": agent_node.attributes.get("framework", ""),
+                "resolved_via": "orphan_entry_to_single_agent",
+            },
+        ))
+    return edges
+
+def _link_entry_points_to_sinks(
+    entry_points: EntryPointOutput,
+    sinks_by_file: dict[str, list[Node]],
+    entry_node_by_handler: dict[str, str],
+) -> list[Edge]:
+    """Resolve entry_point → sink edges via same-file call reachability.
+
+    For each entry point, BFS from the handler through the file's
+    call graph. For each sink node in the same file whose name is
+    reachable, emit a has_access_to edge.
+
+    Control-flow reachability, not dataflow. Same-file only. False
+    positives accepted (ADR-0009).
+    """
+    edges: list[Edge] = []
+
+    for ep in entry_points.entry_points:
+        entry_id = entry_node_by_handler.get(ep.handler)
+        if entry_id is None:
+            continue
+
+        sinks_here = sinks_by_file.get(ep.file_path, [])
+        if not sinks_here:
+            continue
+
+        reachable = _reachable_functions(
+            start=ep.handler,
+            call_graph=entry_points.call_graph,
+        )
+
+        for sink_node in sinks_here:
+            if sink_node.name in reachable:
+                edges.append(Edge(
+                    id=_edge_id(entry_id, sink_node.id, "has_access_to"),
+                    source_id=entry_id,
+                    target_id=sink_node.id,
+                    kind="has_access_to",
+                    host_id=HOST_ID,
+                ))
+
+    return edges
+
+def _reachable_functions(
+    start: str,
+    call_graph: dict[str, set[str]],
+) -> set[str]:
+    """BFS from `start` through the call graph, including `start` itself.
+
+    The call graph is a name-keyed mapping: function name → set of
+    called function names. Only `ast.Name` calls are recorded (see
+    `entry_points._collect_call_names`), so attribute calls like
+    `self._helper()` are not followed.
+    """
+    visited: set[str] = set()
+    queue: list[str] = [start]
+    while queue:
+        current = queue.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        for next_name in call_graph.get(current, ()):
+            if next_name not in visited:
+                queue.append(next_name)
+    return visited

@@ -97,6 +97,11 @@ class EntryPointOutput:
     mcp_usages: list[MCPUsage] = field(default_factory=list)
     files_parsed: int = 0
     files_failed: int = 0
+    call_graph: dict[str, set[str]] = field(default_factory=dict)
+    # call_graph: module-level function name → set of called names.
+    # Populated for every FunctionDef / AsyncFunctionDef in each file,
+    # not only for route handlers. Used by the normalizer to resolve
+    # route-handler-to-sink reachability (ADR-0004 note in ADR-0013).
 
 
 def run(manifest, known_agents: set[str] | None = None) -> EntryPointOutput:
@@ -143,11 +148,22 @@ def _walk_module(
     output: EntryPointOutput,
     known_agents: set[str] | None,
 ) -> None:
-    """Walk a module: detect routes, agent calls, and MCP usages."""
+    """Walk a module: detect routes, agent calls, and MCP usages.
+
+    Also builds a per-file call graph: for every function (route
+    handler or not), the set of names it calls. This is used by the
+    normalizer to resolve route-handler-to-sink reachability across
+    local helper functions.
+    """
     is_agent_module = _is_agent_module(file_path)
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Call graph entry for every function, including helpers.
+            output.call_graph[node.name] = _collect_call_names(node)
+
+            # Route, agent-call, and MCP detection for handler-level
+            # heuristics. Unchanged from before.
             _process_function(node, file_path, output, known_agents, is_agent_module)
 
 
@@ -376,3 +392,25 @@ def _agent_name_from_suffix(suffix: str) -> str | None:
     if not suffix:
         return None
     return suffix.capitalize() + "Agent"
+
+def _collect_call_names(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    """Names of all functions called anywhere in the function body.
+
+    Only `ast.Name` call targets are recorded. Attribute calls
+    (`obj.method()`) are skipped: resolving them requires knowing the
+    receiver's type, which is out of scope for a control-flow graph.
+    This is a deliberate under-approximation.
+
+    Nested functions are included in the walk: a helper defined inside
+    a handler is recorded under its own name, and its calls are part
+    of the handler's reachability set as well.
+    """
+    calls: set[str] = set()
+    for node in ast.walk(func):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            calls.add(node.func.id)
+    return calls

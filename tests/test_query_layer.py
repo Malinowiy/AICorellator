@@ -94,3 +94,56 @@ def test_get_subgraph_by_kind(store: GraphStore, sample_graph: dict[str, str]) -
     slice_ = store.query.get_subgraph(node_kinds=["agent", "sink"])
     node_kinds = {n.kind for n in slice_.nodes}
     assert node_kinds == {"agent", "sink"}
+
+def test_find_chains_tool_with_sink_capability_is_endpoint(
+    store: GraphStore,
+) -> None:
+    """A tool with executes_code is a valid chain endpoint (ADR-0009)."""
+    # Build: entry → tool (executes_code)
+    store.nodes.add(Node(
+        id="entry:1", kind="entry_point", name="POST /chat",
+        host_id="localhost",
+    ))
+    store.nodes.add(Node(
+        id="tool:1", kind="tool", name="execute_python_script",
+        host_id="localhost",
+        capabilities=["executes_code"],
+    ))
+    store.edges.add(Edge(
+        id="e:1", source_id="entry:1", target_id="tool:1",
+        kind="has_access_to", host_id="localhost",
+    ))
+
+    chains = store.query.find_chains()
+    assert len(chains) == 1
+    assert chains[0].nodes == ["entry:1", "tool:1"]
+
+
+def test_find_chains_tool_without_sink_capability_not_endpoint(
+    store: GraphStore,
+) -> None:
+    """A tool without dangerous capabilities is not a chain endpoint."""
+    store.nodes.add(Node(
+        id="entry:1", kind="entry_point", name="POST /chat",
+        host_id="localhost",
+    ))
+    store.nodes.add(Node(
+        id="tool:1", kind="tool", name="search_docs",
+        host_id="localhost",
+        capabilities=[],
+    ))
+    store.edges.add(Edge(
+        id="e:1", source_id="entry:1", target_id="tool:1",
+        kind="has_access_to", host_id="localhost",
+    ))
+
+    chains = store.query.find_chains()
+    assert chains == []
+
+
+def test_find_chains_sink_by_kind_still_works(
+    store: GraphStore, sample_graph: dict[str, str],
+) -> None:
+    """Existing kind='sink' behavior is preserved."""
+    chains = store.query.find_chains()
+    assert len(chains) == 1

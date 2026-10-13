@@ -31,6 +31,7 @@ from aicorellator.ingestion import discover, ingest
 from aicorellator.parsing import normalize, run_tsa, set_phase1_done, write_graph
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
+from aicorellator.parsing.capability_extractor import extract as extract_capabilities
 
 
 # ============================================================
@@ -275,3 +276,29 @@ def test_pipeline_produces_candidate_chains(
         # We assert the weaker invariant: the graph is acyclic-
         # traversal-safe and produces some result set.
         assert isinstance(chains, list)
+
+def test_pipeline_persists_capabilities(
+    synthetic_target: Path, pipeline_db: Path,
+) -> None:
+    """Capabilities survive extraction → normalize → write → read."""
+    target = ingest(synthetic_target, kind="folder")
+    manifest = discover(target)
+    capabilities = {}
+    for entry in manifest.files:
+        if entry.language != "python":
+            continue
+        capabilities[entry.path] = extract_capabilities(entry.abs_path, entry.path)
+
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    delta = normalize(manifest, tsa, ep, llm, capabilities=capabilities)
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+        # The synthetic project has SystemUtilsServer.execute_script
+        # with subprocess.run(shell=True) — it must have executes_shell.
+        sinks = store.nodes.list(kind="sink")
+        names = {s.name: s.capabilities for s in sinks}
+        assert "execute_script" in names
+        assert "executes_shell" in names["execute_script"]

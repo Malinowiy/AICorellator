@@ -239,3 +239,50 @@ def helper():
 """)
     out = run(manifest)
     assert out.mcp_usages == []
+
+def test_call_graph_collected(tmp_manifest) -> None:
+    """Call graph records function-to-function calls per file."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", """\
+@app.post("/process")
+def process(request):
+    data = parse_request(request)
+    result = run_analysis(data)
+    return result
+
+def parse_request(request):
+    return request.json()
+
+def run_analysis(data):
+    return "ok"
+""")
+    out = run(manifest)
+    cg = out.call_graph
+    assert "process" in cg
+    assert "parse_request" in cg["process"]
+    assert "run_analysis" in cg["process"]
+    assert "parse_request" in cg
+    assert "run_analysis" in cg
+
+
+def test_call_graph_includes_helpers_without_routes(tmp_manifest) -> None:
+    """Helpers not decorated as routes are still in the call graph."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "util.py", """\
+def main():
+    return helper()
+
+def helper():
+    return 42
+""")
+    out = run(manifest)
+    assert "main" in out.call_graph
+    assert "helper" in out.call_graph
+    assert "helper" in out.call_graph["main"]
+
+
+def test_call_graph_empty_for_plain_module(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "empty.py", "x = 1\n")
+    out = run(manifest)
+    assert out.call_graph == {}
