@@ -17,6 +17,7 @@ from .base import FrameworkDetector
 from .langchain import LangChainDetector
 from .langgraph import LangGraphDetector
 from .fastmcp import FastMCPDetector
+from .mcp_python import MCPPythonDetector
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ KNOWN_DETECTORS: dict[str, type[FrameworkDetector]] = {
     "langgraph": LangGraphDetector,
     # "openai_agents": OpenAIAgentsDetector,
     "fastmcp": FastMCPDetector,
+    "mcp_python": MCPPythonDetector,
 }
 
 
