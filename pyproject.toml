@@ -3,7 +3,8 @@ name = "aicorellator"
 version = "0.0.1"
 description = "AI Infrastructure Attack Surface Correlator"
 readme = "README.md"
-license = { text = "MIT" }
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",

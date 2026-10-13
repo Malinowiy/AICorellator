@@ -135,4 +135,14 @@ System structure is documented as C4 diagrams in
 
 ## License
 
-See `LICENSE`.
+AICorellator is released under the **PolyForm Noncommercial License
+1.0.0**. Noncommercial use is free. Commercial use requires a paid
+license.
+
+- **Noncommercial use** — free, under the terms of `LICENSE`.
+- **Commercial use** — requires a commercial license. See
+  `COMMERCIAL.md` for pricing, contribution-based discounts, and how
+  to purchase.
+- **Contributions** — welcome, under the terms of `CONTRIBUTING.md`.
+
+For commercial licensing inquiries: **crimsonmalinowiy@gmail.com**.
