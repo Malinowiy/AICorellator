@@ -1,6 +1,6 @@
 # AICorellator — C4 Level 1: System Context
 
-**View:** System Context (C4 L1) · **Date:** 2026-10-09 · **Status:** Draft
+**View:** System Context (C4 L1) · **Date:** 2026-10-13 · **Status:** Accepted
 
 ---
 
@@ -34,6 +34,7 @@ flowchart TB
 | **Target Sources** | External | Code repos, Docker images, K8s manifests, mounted FS. Read-only. |
 | **External Scanners** | External | Network services: AAK, LLM-scanner, MCP-scanner. Invoked over network to enrich graph vertices. TSA/SCIP runs as a local subprocess and is **not** part of this external set. |
 
+NB. Scanners are Phase 2; not yet implemented
 ---
 
 ## Key Relationships

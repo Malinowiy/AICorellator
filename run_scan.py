@@ -13,11 +13,13 @@ logging.basicConfig(
 from aicorellator import GraphStore
 from aicorellator.ingestion import ingest, discover
 from aicorellator.parsing import run_tsa, normalize, write_graph, set_phase1_done
+from aicorellator.parsing.capability_extractor import extract as extract_capabilities
+from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.reporting import write_bundle
 from aicorellator.workspace import open_workspace
-from aicorellator.parsing.capability_extractor import extract as extract_capabilities
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -38,6 +40,12 @@ def main() -> int:
         action="store_true",
         help="wipe the workspace before scanning",
     )
+    parser.add_argument(
+        "--frameworks",
+        default=None,
+        help="comma-separated list of framework detectors "
+             "(default: all registered)",
+    )
     args = parser.parse_args()
 
     target_path = Path(args.target).resolve()
@@ -48,11 +56,18 @@ def main() -> int:
         print(f"error: target is not a directory: {target_path}", file=sys.stderr)
         return 1
 
+    enabled_frameworks: list[str] | None = None
+    if args.frameworks:
+        enabled_frameworks = [
+            name.strip() for name in args.frameworks.split(",") if name.strip()
+        ]
+
     ws = open_workspace(root=args.workdir, clean=args.clean)
     print(f"Workspace: {ws.root}")
     print(f"Target:    {target_path}")
     print()
 
+    # --- Ingestion ---
     target = ingest(target_path)
     manifest = discover(target)
     print(f"Files discovered: {manifest.count()}")
@@ -60,20 +75,35 @@ def main() -> int:
     print(f"  yaml:           {len(manifest.by_language('yaml'))}")
     print(f"  toml:           {len(manifest.by_language('toml'))}")
     print()
+
+    # --- Capabilities (AST-based, Python only) ---
     capabilities = {}
     for entry in manifest.files:
         if entry.language != "python":
             continue
         fc = extract_capabilities(entry.abs_path, entry.path)
         capabilities[entry.path] = fc
-
     print(f"Capabilities: {len(capabilities)} files")
-    print()
 
+    # --- TSA (AST symbols) ---
     tsa = run_tsa(manifest, target.root)
+
+    # --- Entry points (routes, agent calls, MCP usages) ---
     ep = run_entry_points(manifest)
+
+    # --- LLM extractor (configs) ---
     llm = run_llm_extractor(manifest)
 
+    # --- Framework detectors ---
+    detection = run_detectors(
+        manifest,
+        enabled=enabled_frameworks,
+        host_id="localhost",
+    )
+    print(f"Framework detectors: {len(detection.nodes)} nodes, "
+          f"{len(detection.edges)} edges")
+
+    print()
     print(f"TSA:           {tsa.files_analyzed} analyzed, {tsa.files_failed} failed")
     print(f"Entry points:  {len(ep.entry_points)}")
     print(f"Agent calls:   {len(ep.agent_calls)}")
@@ -81,14 +111,21 @@ def main() -> int:
     print(f"LLM endpoints: {len(llm.deduplicated())}")
     print()
 
-    delta = normalize(manifest, tsa, ep, llm, capabilities=capabilities)
+    # --- Normalization (merge everything into a graph delta) ---
+    delta = normalize(
+        manifest, tsa, ep, llm,
+        capabilities=capabilities,
+        framework_detection=detection,
+    )
 
+    # --- Write to SQLite ---
     with GraphStore(ws.db_path) as store:
         result = write_graph(store, delta)
         set_phase1_done(store)
         print(f"Wrote: {result['nodes_added']} nodes, "
               f"{result['edges_added']} edges")
 
+    # --- Report ---
     with GraphStore(ws.db_path) as store:
         report_path = write_bundle(store, ws)
         print(f"Report: {report_path}")
