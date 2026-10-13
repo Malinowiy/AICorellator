@@ -1,14 +1,22 @@
 # AICorellator — C4 Level 3: Components (Phase 1)
 
-**View:** Component (C4 L3) · **Phase:** 1 — AST + LLM · **Date:** 2026-10-09 · **Status:** Draft
+**View:** Component (C4 L3) · **Phase:** 1 — AST + Framework Detection + Capabilities · **Date:** 2026-10-09 · **Last reviewed:** 2026-10-13 · **Status:** Accepted
 
 ---
 
 ## Scope
 
-Phase 1 covers **graph population from source code and configs**. It takes a target directory, runs an AST parser (TSA always, SCIP conditionally), and writes nodes and edges into the Graph Store. It also runs an LLM extractor that reads config files (`config.py`, `.env`, `docker-compose.yml`) and produces `llm_endpoint` nodes plus `uses_model` edges.
+Phase 1 covers **graph population from source code and configs**. It takes a target directory, discovers files, parses them with tree-sitter-analyzer, extracts capabilities, runs framework detectors, resolves entry points and LLM endpoints, and normalizes everything into a graph delta written to the Graph Store.
 
 No enrichment (Phase 2). No analysis (Phase 3). No reporting (Phase 3).
+
+The phase has two classification layers (ADR-0009, ADR-0011):
+
+- **Level 1** — framework detectors, per-file, framework-specific.
+- **Level 2** — capability extraction, framework-agnostic.
+- **Level 3** — name-based heuristics, the original FinBot-tuned rules.
+
+Cross-file edges are resolved by the normalizer after detector merge (ADR-0013).
 
 ---
 
@@ -16,15 +24,18 @@ No enrichment (Phase 2). No analysis (Phase 3). No reporting (Phase 3).
 
 ```mermaid
 flowchart TB
-    subgraph PH1["Phase 1 — AST + LLM"]
+    subgraph PH1["Phase 1 — AST + Framework Detection + Capabilities"]
         ING[Ingestion<br/>accepts target path]
         DISC[File Discovery<br/>walk, filter, hash]
+        CAP[Capability Extractor<br/>AST-derived capabilities]
         TSA[TSA Worker<br/>tree-sitter-analyzer]
-        SCIPCHK{SCIP preconditions?}
-        SCIP[SCIP Worker<br/>scip-python index]
+        DET[Framework Detectors<br/>langchain, langgraph]
+        RUN[Detectors Runner<br/>orchestrates detectors]
+        EP[Entry Points Detector<br/>routes, agent calls, MCP usages]
         LLMX[LLM Extractor<br/>config + env parsing]
-        NORM[AST Normalizer<br/>AST output → Node/Edge]
-        MERGE[Precision Merge<br/>syntactic + compiler-verified]
+        NORM[AST Normalizer<br/>merge + cross-file resolution]
+        XF[Cross-File Resolver<br/>imports → uses_tool]
+        ORPH[Orphan Entry Resolver<br/>entry_points → single agent]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
     end
@@ -32,15 +43,19 @@ flowchart TB
     SRC[Target Sources] --> ING
     ING --> DISC
     DISC --> TSA
+    DISC --> CAP
+    DISC --> DET
+    DISC --> EP
     DISC --> LLMX
+    DET --> RUN
+    RUN --> NORM
     TSA --> NORM
-    TSA --> SCIPCHK
-    SCIPCHK -->|yes| SCIP
-    SCIPCHK -->|no| SKIP[scip_skipped]
-    SCIP --> NORM
+    CAP --> NORM
+    EP --> NORM
     LLMX --> NORM
-    NORM --> MERGE
-    MERGE --> WRITE
+    NORM --> XF
+    XF --> ORPH
+    ORPH --> WRITE
     WRITE --> GS[(Graph Store)]
     WRITE --> FLAG
     FLAG --> STATE[(State)]
@@ -56,11 +71,11 @@ flowchart TB
 
 **Interface:**
 
-- `ingest(path: str) -> Target`
-- `Target.root: str`
+- `ingest(path, kind) -> Target`
+- `Target.root: Path`
 - `Target.kind: str` — `folder` | `repo` | `image` | `mount`
 
-**Phase 1 note:** Only `folder`, `repo`, and `mount` are supported. Image unpacking is a Phase 3 Agent responsibility.
+**Phase 1 note:** only `folder`, `repo`, and `mount` are supported. Image unpacking is a Phase 3 agent responsibility.
 
 ---
 
@@ -72,187 +87,217 @@ flowchart TB
 
 - `discover(target: Target) -> FileManifest`
 - `FileManifest.files: list[FileEntry]`
-- `FileEntry.path: str`
+- `FileEntry.path: str` — relative to target root, POSIX separators
+- `FileEntry.abs_path: Path`
 - `FileEntry.language: str | None`
 - `FileEntry.content_hash: str`
 
-**Exclude rules:** `.git/`, `node_modules/`, `__pycache__/`, `venv/`, `.venv/`, `dist/`, `build/`, `*.pyc`.
+**Exclude rules:** `.git/`, `node_modules/`, `__pycache__/`, `venv/`, `.venv/`, `dist/`, `build/`, and other VCS and build artifacts. Hidden files are skipped except a small allowlist (`.env`, `.gitignore`, `.dockerignore`).
 
-**Language detection:** by extension. Languages supported by TSA: Python, Java, JS/TS, Go, Rust, C, C++, C#, Swift, Kotlin, Ruby, PHP.
+**Symlinks are not followed.** This avoids loops and escapes from the target root.
+
+**Language detection:** by extension. Languages supported by TSA are enumerated in the patterns registry.
 
 ---
 
 ### 3. TSA Worker
 
-**Responsibility:** Runs `tree-sitter-analyzer` on the target tree. Produces a language-agnostic index of symbols and call edges.
+**Responsibility:** Runs `tree-sitter-analyzer` on each supported file. Produces a language-agnostic index of classes, methods, and functions.
 
 **Interface:**
 
-- `run(target: Target) -> TSAOutput`
-- `TSAOutput.symbols: list[Symbol]`
-- `TSAOutput.call_edges: list[CallEdge]`
-- `TSAOutput.precision: "syntactic"`
+- `run(manifest: FileManifest, root: Path) -> TSAOutput`
+- `TSAOutput.symbols: list[TSASymbol]`
+- `TSAOutput.precision: str` — always `syntactic`
+- `TSAOutput.files_analyzed: int`
+- `TSAOutput.files_failed: int`
 
 **Invocation:** `uvx --from tree-sitter-analyzer` as a local subprocess. No venv, no Node, no compiler required.
 
-**Output format:** JSON (TSA's structured output). Mermaid export available but not used here.
+**Output format:** JSON. Parsed into `TSASymbol` records carrying name, kind, file path, line range, and optional enclosing class.
 
-**Always runs.** This is the baseline. If TSA fails, Phase 1 fails.
+**Always runs.** This is the baseline. If TSA fails on a file, the file is logged and skipped; the rest continue.
 
----
-
-### 4. SCIP Worker (conditional)
-
-**Responsibility:** Runs the appropriate SCIP indexer for the detected language. Produces compiler-verified cross-file references.
-
-**Interface:**
-
-- `check_preconditions(language: str) -> SCIPCheck`
-- `run(target: Target, language: str) -> SCIPOutput`
-- `SCIPOutput.references: list[Reference]`
-- `SCIPOutput.precision: "compiler-verified"`
-
-**Preconditions by language:**
-
-| Language | Indexer | Preconditions |
-|---|---|---|
-| Python | `scip-python` | Python 3.10+, Node 16+, activated venv |
-| TypeScript/JS | `scip-typescript` | Node 16+ |
-| Go | `scip-go` | Go toolchain |
-| Java | `scip-java` | Gradle/Maven |
-| Rust | `rust-analyzer` | Rust toolchain |
-| C/C++ | `scip-clang` | `compile_commands.json` |
-
-**Conditional.** If preconditions fail → `scip_skipped = true`, graph stays `syntactic`.
-
-**Invocation:** local subprocess. Full-project indexing only — no incremental.
+**SCIP is deferred.** ADR-0002 originally proposed an optional SCIP worker as a precision layer. It is not implemented. The `precision` attribute exists on edges, but no producer writes `compiler-verified` yet.
 
 ---
 
-### 5. LLM Extractor
+### 4. Capability Extractor
 
-**Responsibility:** Reads config files and extracts LLM endpoint information. This is the component that closes the "agent → model" gap that AAK and agent-bom cannot close.
+**Responsibility:** Derives capabilities from the AST (ADR-0009). For each symbol in a file, scans its body for known call patterns and records the capabilities exercised.
 
 **Interface:**
 
-- `extract(target: Target) -> LLMOutput`
-- `LLMOutput.endpoints: list[LLMEndpoint]`
-- `LLMEndpoint.provider: str`
-- `LLMEndpoint.model: str`
-- `LLMEndpoint.base_url: str | None`
-- `LLMEndpoint.source_file: str`
-- `LLMEndpoint.source_line: int`
+- `extract(file_path: Path, relative_path: str) -> FileCapabilities`
+- `FileCapabilities.file_path: str`
+- `FileCapabilities.symbols: list[SymbolCapabilities]`
+- `FileCapabilities.module_capabilities: set[str]`
 
-**Files scanned:**
+**Capabilities emitted:** `executes_code`, `executes_shell`, `reads_filesystem`, `writes_filesystem`, `reads_db`, `writes_db`, `http_egress`, `reads_env`, `reads_secrets`, `calls_llm`, `invokes_mcp_tool`.
 
-| Pattern | What is extracted |
-|---|---|
-| `config.py`, `settings.py`, `config/*.py` | `LLM_PROVIDER`, `LLM_DEFAULT_MODEL`, `OLLAMA_BASE_URL`, `OPENAI_API_KEY` (existence only) |
-| `.env`, `.env.*` | same keys |
-| `docker-compose.yml`, `docker-compose.*.yml` | service env vars |
-| `pyproject.toml`, `uv.lock` | LLM-related dependencies (`openai`, `anthropic`, `ollama`, `litellm`, `vllm`) |
-| `*.yaml`, `*.json`, `*.toml` | any of the above keys |
+**Not emitted:** `reads_untrusted` (requires untrusted-source detection, ADR-0010, deferred), `http_ingress` (entry points are detected by kind, not capability).
 
-**Detection patterns (regex + AST):**
+**Design:** call-site based, not dataflow. False positives are accepted; they are better than no signal. The LLM in Phase 3 explains and prioritizes.
 
-- Env var names: `LLM_PROVIDER`, `LLM_DEFAULT_MODEL`, `LLM_MODEL`, `*_MODEL`, `*_MODEL_NAME`, `*_API_BASE`, `*_BASE_URL`, `*_ENDPOINT`, `OPENAI_*`, `ANTHROPIC_*`, `OLLAMA_*`, `VLLM_*`, `LITELLM_*`
-- Python calls: `ChatOpenAI(`, `OpenAI(`, `Anthropic(`, `ollama.chat(`, `litellm.completion(`
-
-**LLM-related dependencies:** scanned from lock files. Emits `llm_endpoint` nodes only if a provider/model is identifiable.
+**Nested functions are scanned.** Functions defined inside factories are found by name, so `@tool`-decorated closures receive their capabilities.
 
 ---
 
-### 6. AST Normalizer
+### 5. Framework Detectors
 
-**Responsibility:** Converts TSA output, SCIP output, and LLM output into the internal `Node` / `Edge` model. Applies heuristics to classify symbols into node kinds.
+**Responsibility:** Recognize a specific AI framework in one file and extract nodes and edges from that framework's conventions (ADR-0011).
 
 **Interface:**
 
-- `normalize(tsa: TSAOutput, scip: SCIPOutput | None, llm: LLMOutput) -> GraphDelta`
+- `detect(file_path, tree, source, host_id) -> DetectionResult`
+- `DetectionResult.nodes: list[Node]`
+- `DetectionResult.edges: list[Edge]`
+- `DetectionResult.framework: str`
+- `DetectionResult.detected_version: str | None`
+
+**Implemented detectors:** LangChain, LangGraph.
+
+**Per-file contract.** A detector receives one file and returns nodes and edges from that file alone. No import resolution, no global state, safe for parallel execution.
+
+**What detectors emit:**
+
+- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities.
+- **LangGraph**: graph nodes from `graph.add_node(...)`, graph edges from `graph.add_edge(...)` and `graph.add_conditional_edges(...)`, entry points from `graph.set_entry_point(...)`. Node kind is inferred from the node name.
+
+**Within-file edges:** the LangChain detector emits `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file, either as a literal list or as a module-level assignment.
+
+**Cross-file edges are not the detector's job.** They are resolved by the normalizer (ADR-0013).
+
+**Registry:** `framework_detectors/registry.py` maps names to detector classes. Adding a detector is one line.
+
+**Version support:** each detector declares a supported version range. If the detected framework version is outside the range, a warning is logged and detection proceeds at the user's risk.
+
+---
+
+### 6. Detectors Runner
+
+**Responsibility:** Orchestrates all enabled framework detectors across a file manifest.
+
+**Interface:**
+
+- `run(manifest, enabled, host_id) -> DetectionResult`
+
+**Behavior:** for each Python file, parses the AST once, then invokes each enabled detector on that AST. Merges all returned nodes and edges into a single `DetectionResult`.
+
+**Error handling:** a detector that raises on a file is logged and skipped. Other detectors continue.
+
+**Enabled names:** user-supplied via CLI flag. If none supplied, all registered detectors run.
+
+---
+
+### 7. Entry Points Detector
+
+**Responsibility:** Finds HTTP routes, WebSocket handlers, agent calls inside route bodies, and MCP usages (`create_mcp_server` calls) in Python code.
+
+**Interface:**
+
+- `run(manifest, known_agents) -> EntryPointOutput`
+- `EntryPointOutput.entry_points: list[EntryPoint]`
+- `EntryPointOutput.agent_calls: list[AgentCall]`
+- `EntryPointOutput.mcp_usages: list[MCPUsage]`
+
+**Route detection:** decorators whose attribute is an HTTP method or `websocket`. Handler name, path, method, and line are recorded.
+
+**Agent call detection:** four heuristics — delegation suffix (`delegate_to_*`), runner-function mapping (`run_*_agent`), extra agent classes, and direct class calls. Calls inside agent modules are flagged as agent-to-agent.
+
+**MCP usage detection:** calls to `create_mcp_server("name", ...)` record the enclosing handler and the server name. MCP usages inside agent modules are flagged as agent-scoped.
+
+**Not in scope:** entry points from factory functions (`get_agent(...)`) that are not named in the heuristics. This is handled by the orphan-entry resolver (ADR-0013).
+
+---
+
+### 8. LLM Extractor
+
+**Responsibility:** Reads config files and extracts LLM endpoint information. This is the component that closes the "agent → model" gap.
+
+**Interface:**
+
+- `run(manifest) -> LLMExtractorOutput`
+- `LLMExtractorOutput.endpoints: list[LLMEndpoint]`
+- `LLMExtractorOutput.deduplicated() -> list[LLMEndpoint]`
+
+**Files scanned:** `.env` and variants, Python config files, YAML (including docker-compose), TOML, JSON.
+
+**Detection patterns:** provider keys (`LLM_PROVIDER`), model keys (`LLM_MODEL`, `*_MODEL`), base URL keys (`*_BASE_URL`, `*_ENDPOINT`), and provider-specific keys (`OPENAI_*`, `ANTHROPIC_*`, `OLLAMA_*`).
+
+**Deduplication:** one endpoint per unique `(provider, model, base_url)` triple.
+
+---
+
+### 9. AST Normalizer
+
+**Responsibility:** The central merge component. Takes all Phase 1 outputs and produces a single `GraphDelta` of nodes and edges.
+
+**Interface:**
+
+- `normalize(manifest, tsa_output, entry_points, llm_output, capabilities, framework_detection) -> GraphDelta`
 - `GraphDelta.nodes: list[Node]`
 - `GraphDelta.edges: list[Edge]`
 
-**Classification heuristics:**
+**Pipeline inside the normalizer:**
 
-| Signal | Node kind |
-|---|---|
-| File path matches `agents/**`, `*/agent*.py`, class name ends with `Agent` | `agent` |
-| Symbol from LLM Extractor | `llm_endpoint` |
-| File path matches `mcp/servers/*/server.py`, class `FastMCP`/`Server`, decorator `@mcp.tool` | `mcp_server` |
-| Function with decorator `@tool` / `@mcp.tool` / `@server.tool` | `tool` |
-| Env var or secret read in code | `credential` |
-| Call to `subprocess.*`, `os.system`, `eval`, `exec`, `cursor.execute`, `open(..., 'w')` | `sink` |
-| FastAPI route, Flask route, WebSocket handler | `entry_point` |
+1. **MCP server nodes** — from file paths under `mcp/servers/`.
+2. **Class nodes** — Level 3 classification, with Level 2 capabilities supplied as input.
+3. **Method nodes** — Level 3 classification, with capabilities. Tools and sinks are tracked per file.
+4. **Intra-file edges** — `provides_tool` (MCP server to tool), `has_access_to` (tool to sink).
+5. **Entry point nodes** — from the entry points detector.
+6. **LLM endpoint nodes** — from the LLM extractor.
+7. **Delegation edges** — entry point to agent, agent to agent, agent to MCP server.
+8. **Detector node merge** — detector nodes are authoritative for kind. When a detector node and a TSA node share name and source file, the detector node replaces the TSA node. Capabilities are merged from the TSA node if the detector node has none. Edges pointing at the removed node are re-pointed to the replacement, and their IDs are recomputed and deduplicated.
+9. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013).
+10. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013).
 
-**Edge heuristics:**
+**Key invariants:**
 
-| Signal | Edge kind |
-|---|---|
-| Agent class references LLM client or `settings.LLM_*` | `uses_model` |
-| MCP server file defines tool | `provides_tool` |
-| Agent calls another agent's method | `delegates_to` |
-| Tool body reaches sink | `has_access_to` |
-| Path from entry_point to sink via agent/tool | `reaches_sink` |
-| Function call with known caller | `called_by` |
-
-**Confidence assignment:**
-
-- TSA-derived node: `confidence = 0.85`
-- SCIP-derived node: `confidence = 0.98`
-- LLM-extracted node: `confidence = 0.95`
+- All IDs are deterministic. Same input produces the same delta.
+- Detector nodes are authoritative for kind; capabilities are preserved across the merge.
+- Removed nodes do not leave dangling edges.
 
 ---
 
-### 7. Precision Merge
+### 10. Cross-File Resolver
 
-**Responsibility:** Merges TSA and SCIP outputs. SCIP edges **upgrade** TSA edges — they do not replace them. TSA edges are preserved in a side table with `precision: "syntactic"`; SCIP edges are added with `precision: "compiler-verified"`.
+**Responsibility:** Resolve edges that cannot be seen from a single file (ADR-0013).
+
+**Implemented in:** `framework_detectors/cross_file.py`.
+
+**Function:**
+
+- `resolve_agent_tool_edges(manifest, detector_nodes, host_id) -> list[Edge]`
+
+**Algorithm:** index tools by source file, index framework agents, collect per-file imports, match imported module names to file paths by trailing segments, emit `uses_tool` edges from each agent to every tool in each matched file.
+
+**Design:** false positives accepted. An agent that imports a module with twenty tools receives edges to all twenty. Phase 3 filters.
+
+**Orphan entry resolver:** implemented in the normalizer. Links entry points with no outgoing delegation edge to the single framework agent in the project. When there are zero or more than one framework agents, the case is ambiguous and the resolver does nothing.
+
+---
+
+### 11. Graph Writer
+
+**Responsibility:** Writes the `GraphDelta` into the Graph Store. Deduplicates by canonical ID.
 
 **Interface:**
 
-- `merge(tsa_edges: list[Edge], scip_edges: list[Edge]) -> list[Edge]`
+- `write(store: GraphStore, delta: GraphDelta, host_id: str) -> dict[str, int]`
+- `set_phase1_done(store: GraphStore, host_id: str) -> None`
 
-**Rules:**
+**Return value:** counts of added and updated nodes and edges.
 
-- If an edge exists in both TSA and SCIP (same source, target, kind) → keep SCIP, mark as `compiler-verified`.
-- If an edge exists only in TSA → keep, mark as `syntactic`.
-- If an edge exists only in SCIP → add, mark as `compiler-verified`.
-
-**No deletion.** TSA edges that SCIP did not confirm remain in the graph with `syntactic` precision.
+**Deduplication:** handled by the repository `upsert` methods. Attributes are merged, capabilities are unioned, confidence takes the maximum, precision is upgraded.
 
 ---
 
-### 8. Graph Writer
-
-**Responsibility:** Writes the `GraphDelta` into the Graph Store. Deduplicates by canonical ID. Updates `content_hash` per node.
-
-**Interface:**
-
-- `write(delta: GraphDelta) -> None`
-
-**Canonical ID scheme:**
-
-- `agent:<sha256(file_path + class_name)>`
-- `llm_endpoint:<sha256(provider + base_url + model)>`
-- `mcp_server:<sha256(file_path)>`
-- `tool:<sha256(mcp_server_id + tool_name)>`
-- `credential:<sha256(source_file + var_name)>`
-- `sink:<sha256(call_target + file_path)>`
-- `entry_point:<sha256(file_path + route_path)>`
-
-**Deduplication:** if a node with the same ID exists → merge attributes, keep max `confidence`.
-
----
-
-### 9. Flag Setter
+### 12. Flag Setter
 
 **Responsibility:** Sets `phase1_done = true` in the State table after a successful write.
 
-**Interface:**
-
-- `set_phase1_done() -> None`
-- `set_scip_skipped() -> None` (if SCIP preconditions failed)
-
-**Effect:** `report --fast` becomes available.
+**Effect:** the graph becomes available for Phase 3 evaluation and reporting.
 
 ---
 
@@ -262,11 +307,12 @@ flowchart TB
 |---|---|---|
 | Ingestion | target path | normalized `Target` |
 | File Discovery | `Target` | `FileManifest` |
-| TSA Worker | `FileManifest` | `TSAOutput` (symbols, call edges) |
-| SCIP Worker | `FileManifest` + language | `SCIPOutput` or `scip_skipped` |
-| LLM Extractor | `FileManifest` | `LLMOutput` (endpoints, models) |
-| AST Normalizer | TSA + SCIP + LLM | `GraphDelta` (nodes, edges) |
-| Precision Merge | TSA edges + SCIP edges | merged edges with precision |
+| Capability Extractor | manifest | per-file `FileCapabilities` |
+| TSA Worker | manifest + root | `TSAOutput` (symbols) |
+| Framework Detectors | manifest | `DetectionResult` (nodes + edges) |
+| Entry Points Detector | manifest | `EntryPointOutput` |
+| LLM Extractor | manifest | `LLMExtractorOutput` |
+| AST Normalizer | all of the above | `GraphDelta` |
 | Graph Writer | `GraphDelta` | rows in `nodes`, `edges` |
 | Flag Setter | — | `phase1_done = true` |
 
@@ -276,9 +322,9 @@ flowchart TB
 
 | Direction | Component | Interface |
 |---|---|---|
-| Phase 1 → Phase 0 | Graph Writer | `Nodes Repository`, `Edges Repository` |
+| Phase 1 → Phase 0 | Graph Writer | Nodes and Edges repositories |
 | Phase 1 → Phase 2 | Flag Setter | `state.phase1_done` |
-| Phase 1 → Phase 3 | — | Graph is available for `report --fast` |
+| Phase 1 → Phase 3 | — | Graph is available for chain enumeration |
 
 ---
 
@@ -288,18 +334,23 @@ flowchart TB
 - **Analysis internals** — Phase 3.
 - **Reporting internals** — Phase 3.
 - **Multi-host delivery** — Phase 3.
-- **Agent-side scanning** — Phase 3 (Agent runs Phase 1 logic locally on each host).
+- **SCIP worker** — deferred (ADR-0002, ADR-0003).
+- **Precision merge** — deferred with SCIP.
 
 ---
 
 ## Design Notes
 
-1. **TSA is the baseline.** It always runs. SCIP is an optional enrichment on top.
+1. **TSA is the baseline.** It always runs. SCIP is an optional enrichment on top, deferred.
 2. **LLM Extractor is the critical gap-closer.** AAK and agent-bom do not connect agents to models. This component does.
-3. **Classification is heuristic.** No formal type analysis. Node kinds are inferred from file paths, class names, and decorators. Misclassification is possible and acceptable — the LLM analysis in Phase 3 will filter false positives.
-4. **Canonical IDs are content-based.** Same code → same ID. Re-runs reuse existing nodes.
-5. **`content_hash` enables re-run caching.** Unchanged file → unchanged hash → findings from Phase 2 are reused.
-6. **No dynamic behavior.** Phase 1 sees only static artifacts. Dynamic tool registration, runtime endpoints, and env-based configs are invisible unless they appear in files.
+3. **Classification is layered.** Framework detectors (Level 1) are authoritative; capability extraction (Level 2) overrides name-based heuristics when it disagrees; name-based heuristics (Level 3) are the fallback.
+4. **Canonical IDs are per-kind.** Same identity fields produce the same ID. Re-runs reuse existing nodes.
+5. **`content_hash` enables re-run caching.** Unchanged file means unchanged hash, and Phase 2 findings can be reused.
+6. **No dynamic behavior.** Phase 1 sees only static artifacts. Dynamic tool registration, runtime endpoints, and env-based configuration are invisible unless they appear in files.
+7. **Detectors are per-file.** Cross-file resolution is a normalizer concern. This preserves the detector contract and makes detectors independently testable.
+8. **False positives are accepted.** Both capability extraction and cross-file resolution prefer a spurious edge over a missing one. The LLM ensemble in Phase 3 prioritizes and filters.
+9. **Capabilities override kind at chain time.** A tool with `executes_code` is a valid chain endpoint, even though its kind is `tool` (ADR-0014).
+10. **`uses_tool` is a stored edge kind.** Introduced for cross-file agent-to-tool edges (ADR-0013).
 
 ---
 
