@@ -309,40 +309,39 @@ class LangChainDetector(FrameworkDetector):
         self,
         node: ast.expr,
         assignments: dict[str, ast.expr],
+        _visited: set[str] | None = None,
     ) -> list[str]:
         """Resolve an expression to a list of tool names.
 
-        Handles:
-          - Name:        USER_TOOLS  → lookup in assignments, then resolve
-          - List/Tuple:  [a, b, c]   → recurse into elements
-          - Call:        get_tools() → cannot resolve, return []
-          - Attribute:   mod.USER_TOOLS → cannot resolve, return []
+        Guards against cycles in the assignment table (e.g. `X = Y`,
+        `Y = X`): a name already visited is not followed again.
         """
+        if _visited is None:
+            _visited = set()
+
         # Symbolic reference → follow the assignment.
         if isinstance(node, ast.Name):
+            if node.id in _visited:
+                return []
+            _visited.add(node.id)
             target = assignments.get(node.id)
             if target is None:
                 return []
-            return self._resolve_tool_names(target, assignments)
+            return self._resolve_tool_names(target, assignments, _visited)
 
         # Literal list or tuple.
         if isinstance(node, (ast.List, ast.Tuple)):
             names: list[str] = []
             for elt in node.elts:
-                names.extend(self._resolve_tool_names(elt, assignments))
+                names.extend(self._resolve_tool_names(elt, assignments, _visited))
             return names
 
-        # Each element is either a Name (function/var) or a Call
-        # (tool instance created inline). We can only resolve Name.
         if isinstance(node, ast.Name):
             return [node.id]
 
-        # Tool(...) / StructuredTool.from_function(...) — use the
-        # name the detector already assigned to the node.
         if isinstance(node, ast.Call):
             name = self._call_name(node.func)
             if name in LANGCHAIN_TOOL_CLASSES:
-                # Re-derive the tool name the same way _find_tool_instances does.
                 tname = self._string_keyword(node, "name")
                 if tname is None and node.args:
                     first = node.args[0]
@@ -360,24 +359,28 @@ class LangChainDetector(FrameworkDetector):
             return []
 
         return []
-
+    
     def _resolve_llm_names(
         self,
         node: ast.expr,
         assignments: dict[str, ast.expr],
+        _visited: set[str] | None = None,
     ) -> list[str]:
         """Resolve an expression to a list of LLM class names.
 
-        Handles:
-          - Name:        llm         → lookup, then resolve
-          - Call:        ChatOllama(...) → "ChatOllama"
-          - Attribute:   mod.ChatOpenAI(...) → "ChatOpenAI"
+        Guards against cycles in the assignment table.
         """
+        if _visited is None:
+            _visited = set()
+
         if isinstance(node, ast.Name):
+            if node.id in _visited:
+                return []
+            _visited.add(node.id)
             target = assignments.get(node.id)
             if target is None:
                 return []
-            return self._resolve_llm_names(target, assignments)
+            return self._resolve_llm_names(target, assignments, _visited)
 
         if isinstance(node, ast.Call):
             name = self._call_name(node.func)

@@ -137,3 +137,29 @@ agent = create_agent(model=llm, tools=[])
 """)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
+
+def test_resolve_tool_names_cycle_safe() -> None:
+    """Cyclic assignments do not cause infinite recursion."""
+    result = _detect("""
+from langchain.agents import create_agent
+
+X = Y
+Y = X
+agent = create_agent(tools=X, model=None)
+""")
+    # No crash; no edges because X/Y are not resolvable to tools.
+    uses_tool = [e for e in result.edges if e.kind == "uses_tool"]
+    assert uses_tool == []
+
+
+def test_resolve_llm_names_cycle_safe() -> None:
+    """Cyclic LLM assignment does not cause infinite recursion."""
+    result = _detect("""
+from langchain.agents import create_agent
+
+A = B
+B = A
+agent = create_agent(model=A, tools=[])
+""")
+    uses_model = [e for e in result.edges if e.kind == "uses_model"]
+    assert uses_model == []
