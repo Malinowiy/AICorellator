@@ -23,15 +23,147 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ---
 
+## Flow Semantics and Chain Precision
+
+The graph mixes control flow and data flow, does not track taint, and produces chains whose verdicts depend on sampling noise rather than structure. On FinBot, ~160 of 180 chains are false positives. This category addresses the root cause. It sits at the top of the backlog because it is critical for MVP: without it, the tool produces a graph but not actionable results.
+
+**Reference:** `Documentation/Analysis/FP_TP_analysis.md` (item 1.0).
+
+### 1.0 — Write the FP/TP analysis document
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** The FP/TP examples from FinBot must be recorded so future work references concrete cases, not memory. Without this, the next session starts from scratch.
+**Approach:** Create `Documentation/Analysis/FP_TP_analysis.md` with three sections: FP examples (why the LLM was wrong), TP examples (why the chain is a real hypothesis), structural observations (what distinguishes them). Include the three FP and three TP examples from the analysis.
+
+### 1.1 — Investigate what TSA can still provide
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** We currently use TSA for symbols only. `TSAOutput.call_edges` exists in the model but is not populated or used. TSA may also expose imports, call graphs, and basic type information that would let us distinguish control flow from data flow without building our own call-graph resolver from scratch.
+**References:** ADR-0002 (TSA choice), ADR-0015 (planned).
+**Approach:** Run tree-sitter-analyzer on a representative file with `--structure --format json` and inspect the full output. Check whether call edges, imports, and argument information are present. If they are, wire them into `tsa_worker.py`. If not, fall back to AST-level extraction.
+
+### 1.2 — ADR-0015: Control flow vs data flow
+
+**Priority:** High
+**Status:** Blocked by 1.1
+**Rationale:** The graph currently has one class of edges (`has_access_to`, `uses_tool`, `delegates_to`) that mixes control flow and data flow. The LLM cannot distinguish "X calls Y" from "data from X reaches Y" and therefore assigns high confidence to structurally connected but non-exploitable chains.
+**References:** ADR-0009 (edge capabilities — `data_flows_forward`, `control_flows_forward` defined but not populated), ADR-0013 (cross-file resolution), FP examples #1, #2, #3.
+**Approach:** Introduce a `flow_kind` attribute on edges: `control` | `data` | `structural`. Split `has_access_to` into `calls` (control) and `data_flows_to` (data). Determine `flow_kind` through AST-level argument analysis — name-based, not value-based, to stay within ADR-0001's "no full dataflow" constraint.
+
+### 1.3 — Capability-based taint, combined with non-linear chains
+
+**Priority:** High
+**Status:** Blocked by 1.2
+**Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Capability-based taint gives this without full dataflow analysis. Additionally, the current `find_chains` enumerates only linear paths; real attacks often require non-linear structure (one chain writes to an untrusted source, another reads from it — chain groups, ADR-0010).
+**References:** ADR-0009 (capabilities), ADR-0010 (chain groups), ADR-0012 (prioritization), TP examples #1, #2.
+**Approach:**
+- Entry point must have `reads_untrusted` or `http_ingress` or `cli_input` (new capability).
+- Path must contain at least one `data_flows_to` edge.
+- Sink must have a sink capability (`executes_code`, `executes_shell`, `writes_filesystem`, `writes_db`, `http_egress`).
+- Combine with `find_chain_groups` for non-linear chains — chains that meet through an `untrusted_source`.
+
+### 1.3a — Architecture and data-model review
+
+**Priority:** High
+**Status:** Blocked by 1.2 and 1.3
+**Rationale:** Introducing `flow_kind`, capability-based taint, and non-linear chains changes the data model, the graph schema, the query layer, the normalizer, and the Phase 3 prompt contract. Without an explicit review, documentation and schema drift from the code — as happened with `uses_tool` (edge kind added in code but not in `VALID_EDGE_KINDS`, `schema.sql`, or `patterns.EDGE_KINDS` until a test caught it).
+
+**Deliverables:**
+
+1. **Data-model review** — what changes in SQLite:
+   - New column on `edges`: `flow_kind TEXT NOT NULL DEFAULT 'control'` with `CHECK (flow_kind IN ('control', 'data', 'structural'))`.
+   - New edge kinds: `calls`, `data_flows_to` (replacing or complementing `has_access_to`).
+   - New capabilities: `reads_untrusted`, `cli_input`.
+   - New node attributes: `lethal_trifecta` (boolean), `taint_sources` (JSON list).
+   - Possible new tables: `taint_paths` (if chain groups need explicit storage of data-flow paths).
+   - Decision: recreate per scan (ADR-0003) or introduce migrations now.
+
+2. **Python model review** — `graph/models.py`:
+   - `Edge.flow_kind: str`.
+   - `Node.lethal_trifecta: bool`, `Node.taint_sources: list[str]`.
+   - Updates to `VALID_EDGE_KINDS`, `VALID_NODE_KINDS`, `VALID_FLOW_KINDS`.
+
+3. **Query layer review** — `graph/query.py`:
+   - `find_chains` filtering by `flow_kind` and taint.
+   - `find_chain_groups` implementation.
+   - Impact on `max_hops`, `max_candidates`.
+
+4. **Normalizer review** — `parsing/ast_normalizer.py`:
+   - How `flow_kind` is determined (AST-level, name-based).
+   - How taint sources are propagated.
+   - How `lethal_trifecta` is computed.
+
+5. **Prompt contract review** — `analysis/prompts.py`:
+   - What new fields the prompt receives (`flow_kind`, taint info, guardrail info).
+   - How the LLM is expected to use them.
+   - Prompt version bump.
+
+6. **ADR updates:**
+   - ADR-0009 (capabilities) — `flow_kind` on edges.
+   - ADR-0010 (chain groups) — non-linear chains.
+   - ADR-0013 (cross-file) — flow-kind-aware resolution.
+   - ADR-0015 (new) — control flow vs data flow.
+   - ADR-0016 (new, if needed) — taint model.
+   - ADR-0003 (graph formation cycle) — if migrations are introduced.
+
+7. **C4 updates:**
+   - C4 L3 Phase 1 — normalizer pipeline, query layer.
+   - C4 L3 Phase 3 — prompt structure, evaluation flow.
+   - C4 L2 — if any container boundaries change.
+
+8. **Test plan:**
+   - Unit tests for `flow_kind` determination.
+   - Unit tests for taint propagation.
+   - Integration tests for `find_chains` with taint filter.
+   - Tests for `lethal_trifecta` computation.
+   - Prompt regression tests (can the LLM distinguish control from data flow?).
+
+**Approach:** Write the review as concrete documents (or update existing ones), get sign-off, then implement. No code changes in this step — only design artifacts.
+
+### 1.4 — Prompt engineering: grounded evaluation
+
+**Priority:** High
+**Status:** Blocked by 1.3a (prompt receives new fields defined there)
+**Rationale:** The FP examples show the LLM gives contradictory verdicts on structurally identical chains (Chain 28 exploitable, Chain 11 not exploitable — same structure). The prompt lacks grounding criteria. Adding concrete questions and counter-questions will force the LLM to justify its verdict against specific structural properties, not against "typical implications."
+**References:** FP example #1 (same structure, opposite verdicts), FP example #2 (speculation about test scripts), TP example #3 (read_config — needs an audit verdict, not a binary one).
+**Approach:**
+- Add explicit confidence calibration rules: control flow only → ≤ 0.3; data flow without taint source → ≤ 0.5; data flow with taint source and sink capability → ≥ 0.7.
+- Add questions the LLM must answer in reasoning: "Does data from the entry point reach the sink? What is the flow kind of each edge? Is there a guardrail in the path?"
+- Add the `uncertain` verdict with concrete criteria: structural reachability without implementation details → `uncertain`, not `exploitable`.
+- Address the "test script" case: distinguish production entry points from test/dev scripts via path and context.
+
+### 1.5 — Graph densification
+
+**Priority:** Medium
+**Status:** Deferred until 1.3a is complete
+**Rationale:** The graph is sparse (FinBot: 283 nodes, 93 edges — ratio 0.33). Many real paths go through intermediate functions that are not classified as agents, tools, or sinks, and no edges are built. But adding call-graph edges *without* taint filtering would worsen false positives: more paths, same lack of data-flow distinction. Densification must come after flow semantics are in place.
+**References:** FinBot graph ratio.
+**Approach (when unblocked):**
+- Add call-graph edges (`calls`) between all functions, not just classified nodes.
+- Add import edges (`imports`) between modules.
+- Extend cross-file resolution to all edge kinds, not just `uses_tool` and `has_access_to`.
+- Re-tune `max_hops` — denser graphs produce longer paths.
+
+### 1.6 — Lethal trifecta detection
+
+**Priority:** High
+**Status:** Blocked by 1.3a (needs `reads_untrusted` in the data model)
+**Rationale:** ADR-0009 defines the combination but nothing implements it. On real AI systems this pattern is not rare — a node that reads untrusted data, accesses secrets, and can send data out is the canonical lethal combination. Cheap to implement once `reads_untrusted` exists.
+**References:** ADR-0009, ADR-0010, `patterns.LETHAL_TRIFECTA_*`.
+**Approach:** On node write, compute a `lethal_trifecta` attribute. Chains passing through such nodes get `priority: high`. No new node kind needed; this is an attribute.
+
+---
+
 ## Parsing
 
 ### Cross-file tool → sink
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Currently `has_access_to` (tool → sink) is built only within a single file (the B2 resolver, `_link_entry_points_to_sinks`). In mcploitable and dvmcp, 8–12 sink nodes have no incoming edges because the tools that reach them live in other files. This is the same blind spot as agent-to-tool, solved by Resolver 1.
-**References:** ADR-0013 (Deferred, item 6), `resolve_agent_tool_edges` (Resolver 1).
-**Approach:** Extend the call graph to span imports. Reuse the import table already collected in `entry_points._collect_module_imports`. BFS across module boundaries, not just within one file.
+**Rationale:** Currently `has_access_to` (tool → sink) is built only within a single file (the B2 resolver, `_link_entry_points_to_sinks`). In mcploitable and dvmcp, 8–12 sink nodes have no incoming edges because the tools that reach them live in other files. This is the same blind spot as agent-to-tool, solved by Resolver 1. When 1.2 introduces `flow_kind`, the resolver must build both `calls` and `data_flows_to` across files.
+**References:** ADR-0013 (Deferred, item 6), `resolve_agent_tool_edges` (Resolver 1), Flow Semantics item 1.2.
 
 ### `openai_agents.py` detector
 
@@ -39,30 +171,27 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 **Status:** Not started
 **Rationale:** Last detector in the ADR-0011 implementation order. The OpenAI Agents SDK is a rising framework; targets using it currently produce an empty graph.
 **References:** ADR-0011 (Implementation Order, item 6).
-**Approach:** Follow the FastMCP / LangChain detector pattern. Per-file. Detect `Agent`, `Runner`, `handoff`, `guardrail` patterns. Capabilities via `_caps_for_function`. Cross-file and entry synthesis are inherited from the normalizer.
 
 ### Additional TSA modules for non-Python languages
 
 **Priority:** Low
 **Status:** Deferred until a non-Python target appears
-**Rationale:** All current validation targets are Python. Adding Go, Java, Rust, or TypeScript support has no consumer yet. The B2 resolver and detectors are Python-only today; extending them is significant work with no payoff until a real target requires it.
-**References:** ADR-0002 (TSA choice), ADR-0001 (AST approach).
-**Approach:** When a real non-Python target appears, add per-language detection modules. Do not speculatively build.
+**Rationale:** All current validation targets are Python. Adding Go, Java, Rust, or TypeScript support has no consumer yet.
+**References:** ADR-0002, ADR-0001.
 
 ### Relative imports in cross-file resolution
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** Relative imports (`from . import x`, `from .tools import y`) are skipped by the import collector because resolving them requires a package root, which the manifest does not provide. Rare in agent code; accepted limitation (ADR-0013).
-**Approach:** Infer package root from `__init__.py` presence along the path. Extend `_collect_module_imports`.
+**Rationale:** Relative imports are skipped by the import collector because resolving them requires a package root, which the manifest does not provide.
+**References:** ADR-0013 (Deferred, item 3).
 
 ### Per-name resolution in cross-file tool edges
 
 **Priority:** Medium
 **Status:** Not started
-**Rationale:** Resolver 1 links an agent to *all* tools in an imported module, not just the tools in the imported name (`tools=USER_TOOLS` → all tools, not just the contents of `USER_TOOLS`). Accepted false-positive trade-off (ADR-0009), but tighter resolution would reduce Phase 3 load.
+**Rationale:** Resolver 1 links an agent to *all* tools in an imported module, not just the tools in the imported name. Accepted false-positive trade-off (ADR-0009), but tighter resolution would reduce Phase 3 load.
 **References:** ADR-0013 (Deferred, item 2).
-**Approach:** Follow the imported name to its assignment in the source module, resolve the list literal, link only to those tools.
 
 ---
 
@@ -72,45 +201,35 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Indirect prompt injection requires chain groups, not linear chains. The `chain_groups` table exists in the schema; nothing populates it. This is the main missing piece for the project's second threat model.
+**Rationale:** Indirect prompt injection requires chain groups, not linear chains. The `chain_groups` table exists in the schema; nothing populates it. Goes together with Flow Semantics item 1.3 (non-linear chains).
 **References:** ADR-0010, ADR-0012.
-**Approach:** Add `untrusted_source` node kind (see Untrusted Sources), implement `find_chain_groups(untrusted_sources, sinks)`, populate `chain_groups`.
-
-### Lethal trifecta detection
-
-**Priority:** High
-**Status:** Not started
-**Rationale:** ADR-0009 defines the capability combination (`reads_untrusted` + `reads_secrets`/`reads_env` + `http_egress`/`writes_filesystem`/`executes_shell`). The sets exist in `patterns.py` (`LETHAL_TRIFECTA_READ_CAPS`, `LETHAL_TRIFECTA_SECRET_CAPS`, `LETHAL_TRIFECTA_EGRESS_CAPS`) but nothing combines them into a node-level flag. This is a deterministic, high-signal indicator.
-**References:** ADR-0009 (Lethal Trifecta Detection).
-**Approach:** On node write, compute a `lethal_trifecta` attribute. Chains passing through such nodes get `priority: high`. Requires `reads_untrusted` (see Untrusted Sources).
 
 ### Chain group prioritization (ADR-0012)
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Naive `find_chain_groups` is O(n²) in the LLM evaluation cost. Deterministic scoring selects the top-N for LLM evaluation. Goes together with chain groups.
+**Rationale:** Naive `find_chain_groups` is O(n²) in the LLM evaluation cost. Goes together with chain groups.
 **References:** ADR-0012.
-**Approach:** Cheap scoring (capabilities + structure), rank, top-N to LLM.
+
+### `reads_untrusted` capability
+
+**Priority:** High
+**Status:** Blocked by untrusted source detection
+**Rationale:** Requires knowing what an untrusted source is (RAG corpus, MCP tool description, email inbox, user upload). Goes with Flow Semantics item 1.3.
+**References:** ADR-0010, ADR-0009.
 
 ### Dynamic chain selection
 
 **Priority:** Medium/Low
 **Status:** Not started
-**Rationale:** Built-in prioritization (ADR-0012) is sufficient for MVP. Interactive selection — an analyst picking which chains to evaluate — is a TUI feature, not a backend feature. Defer until TUI matures.
+**Rationale:** Built-in prioritization (ADR-0012) is sufficient for MVP. Interactive selection is a TUI feature.
 **References:** ADR-0012, TUI section.
-
-### `reads_untrusted` capability
-
-**Priority:** Medium
-**Status:** Blocked by untrusted source detection
-**Rationale:** Requires knowing what an untrusted source is (RAG corpus, MCP tool description, email inbox, user upload). The capability is defined in patterns but not extracted.
-**References:** ADR-0010, ADR-0009.
 
 ### Small-model pre-scoring
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** Optimization of Phase 3. Score candidates with a small LLM before running the full ensemble. Not needed at current chain counts.
+**Rationale:** Optimization of Phase 3. Not needed at current chain counts.
 **References:** ADR-0005 (Deferred, item 5).
 
 ---
@@ -121,9 +240,8 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** High
 **Status:** Partially done (node kind only)
-**Rationale:** ADR-0007 is marked "Partially Accepted". Guardrail nodes are created by the classifier; the `guards` edge is registered in the schema but no component emits it. Chain semantics do not yet reflect that a guardrail can block a chain.
+**Rationale:** ADR-0007 is marked "Partially Accepted". Guardrail nodes are created; the `guards` edge is registered in the schema but no component emits it. Chain semantics do not yet reflect that a guardrail can block a chain. Also relevant to Flow Semantics item 1.4 (prompt must reason about guardrails).
 **References:** ADR-0007 (Implementation Status).
-**Approach:** Detect guardrail-to-agent or guardrail-to-tool relationships. Requires source-level analysis of what the guardrail filters.
 
 ### Guardrail attributes
 
@@ -136,15 +254,14 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** Medium
 **Status:** Blocked by `guards` edge
-**Rationale:** Reverse of `guards`. Requires the edge to exist first.
 **References:** ADR-0007.
 
 ### Guardrail-aware chain evaluation
 
 **Priority:** Medium
 **Status:** Not started
-**Rationale:** Phase 3 should receive guardrail information and reason about whether a chain is blocked. Currently chains pass through guardrails without adjustment.
-**References:** ADR-0007.
+**Rationale:** Phase 3 should receive guardrail information and reason about whether a chain is blocked.
+**References:** ADR-0007, Flow Semantics item 1.4.
 
 ---
 
@@ -154,21 +271,21 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Not in `VALID_NODE_KINDS`. Required for chain groups and for `reads_untrusted`.
+**Rationale:** Not in `VALID_NODE_KINDS`. Required for chain groups and for `reads_untrusted`. Goes with Flow Semantics item 1.3.
 **References:** ADR-0010.
 
 ### Untrusted source detection
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** RAG corpora, MCP tool descriptions, email inboxes, user uploads. Each is a distinct pattern; needs its own detection logic.
+**Rationale:** RAG corpora, MCP tool descriptions, email inboxes, user uploads. Each needs its own detection logic.
 **References:** ADR-0010.
 
 ### `find_chain_groups` operation
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** The core operation for indirect prompt injection. Enumerates groups that share an `untrusted_source`.
+**Rationale:** The core operation for indirect prompt injection.
 **References:** ADR-0010, ADR-0012.
 
 ---
@@ -179,28 +296,24 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** Low
 **Status:** Deferred until a consumer appears
-**Rationale:** SARIF is needed for GitHub Security Dashboard integration. No consumer yet. Markdown + JSON is sufficient.
 **References:** ADR-0004.
 
 ### Report tiers (`--fast` / `--full`)
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** ADR-0004 defers this. Single report is generated today.
 **References:** ADR-0004.
 
 ### Incremental reports
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** Diff between two reports. Useful for tracking changes over time, not needed yet.
 **References:** ADR-0004.
 
 ### Notifications
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** Email / webhook on `report_fresh = false`. Needs a consumer.
 **References:** ADR-0004.
 
 ---
@@ -211,34 +324,31 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** Icebox
 **Status:** Deferred until Phase 2 begins
-**Rationale:** Months of work. Requires privileged mode or an MCP proxy. The `DynamicWorker` interface exists in the architecture; no implementation. Not blocking Phase 1 delivery.
+**Rationale:** Months of work. Requires privileged mode or an MCP proxy.
 **References:** ADR-0001, ADR-0003 (Stage 4).
 
 ### MCP-audit-tool integration
 
 **Priority:** Icebox
 **Status:** Not started
-**Rationale:** Dynamic MCP server scanner. Requires runtime infrastructure (isolated server startup, request emulation, result collection). Separate layer.
-**Approach:** Findings become `findings` rows attached to nodes.
+**Rationale:** Dynamic MCP server scanner. Requires runtime infrastructure.
 
 ### garak integration
 
 **Priority:** Icebox
 **Status:** Not started
-**Rationale:** LLM vulnerability scanner. Requires a working LLM session. Findings become `findings` rows.
+**Rationale:** LLM vulnerability scanner. Requires a working LLM session.
 
 ### Enrichment queue + static workers
 
 **Priority:** Icebox
 **Status:** Deferred until Phase 2 begins
-**Rationale:** AAK, LLM-scanner, MCP-scanner. The schema (`task_state` table, `scan_done` key) exists. No queue.
 **References:** ADR-0003 (Stage 3).
 
 ### File watcher / Docker diff / OSSEC
 
 **Priority:** Icebox
 **Status:** Not started
-**Rationale:** Runtime change detection. Requires DynamicWorker first.
 **References:** ADR-0003 (Stage 4).
 
 ---
@@ -249,28 +359,27 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** Icebox
 **Status:** Deferred until the schema stabilizes
-**Rationale:** The database is recreated per scan (ADR-0003). No migration has been needed. Migrations become relevant when (a) the schema stabilizes, (b) dynamic scanning is in production, and (c) a schema change is required.
-**References:** ADR-0003, C4 L3 Phase 0 (Migration policy).
+**Rationale:** The database is recreated per scan (ADR-0003). Revisit when the schema stabilizes, dynamic scanning is in production, and a schema change is required. Flow Semantics item 1.3a may force this decision earlier.
+**References:** ADR-0003, C4 L3 Phase 0.
 
 ### SCIP integration
 
 **Priority:** Icebox
 **Status:** Deferred until a target requires it
-**Rationale:** ADR-0002 proposed SCIP as a conditional precision layer. It is not implemented. All current targets are Python; TSA covers Python. SCIP adds precision for languages and cases where TSA is heuristic (cross-module type resolution). The cost — per-language toolchain, index maintenance, merge logic, matching against TSA — is high. Defer until a real project needs it. Per-language TSA modules (item 3 above) are a lighter alternative for new languages.
+**Rationale:** All current targets are Python; TSA covers Python. SCIP adds precision for languages and cases where TSA is heuristic. Cost is high. Per-language TSA modules (Parsing section) are a lighter alternative for new languages.
 **References:** ADR-0002, ADR-0003 (Stage 2).
 
 ### Multi-host (Core + Agent)
 
 **Priority:** Icebox
 **Status:** Deferred
-**Rationale:** Phase 3 topology. Single-host is sufficient for current targets.
 **References:** ADR-0003, C4 L2.
 
 ### `structural_heuristics.py`
 
 **Priority:** Cancelled
 **Status:** Not started, will not start
-**Rationale:** ADR-0011 originally proposed a Level 3 structural heuristics module. During implementation, its role was absorbed by `classification.py` (name-based heuristics). The ADR was revised to reflect this. No separate module.
+**Rationale:** ADR-0011 revised: its role was absorbed by `classification.py`.
 **References:** ADR-0011 (Level 3, note).
 
 ---
@@ -281,20 +390,18 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** Medium
 **Status:** Not started
-**Rationale:** Operational control of the tool. The Scan screen shows live progress; the Graph screen shows nodes and edges; the Chains screen shows candidate chains. This is the analyst's working interface, more important than CLI ergonomics.
+**Rationale:** Operational control of the tool. The analyst's working interface, more important than CLI ergonomics.
 **Approach:** Textual-based. `src/aicorellator/tui/`. Screens as separate modules. Async tasks for long operations.
 
 ### TUI: Evaluate / Report / Config
 
 **Priority:** Medium
 **Status:** Not started
-**Rationale:** After MVP. Evaluate runs the LLM ensemble with live progress; Report shows a preview and exports; Config edits `models.yaml` and detector selection.
 
 ### TUI: dynamic chain selection
 
 **Priority:** Medium/Low
 **Status:** Not started
-**Rationale:** Goes with Dynamic chain selection (Analysis section). Analyst picks chains interactively for evaluation.
 
 ---
 
@@ -304,49 +411,37 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** A thin wrapper that calls `run_scan`, `run_eval`, `run_report`. Convenience, not functionality. `python run_scan.py` already works.
-**Approach:** Subcommands `scan`, `eval`, `report`. No logic of its own.
+**Rationale:** A thin wrapper that calls `run_scan`, `run_eval`, `run_report`. `python run_scan.py` already works.
 
 ### Console script (`[project.scripts]`)
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** Goes with `cli.py`. Enables `aicorellator scan ...` instead of `python run_scan.py ...`.
 **References:** `pyproject.toml`.
 
 ### Standalone executable (mac + linux + win)
 
 **Priority:** Icebox
 **Status:** Not started
-**Rationale:** Premature. A standalone binary would need to package Python, tree-sitter-analyzer, `uvx`, and all dependencies (~50–200 MB per platform). No users without Python exist yet. Worth doing when the project ships to end-users who do not run Python.
-**Approach:** PyInstaller or Nuitka, plus packaging `uvx` / tree-sitter-analyzer. Three platform builds.
+**Rationale:** Premature. Would need to package Python, tree-sitter-analyzer, `uvx`, and all dependencies. No users without Python exist yet.
+**Approach:** PyInstaller or Nuitka, plus packaging `uvx` / tree-sitter-analyzer.
 
 ### Docker image
 
 **Priority:** Icebox
 **Status:** Not started
-**Rationale:** Useful for CI/CD and isolated environments. Not needed yet.
-**Approach:** Dockerfile, published to a registry.
 
 ### `run_*.py` wrappers
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** Either keep as thin wrappers or remove once `cli.py` exists. Compatibility choice.
-
----
-
-## Done (for reference)
-
-Nothing is moved here automatically; entries stay in their category until closed. When a task is complete, delete its section or mark it done with the closing commit hash. This keeps the file from becoming an append-only archive.
 
 ---
 
 ## Maintenance
 
-- **Update priorities** when external conditions change (a target appears, a consumer asks for a feature).
+- **Update priorities** when external conditions change.
 - **Update status** when work begins or ends.
-- **Add new entries** when a deferred item surfaces during implementation, review, or validation.
-- **Remove entries** when they are done or cancelled. The Done section is a courtesy, not a requirement.
-
-The ADRs remain the authoritative record of *why* a decision was made. This file records *what to do next*.
+- **Add new entries** when a deferred item surfaces.
+- **Remove entries** when they are done or cancelled.
+- This file records *what to do next*. The ADRs remain the authoritative record of *why*.

@@ -18,7 +18,7 @@ import json
 
 
 # Increment when prompt structure changes. Stored per chain row.
-PROMPT_VERSION = "v1.1.0" #solo mode added
+PROMPT_VERSION = "v1.2.0"  # capabilities in payload + calibration guidance
 
 
 SYSTEM_PROMPT = """You are a security analyst evaluating the exploitability of attack chains in AI infrastructure.
@@ -59,8 +59,10 @@ def build_voter_prompt(
 
     Args:
         chain_id: canonical chain identifier
-        chain_nodes: ordered list of {id, kind, name, attributes}
-        chain_edges: ordered list of {id, kind, source_id, target_id, attributes}
+        chain_nodes: ordered list of
+            {id, kind, name, capabilities, confidence, attributes}
+        chain_edges: ordered list of
+            {id, kind, source_id, target_id, capabilities, precision, attributes}
     """
     payload = {
         "chain_id": chain_id,
@@ -78,6 +80,19 @@ Evaluate whether this chain is exploitable. Consider:
 - Does it pass through components with ambiguous trust (LLM, MCP, agents)?
 - Does it reach a dangerous sink (code execution, filesystem, network)?
 - Are there guardrails on the path? Are they bypassable?
+
+Calibration rules:
+- An edge means only what its kind and capabilities state. A structural or
+  ownership edge between two nodes in the same module means those nodes are
+  colocated, NOT that one invokes the other or that data flows between them.
+- Do not assume data flow that is not evidenced by a data-flow capability on
+  the edges. "Node A is next to sink B" is not "A reaches B".
+- If the chain only shows colocation or control reachability with no
+  data-flow/taint evidence, lower confidence substantially.
+- Distinguish production entry points from test/dev scripts; a test or CLI
+  helper is not reachable by an external attacker.
+- If reachability is plausible but exploitability cannot be confirmed from the
+  provided structure, prefer a low-confidence verdict over an invented scenario.
 
 Return JSON with this exact schema:
 {{
@@ -188,9 +203,12 @@ Step by step:
 2. TRANSIT
    - Does data pass through an LLM without validation?
    - Does it cross trust boundaries (agent → agent, agent → MCP)?
+   - Does any edge actually carry data (a data-flow capability), or is the
+     connection structural colocation only?
 
 3. TOOLS AND CAPABILITIES
    - What tools does the chain reach?
+   - Do their declared capabilities indicate a dangerous action?
    - Do they accept attacker-controlled arguments?
 
 4. GUARDRAILS

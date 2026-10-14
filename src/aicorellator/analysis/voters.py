@@ -226,8 +226,36 @@ def _build_voter_response(
     parsed: dict,
     raw: str,
 ) -> VoterResponse:
-    """Validate and normalize a parsed voter JSON response."""
-    exploitable = bool(parsed.get("exploitable", False))
+    """Validate and normalize a parsed voter JSON response.
+
+    The ``exploitable`` field must be a real JSON boolean. ``bool()``
+    coercion is deliberately avoided: ``bool("false")`` is ``True`` in
+    Python, so a string such as ``"false"`` would otherwise be recorded
+    as a positive verdict. A non-boolean value is treated as an invalid
+    response (excluded from aggregation), not as a ``False`` vote.
+    """
+    exploitable_raw = parsed.get("exploitable")
+    if not isinstance(exploitable_raw, bool):
+        log.warning(
+            "voter %s: invalid 'exploitable' value %r (expected boolean)",
+            voter.name, exploitable_raw,
+        )
+        return VoterResponse(
+            chain_id=chain_id,
+            model=voter.name,
+            prompt_version=PROMPT_VERSION,
+            exploitable=False,
+            confidence=0.0,
+            reasoning=(
+                "voter returned an invalid 'exploitable' field "
+                f"(expected true/false, got {exploitable_raw!r})"
+            ),
+            evidence=[],
+            timeout=True,
+            raw=raw,
+        )
+
+    exploitable = exploitable_raw
     try:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):

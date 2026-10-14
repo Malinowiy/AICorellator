@@ -49,12 +49,21 @@ def evaluate(
         [_voter_to_dict(r) for r in voter_responses],
     )
 
+    # Per-judge overrides take precedence over the config defaults,
+    # matching the voter path (ADR-0005: per-model overrides win).
+    effective_temperature = (
+        judge.temperature if judge.temperature is not None else temperature
+    )
+    effective_max_tokens = (
+        judge.max_tokens if judge.max_tokens is not None else max_tokens
+    )
+
     request = LLMRequest(
         model=judge.model_id or judge.name,
         system=JUDGE_SYSTEM_PROMPT,
         user=user_prompt,
-        temperature=temperature,
-        max_tokens=max_tokens,
+        temperature=effective_temperature,
+        max_tokens=effective_max_tokens,
         timeout=judge.timeout,
         reasoning_effort=judge.reasoning_effort,
     )

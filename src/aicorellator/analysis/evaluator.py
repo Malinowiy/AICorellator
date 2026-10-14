@@ -135,6 +135,7 @@ def _evaluate_one(
     )
 
     # 5. Persist.
+    candidate_edge_ids = set(candidate.edges)
     return Chain(
         id=candidate.chain_id,
         chain_nodes=list(candidate.nodes),
@@ -143,7 +144,9 @@ def _evaluate_one(
         prompt_version=PROMPT_VERSION,
         confidence=confidence,
         reasoning=reasoning,
-        voter_outputs=[_voter_response_dict(r) for r in voter_responses],
+        voter_outputs=[
+            _voter_response_dict(r, candidate_edge_ids) for r in voter_responses
+        ],
         validated=validated,
         status="active",
     )
@@ -157,10 +160,14 @@ def _node_to_dict(store: GraphStore, node_id: str) -> dict:
     node = store.nodes.get(node_id)
     if node is None:
         return {"id": node_id, "kind": "unknown", "name": node_id}
+    # Capabilities are a first-class signal (ADR-0009): the LLM must be
+    # able to distinguish a read-only tool from one that executes code.
     return {
         "id": node.id,
         "kind": node.kind,
         "name": node.name,
+        "capabilities": list(node.capabilities),
+        "confidence": node.confidence,
         "attributes": node.attributes,
     }
 
@@ -169,19 +176,37 @@ def _edge_to_dict(store: GraphStore, edge_id: str) -> dict:
     edge = store.edges.get(edge_id)
     if edge is None:
         return {"id": edge_id, "kind": "unknown"}
+    # Edge capabilities encode transfer semantics (ADR-0009); precision
+    # records how the edge was resolved (ADR-0013/0014).
     return {
         "id": edge.id,
         "kind": edge.kind,
         "source_id": edge.source_id,
         "target_id": edge.target_id,
+        "capabilities": list(edge.capabilities),
+        "precision": edge.precision,
         "attributes": edge.attributes,
     }
 
 
-def _voter_response_dict(r) -> dict:
-    """Convert a VoterResponse to a JSON-safe dict for chains.voter_outputs."""
+def _voter_response_dict(r, candidate_edge_ids: set[str]) -> dict:
+    """Convert a VoterResponse to a JSON-safe dict for chains.voter_outputs.
+
+    ADR-0005 requires every edge cited in ``evidence`` to exist in the
+    chain. Instead of silently trusting the model, each cited edge is
+    classified as known/unknown relative to the candidate chain so the
+    provenance record exposes hallucinated edge IDs.
+    """
     d = asdict(r)
     d.pop("raw", None)
+    unknown = [eid for eid in r.evidence if eid not in candidate_edge_ids]
+    d["evidence_valid"] = not unknown
+    d["evidence_unknown"] = unknown
+    if unknown:
+        log.warning(
+            "voter %s cited %d edge(s) not in the chain: %s",
+            r.model, len(unknown), unknown,
+        )
     return d
 
 

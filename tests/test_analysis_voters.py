@@ -154,3 +154,64 @@ def test_voter_markdown_fenced_json() -> None:
         )
     assert responses[0].exploitable is True
     assert responses[0].confidence == 0.85
+
+
+def _run_single(text: str):
+    with patch(
+        "aicorellator.analysis.voters.complete",
+        return_value=_fake_response(text),
+    ):
+        return evaluate(
+            "chain:test", [], [], voters=[_voter("m1")], parallel=False,
+        )[0]
+
+
+def test_voter_string_false_is_not_true() -> None:
+    """JSON string "false" must not be coerced to a positive verdict."""
+    text = (
+        '{"chain_id": "chain:test", "exploitable": "false", '
+        '"confidence": 0.9, "reasoning": "r"}'
+    )
+    r = _run_single(text)
+    assert r.exploitable is False
+    assert r.timeout is True
+    assert "invalid" in r.reasoning
+
+
+def test_voter_string_true_is_invalid() -> None:
+    """A quoted boolean is not a JSON boolean and is rejected."""
+    text = (
+        '{"chain_id": "chain:test", "exploitable": "true", '
+        '"confidence": 0.9, "reasoning": "r"}'
+    )
+    r = _run_single(text)
+    assert r.timeout is True
+    assert r.exploitable is False
+
+
+def test_voter_int_exploitable_is_invalid() -> None:
+    text = (
+        '{"chain_id": "chain:test", "exploitable": 1, '
+        '"confidence": 0.9, "reasoning": "r"}'
+    )
+    r = _run_single(text)
+    assert r.timeout is True
+
+
+def test_voter_missing_exploitable_is_invalid() -> None:
+    text = '{"chain_id": "chain:test", "confidence": 0.9, "reasoning": "r"}'
+    r = _run_single(text)
+    assert r.timeout is True
+    assert r.exploitable is False
+
+
+def test_voter_bool_false_is_valid() -> None:
+    """A real JSON boolean false is a valid negative vote."""
+    text = (
+        '{"chain_id": "chain:test", "exploitable": false, '
+        '"confidence": 0.7, "reasoning": "r"}'
+    )
+    r = _run_single(text)
+    assert r.exploitable is False
+    assert r.timeout is False
+    assert r.confidence == 0.7

@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
 
+from aicorellator.analysis.client import LLMResponse
 from aicorellator.analysis.config_loader import EnsembleConfig
-from aicorellator.analysis.evaluator import evaluate_chains
+from aicorellator.analysis.evaluator import (
+    _edge_to_dict,
+    _node_to_dict,
+    evaluate_chains,
+)
 from aicorellator.analysis.models import (
     JudgeResponse,
     VoterConfig,
     VoterResponse,
 )
+from aicorellator.graph import Edge, Node
 from aicorellator.graph.query import CandidateChain
 
 
@@ -112,3 +119,78 @@ def test_evaluate_errors_counted(store) -> None:
 
     assert stats["evaluated"] == 0
     assert stats["errors"] == 1
+
+
+def test_node_to_dict_includes_capabilities(store) -> None:
+    """Node capabilities reach the prompt payload (ADR-0009)."""
+    store.nodes.upsert(Node(
+        id="tool:1", kind="tool", name="execute_python_script",
+        host_id="localhost", capabilities=["executes_code"],
+    ))
+    d = _node_to_dict(store, "tool:1")
+    assert d["capabilities"] == ["executes_code"]
+    assert "confidence" in d
+
+
+def test_edge_to_dict_includes_capabilities_and_precision(store) -> None:
+    """Edge capabilities and precision reach the prompt payload."""
+    store.nodes.upsert(Node(id="n:1", kind="tool", name="t", host_id="localhost"))
+    store.nodes.upsert(Node(id="n:2", kind="sink", name="s", host_id="localhost"))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2", kind="has_access_to",
+        host_id="localhost", capabilities=["control_flows_forward"],
+        precision="syntactic",
+    ))
+    d = _edge_to_dict(store, "e:1")
+    assert d["capabilities"] == ["control_flows_forward"]
+    assert d["precision"] == "syntactic"
+
+
+def test_evaluator_flags_unknown_evidence(store) -> None:
+    """Evidence edges not present in the chain are recorded as unknown."""
+    candidates = [_candidate()]
+    config = _config(voters_count=1)
+    text = json.dumps({
+        "chain_id": "chain:test",
+        "exploitable": True,
+        "confidence": 0.9,
+        "reasoning": "r",
+        "evidence": ["e:1", "edge:ghost"],
+    })
+
+    with patch(
+        "aicorellator.analysis.voters.complete",
+        return_value=LLMResponse(text=text, model="test"),
+    ):
+        evaluate_chains(store, candidates, config, progress=False)
+
+    chain = store.chains.get("chain:test")
+    assert chain is not None
+    vo = chain.voter_outputs[0]
+    assert vo["evidence_valid"] is False
+    assert vo["evidence_unknown"] == ["edge:ghost"]
+
+
+def test_evaluator_accepts_known_evidence(store) -> None:
+    """Evidence edges within the chain are marked valid."""
+    candidates = [_candidate()]
+    config = _config(voters_count=1)
+    text = json.dumps({
+        "chain_id": "chain:test",
+        "exploitable": True,
+        "confidence": 0.9,
+        "reasoning": "r",
+        "evidence": ["e:1"],
+    })
+
+    with patch(
+        "aicorellator.analysis.voters.complete",
+        return_value=LLMResponse(text=text, model="test"),
+    ):
+        evaluate_chains(store, candidates, config, progress=False)
+
+    chain = store.chains.get("chain:test")
+    assert chain is not None
+    vo = chain.voter_outputs[0]
+    assert vo["evidence_valid"] is True
+    assert vo["evidence_unknown"] == []
