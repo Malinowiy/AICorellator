@@ -2,7 +2,7 @@
 
 Single registry of deferred, in-progress, and planned work. Complements the ADRs (which record *decisions*) with a working list of *what to do next*.
 
-**Last updated:** 2026-10-13
+**Last updated:** 2026-10-14
 
 **Priority legend:**
 
@@ -23,6 +23,29 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ---
 
+## Recently done
+
+### P0/P2 review fixes (commit 2263fa7)
+
+- `voters.py` — `exploitable` must be a real JSON boolean. `bool("false")` no longer becomes True; a non-boolean value is treated as an invalid response, excluded from aggregation.
+- `judge.py` — per-judge `temperature`/`max_tokens` overrides are now honored (ADR-0005: per-model overrides win).
+- `evaluator.py` — node/edge serialization includes capabilities and precision; voter evidence is validated against the candidate chain (`evidence_valid` / `evidence_unknown`).
+- `prompts.py` — `PROMPT_VERSION` v1.1.0 → v1.2.0. Calibration rules added targeting the FinBot false-positive root cause: colocation ≠ invocation, no assumed data flow without a data-flow capability, production vs test/dev entry points, prefer low confidence over invented scenarios.
+
+### Deferred from the P0/P2 review
+
+- **Judge determinism.** The judge currently runs with `temperature=0.6` (from `models.yaml`). If deterministic verdicts are wanted, set it to `0.0`. Priority: Low.
+- **Raw voter response persistence.** ADR-0005 asks for provenance, but `evaluator.py` drops `raw` before persistence (`d.pop("raw")`). Decision needed: store or not. Priority: Medium.
+
+### Also done
+
+- **CLI and Streamlit entry points** (commit fc266b0). `if __name__ == "__main__":` at module level and Streamlit `st.chat_input` / `st.button` / `st.form_submit_button` / `st.file_uploader`. Both marked with `entry_kind`.
+- **Project backlog created** (commit 8c78d15).
+- **README user manual** (commit 49f0cd9).
+- **PolyForm Noncommercial 1.0.0 license** (commit dd6da36).
+
+---
+
 ## Flow Semantics and Chain Precision
 
 The graph mixes control flow and data flow, does not track taint, and produces chains whose verdicts depend on sampling noise rather than structure. On FinBot, ~160 of 180 chains are false positives. This category addresses the root cause. It sits at the top of the backlog because it is critical for MVP: without it, the tool produces a graph but not actionable results.
@@ -39,18 +62,24 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.1 — Investigate what TSA can still provide
 
 **Priority:** High
-**Status:** Not started
-**Rationale:** We currently use TSA for symbols only. `TSAOutput.call_edges` exists in the model but is not populated or used. TSA may also expose imports, call graphs, and basic type information that would let us distinguish control flow from data flow without building our own call-graph resolver from scratch.
-**References:** ADR-0002 (TSA choice), ADR-0015 (planned).
-**Approach:** Run tree-sitter-analyzer on a representative file with `--structure --format json` and inspect the full output. Check whether call edges, imports, and argument information are present. If they are, wire them into `tsa_worker.py`. If not, fall back to AST-level extraction.
+**Status:** **DONE** (2026-10-14)
+
+**Finding:** TSA `--structure --format json` provides only symbol information: classes (name, visibility, line_range), methods (name, visibility, line_range, class_name, is_method), fields, imports, annotations. It does **not** provide call edges, type information, or argument information.
+
+**Implication:** `TSAOutput.call_edges` will never be populated from TSA. Flow-kind determination (ADR-0015) must be built on our own AST analysis, which already provides a call graph (`entry_points._collect_call_names`). TSA remains useful for symbol extraction across languages but adds nothing for flow semantics.
+
+**Action:** Remove or deprecate `TSAOutput.call_edges` (see Parsing / TSAOutput cleanup). Unblocks 1.2.
 
 ### 1.2 — ADR-0015: Control flow vs data flow
 
 **Priority:** High
-**Status:** Blocked by 1.1
-**Rationale:** The graph currently has one class of edges (`has_access_to`, `uses_tool`, `delegates_to`) that mixes control flow and data flow. The LLM cannot distinguish "X calls Y" from "data from X reaches Y" and therefore assigns high confidence to structurally connected but non-exploitable chains.
-**References:** ADR-0009 (edge capabilities — `data_flows_forward`, `control_flows_forward` defined but not populated), ADR-0013 (cross-file resolution), FP examples #1, #2, #3.
-**Approach:** Introduce a `flow_kind` attribute on edges: `control` | `data` | `structural`. Split `has_access_to` into `calls` (control) and `data_flows_to` (data). Determine `flow_kind` through AST-level argument analysis — name-based, not value-based, to stay within ADR-0001's "no full dataflow" constraint.
+**Status:** **Unblocked** (1.1 done). Ready to start.
+
+**Rationale:** The graph currently has one class of edges that mixes control flow and data flow. TSA does not help here — flow-kind determination is our own AST analysis.
+
+**References:** 1.1 finding, ADR-0009, ADR-0013, FP examples.
+
+**Approach:** Introduce `flow_kind` on edges: `control` | `data` | `structural`. Split `has_access_to` into `calls` (control) and `data_flows_to` (data). Determine `flow_kind` through AST-level argument analysis — name-based, not value-based, to stay within ADR-0001's "no full dataflow" constraint. The call graph already collected in `entry_points._collect_call_names` is the starting point; extend it with argument-name matching against sink parameters.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
@@ -157,6 +186,14 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ---
 
 ## Parsing
+
+### TSAOutput cleanup
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `TSAOutput.call_edges` and `TSAOutput.precision` are unused and will never be populated from TSA. Keeping them is misleading.
+**Approach:** Remove `call_edges` from `TSAOutput`. Either remove `precision` or document that it is always `"syntactic"`. Update `tsa_worker.py` and tests.
+**References:** 1.1 finding.
 
 ### Cross-file tool → sink
 
