@@ -12,3 +12,10 @@ build/
 .tree-sitter-cache/
 aicorellator_data/
 .clinerules/
+# IDE
+*.code-workspace
+.vscode/
+
+# Local artifacts
+dump.txt
+test_collect.py

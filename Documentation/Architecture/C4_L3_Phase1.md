@@ -1,6 +1,6 @@
 # AICorellator — C4 Level 3: Components (Phase 1)
 
-**View:** Component (C4 L3) · **Phase:** 1 — AST + Framework Detection + Capabilities · **Date:** 2026-10-09 · **Last reviewed:** 2026-10-13 · **Status:** Accepted
+**View:** Component (C4 L3) · **Phase:** 1 — AST + Framework Detection + Capabilities · **Date:** 2026-10-09 · **Last reviewed:** 2026-10-20 · **Status:** Accepted
 
 ---
 
@@ -16,7 +16,7 @@ The phase has three classification layers (ADR-0009, ADR-0011):
 - **Level 2** — capability extraction, framework-agnostic.
 - **Level 3** — name-based heuristics, the original FinBot-tuned rules.
 
-Cross-file edges and MCP entry synthesis are resolved by the normalizer after detector merge (ADR-0013).
+Every edge produced in Phase 1 carries `flow_kind` — `control`, `data`, or `structural` (ADR-0015). Cross-file edges and MCP entry synthesis are resolved by the normalizer after detector merge (ADR-0013).
 
 ---
 
@@ -33,6 +33,7 @@ flowchart TB
         RUN[Detectors Runner<br/>orchestrates detectors]
         EP[Entry Points Detector<br/>routes, agent calls,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
+        FLOW[Flow Analyzer<br/>argument matching,<br/>flow_kind assignment]
         NORM[AST Normalizer<br/>merge + cross-file +<br/>MCP entry synthesis]
         XF[Cross-File Resolver<br/>imports → uses_tool]
         MCPENT[MCP Entry Synthesis<br/>mcp_server → entry_point]
@@ -54,7 +55,8 @@ flowchart TB
     CAP --> NORM
     EP --> NORM
     LLMX --> NORM
-    NORM --> XF
+    NORM --> FLOW
+    FLOW --> XF
     XF --> MCPENT
     MCPENT --> ORPH
     ORPH --> WRITE
@@ -118,7 +120,7 @@ flowchart TB
 
 **Output format:** JSON. Parsed into `TSASymbol` records carrying name, kind, file path, line range, and optional enclosing class.
 
-**Always runs.** This is the baseline. If TSA fails on a file, the file is logged and skipped; the rest continue.
+**What TSA provides and does not provide.** The backlog investigation (item 1.1) confirmed that `tree-sitter-analyzer --structure --format json` provides symbols only — classes, methods, fields, imports, annotations, line ranges. It does **not** provide call edges, type information, or argument information. `TSAOutput.call_edges` will never be populated from TSA; call graph and flow analysis are our own AST-level work.
 
 **SCIP is deferred.** ADR-0002 originally proposed an optional SCIP worker as a precision layer. It is not implemented. The `precision` attribute exists on edges, but no producer writes `compiler-verified` yet.
 
@@ -163,8 +165,8 @@ flowchart TB
 
 **What detectors emit:**
 
-- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities. Within-file `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file.
-- **LangGraph**: graph nodes from `graph.add_node(...)`, graph edges from `graph.add_edge(...)` and `graph.add_conditional_edges(...)`, entry points from `graph.set_entry_point(...)`. Node kind is inferred from the node name.
+- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities. Within-file `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file. **All edges carry `flow_kind = "control"`** (ADR-0015).
+- **LangGraph**: graph nodes from `graph.add_node(...)`, graph edges from `graph.add_edge(...)` and `graph.add_conditional_edges(...)`, entry points from `graph.set_entry_point(...)`. Node kind is inferred from the node name. **Graph edges carry `flow_kind = "control"`.**
 - **FastMCP**: `mcp_server` nodes from `FastMCP(...)`; `tool` nodes from `@<var>.tool(...)` decorators, with `parent_server` set. Tool bodies are scanned for capabilities.
 - **MCP Python SDK**: `mcp_server` nodes from `Server(...)`; `tool` nodes from `@<var>.call_tool()` decorators, with `parent_server` set. Other server-bound decorators (`list_resources`, `read_resource`) are recognized but not emitted as tools.
 
@@ -173,6 +175,8 @@ flowchart TB
 **Registry:** `framework_detectors/registry.py` maps names to detector classes. Adding a detector is one line.
 
 **Version support:** each detector declares a supported version range. If the detected framework version is outside the range, a warning is logged and detection proceeds at the user's risk.
+
+**Flow-kind enrichment.** Framework detectors may, in future iterations, upgrade `data_flow_confirmed` on the edges they own, using framework-specific knowledge (ADR-0015, enrichment principle). Today all detector edges carry `data_flow_confirmed = "unknown"`.
 
 ---
 
@@ -194,7 +198,7 @@ flowchart TB
 
 ### 7. Entry Points Detector
 
-**Responsibility:** Finds HTTP routes, WebSocket handlers, agent calls inside route bodies, MCP usages (`create_mcp_server` calls) in Python code, and builds a per-file call graph.
+**Responsibility:** Finds HTTP routes, WebSocket handlers, agent calls inside route bodies, MCP usages (`create_mcp_server` calls), CLI entry points (`if __name__ == "__main__":`), and Streamlit entry points (`st.chat_input`, `st.button`, `st.form_submit_button`, `st.file_uploader`). Builds a per-file call graph.
 
 **Interface:**
 
@@ -203,14 +207,21 @@ flowchart TB
 - `EntryPointOutput.agent_calls: list[AgentCall]`
 - `EntryPointOutput.mcp_usages: list[MCPUsage]`
 - `EntryPointOutput.call_graph: dict[str, set[str]]`
+- `EntryPointOutput.imports: dict[str, list[str]]`
 
 **Route detection:** decorators whose attribute is an HTTP method or `websocket`. Handler name, path, method, and line are recorded.
+
+**CLI entry detection:** `if __name__ == "__main__":` at module level. Marked `method = "CLI"`, `entry_kind = "cli"`.
+
+**Streamlit entry detection:** calls to `st.chat_input`, `st.button`, `st.form_submit_button`, `st.file_uploader` at module level, when the file imports `streamlit`. Marked `method = "STREAMLIT"`, `entry_kind = "streamlit"`.
 
 **Agent call detection:** four heuristics — delegation suffix (`delegate_to_*`), runner-function mapping (`run_*_agent`), extra agent classes, and direct class calls. Calls inside agent modules are flagged as agent-to-agent.
 
 **MCP usage detection:** calls to `create_mcp_server("name", ...)` record the enclosing handler and the server name.
 
-**Call graph:** for every `FunctionDef`/`AsyncFunctionDef` in the file (route handler or not), the set of names it calls via `ast.Name` targets. Used by the normalizer to resolve entry-point-to-sink reachability (ADR-0013, cross-file reachability resolver).
+**Call graph:** for every `FunctionDef`/`AsyncFunctionDef` in the file (route handler or not), the set of names it calls via `ast.Name` targets. Every function is recorded, including functions with no calls. Used by the normalizer to resolve entry-point-to-sink reachability (ADR-0013, cross-file reachability resolver).
+
+**Imports:** per-file list of dotted module names. Used by the cross-file reachability resolver for CLI and Streamlit entries.
 
 **Not in scope:** entry points from factory functions (`get_agent(...)`) not named in the heuristics. This is handled by the orphan-entry resolver (ADR-0013).
 
@@ -234,7 +245,40 @@ flowchart TB
 
 ---
 
-### 9. AST Normalizer
+### 9. Flow Analyzer
+
+**Responsibility:** Determines the `flow_kind` and `data_flow_confirmed` of every edge that the normalizer creates, per ADR-0015.
+
+**Interface:**
+
+- `analyze_has_access_to(tool_body, sink_call) -> str`
+  Returns one of `parameter_match`, `local_var_match`, `call_result_match`, `literal_only`, `no_args`, `unknown`.
+
+**Algorithm (name-based, not value-based):**
+
+For each argument of the sink call, classify it:
+
+- A parameter of the tool function → `parameter_match`.
+- A local variable defined in the tool body → `local_var_match`.
+- The result of another call → `call_result_match`.
+- A literal or constant → `literal_only`.
+- No arguments at all → `no_args`.
+- Anything else (attribute access, indexing, unpacking) → `unknown`.
+
+The edge takes the strongest result across all arguments: `parameter_match` > `local_var_match` > `call_result_match` > `literal_only` > `no_args` > `unknown`.
+
+**Mapping to `flow_kind`:**
+
+- `parameter_match`, `local_var_match`, `call_result_match` → `flow_kind = "data"`.
+- `literal_only`, `no_args`, `unknown` → `flow_kind = "control"`.
+
+**Scope.** The analyzer runs on `has_access_to` edges only, because only there does the normalizer have both the tool body and the sink call in view. For `uses_model`, `uses_tool`, `delegates_to`, `data_flow_confirmed` is `"unknown"` — the agent body is not visible (ADR-0015).
+
+**Limitations.** The analyzer does not track data through function calls, dictionary lookups, or f-strings. False negatives are accepted; false positives on `call_result_match` are accepted (ADR-0009).
+
+---
+
+### 10. AST Normalizer
 
 **Responsibility:** The central merge component. Takes all Phase 1 outputs and produces a single `GraphDelta` of nodes and edges.
 
@@ -250,25 +294,28 @@ flowchart TB
 2. **Class nodes** — Level 3 classification, with Level 2 capabilities supplied as input.
 3. **Method nodes** — Level 3 classification, with capabilities. Tools and sinks are tracked per file.
 4. **Intra-file edges** — `provides_tool` (MCP server to tool), `has_access_to` (tool to sink).
-5. **Entry point nodes** — from the entry points detector.
+5. **Entry point nodes** — from the entry points detector, including HTTP, CLI, and Streamlit.
 6. **LLM endpoint nodes** — from the LLM extractor.
 7. **Delegation edges** — entry point to agent, agent to agent, agent to MCP server.
-8. **Detector node merge** — detector nodes are authoritative for kind. When a detector node and a TSA node share name and source file, the detector node replaces the TSA node. Capabilities are merged from the TSA node if the detector node has none. Edges pointing at the removed node are re-pointed to the replacement, and their IDs are recomputed and deduplicated.
-9. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1).
-10. **MCP entry synthesis** — for each `mcp_server` node carrying a `framework` attribute, create a virtual `entry_point` node named `MCP:<server_name>` and emit `delegates_to` edges to every tool whose `parent_server` matches (ADR-0013, Resolver 3).
-11. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013, Resolver 2).
-12. **Entry-point-to-sink reachability** — `has_access_to` edges from entry points (HTTP and MCP) to sinks reachable through same-file calls (ADR-0013, cross-file reachability resolver).
+8. **Detector node merge** — detector nodes are authoritative for kind. When a detector node and a TSA node share name and source file, the detector node replaces the TSA node. Capabilities are merged from the TSA node if the detector node has none. Edges pointing at the removed node are re-pointed to the replacement, and their IDs are recomputed and deduplicated. `flow_kind` and `data_flow_confirmed` are preserved across the merge.
+9. **Flow-kind assignment** — every edge created in steps 4, 7, and the resolvers below is assigned `flow_kind` per ADR-0015. `provides_tool` and `guards` are `structural`. `uses_model`, `uses_tool`, `delegates_to` are `control` with `data_flow_confirmed = "unknown"`. `has_access_to` is `data` or `control` based on `data_flow_confirmed` from the Flow Analyzer.
+10. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1).
+11. **MCP entry synthesis** — for each `mcp_server` node carrying a `framework` attribute, create a virtual `entry_point` node named `MCP:<server_name>` and emit `delegates_to` edges to every tool whose `parent_server` matches (ADR-0013, Resolver 3).
+12. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013, Resolver 2).
+13. **Entry-point-to-sink reachability** — `has_access_to` edges from entry points (HTTP, MCP, CLI, Streamlit) to sinks reachable through same-file calls (ADR-0013, cross-file reachability resolver).
 
 **Key invariants:**
 
 - All IDs are deterministic. Same input produces the same delta.
 - Detector nodes are authoritative for kind; capabilities are preserved across the merge.
 - Removed nodes do not leave dangling edges.
-- MCP entries are marked with `entry_kind = "mcp"`; HTTP routes remain unmarked.
+- MCP entries are marked with `entry_kind = "mcp"`; CLI and Streamlit entries are marked with `entry_kind = "cli"` and `entry_kind = "streamlit"`. HTTP routes remain unmarked.
+- **Every edge carries `flow_kind`.** An edge without `flow_kind` is a construction bug, caught by tests.
+- **`structural` edges do not participate in `find_chains`.** They describe declarations, not paths.
 
 ---
 
-### 10. Cross-File Resolver
+### 11. Cross-File Resolver
 
 **Responsibility:** Resolve edges that cannot be seen from a single file (ADR-0013).
 
@@ -280,11 +327,13 @@ flowchart TB
 
 **Algorithm:** index tools by source file, index framework agents, collect per-file imports, match imported module names to file paths by trailing segments, emit `uses_tool` edges from each agent to every tool in each matched file.
 
+**Flow kind:** `control`, `data_flow_confirmed = "unknown"` (ADR-0015).
+
 **Design:** false positives accepted. An agent that imports a module with twenty tools receives edges to all twenty. Phase 3 filters.
 
 ---
 
-### 11. Graph Writer
+### 12. Graph Writer
 
 **Responsibility:** Writes the `GraphDelta` into the Graph Store. Deduplicates by canonical ID.
 
@@ -295,11 +344,11 @@ flowchart TB
 
 **Return value:** counts of added and updated nodes and edges.
 
-**Deduplication:** handled by the repository `upsert` methods. Attributes are merged, capabilities are unioned, confidence takes the maximum, precision is upgraded.
+**Deduplication:** handled by the repository `upsert` methods. Attributes are merged, capabilities are unioned, confidence takes the maximum, precision is upgraded. `flow_kind` and `data_flow_confirmed` are overwritten by the newer edge — they describe the current analysis, not a history.
 
 ---
 
-### 12. Flag Setter
+### 13. Flag Setter
 
 **Responsibility:** Sets `phase1_done = true` in the State table after a successful write.
 
@@ -316,9 +365,10 @@ flowchart TB
 | Capability Extractor | manifest | per-file `FileCapabilities` |
 | TSA Worker | manifest + root | `TSAOutput` (symbols) |
 | Framework Detectors | manifest | `DetectionResult` (nodes + edges) |
-| Entry Points Detector | manifest | `EntryPointOutput` (routes, agent calls, call graph) |
+| Entry Points Detector | manifest | `EntryPointOutput` (routes, agent calls, call graph, imports) |
 | LLM Extractor | manifest | `LLMExtractorOutput` |
-| AST Normalizer | all of the above | `GraphDelta` |
+| Flow Analyzer | tool body + sink call | `data_flow_confirmed` value |
+| AST Normalizer | all of the above | `GraphDelta` with `flow_kind` on every edge |
 | Graph Writer | `GraphDelta` | rows in `nodes`, `edges` |
 | Flag Setter | — | `phase1_done = true` |
 
@@ -330,7 +380,7 @@ flowchart TB
 |---|---|---|
 | Phase 1 → Phase 0 | Graph Writer | Nodes and Edges repositories |
 | Phase 1 → Phase 2 | Flag Setter | `state.phase1_done` |
-| Phase 1 → Phase 3 | — | Graph is available for chain enumeration |
+| Phase 1 → Phase 3 | — | Graph is available for chain enumeration; every edge carries `flow_kind` |
 
 ---
 
@@ -340,15 +390,16 @@ flowchart TB
 - **Analysis internals** — Phase 3.
 - **Reporting internals** — Phase 3.
 - **Multi-host delivery** — Phase 3.
-- **SCIP worker** — deferred (ADR-0002, ADR-0003).
+- **SCIP worker** — deferred (ADR-0002, ADR-0003). TSA does not provide call edges; SCIP would not change flow-kind determination.
 - **Precision merge** — deferred with SCIP.
-- **Cross-file tool to sink.** Same-file reachability is implemented; cross-file requires call-graph extension across imports. Deferred.
+- **Cross-file tool to sink.** Same-file reachability is implemented; cross-file requires call-graph extension across imports. Deferred (backlog).
+- **Full dataflow analysis.** Out of scope (ADR-0001). The Flow Analyzer is name-based, not value-based.
 
 ---
 
 ## Design Notes
 
-1. **TSA is the baseline.** It always runs. SCIP is an optional enrichment on top, deferred.
+1. **TSA is the baseline.** It always runs. SCIP is an optional enrichment on top, deferred. TSA provides symbols only; call graph and flow analysis are our own.
 2. **LLM Extractor is the critical gap-closer.** AAK and agent-bom do not connect agents to models. This component does.
 3. **Classification is layered.** Framework detectors (Level 1) are authoritative; capability extraction (Level 2) overrides name-based heuristics when it disagrees; name-based heuristics (Level 3) are the fallback.
 4. **Canonical IDs are per-kind.** Same identity fields produce the same ID. Re-runs reuse existing nodes.
@@ -358,9 +409,12 @@ flowchart TB
 8. **False positives are accepted.** Both capability extraction and cross-file resolution prefer a spurious edge over a missing one. The LLM ensemble in Phase 3 prioritizes and filters.
 9. **Capabilities override kind at chain time.** A tool with `executes_code` is a valid chain endpoint, even though its kind is `tool` (ADR-0014).
 10. **`uses_tool` is a stored edge kind.** Introduced for cross-file agent-to-tool edges (ADR-0013).
-11. **MCP entries are virtual.** They do not correspond to an HTTP route; they model "an MCP client can invoke this server's tools". Marked with `entry_kind = "mcp"` so downstream can distinguish.
-12. **Two MCP detectors, one entry synthesis.** FastMCP and the Python SDK are detected separately (different imports, different decorators), but the MCP entry synthesis is shared. Adding a third MCP SDK means adding one detector; the synthesis already works.
-13. **Call-graph reachability extends to MCP.** The `_link_entry_points_to_sinks` resolver operates on any entry point, including synthesized MCP entries. A chain can start at an MCP tool and reach a sink through same-file calls.
+11. **MCP entries are virtual.** They do not correspond to an HTTP route; they model "an MCP client can invoke this server's tools". Marked with `entry_kind = "mcp"`.
+12. **Two MCP detectors, one entry synthesis.** FastMCP and the Python SDK are detected separately; the MCP entry synthesis is shared.
+13. **Call-graph reachability extends to MCP, CLI, and Streamlit.** The `_link_entry_points_to_sinks` resolver operates on any entry point. A chain can start at an MCP tool, a CLI script, or a Streamlit app, and reach a sink through same-file calls.
+14. **`flow_kind` on every edge is mandatory.** Every edge created in Phase 1 carries `control`, `data`, or `structural`. Missing `flow_kind` is a construction bug (ADR-0015).
+15. **Structural edges do not participate in `find_chains`.** `provides_tool` and `guards` describe declarations, not paths.
+16. **`data_flow_confirmed` is enrichable.** Today only the Flow Analyzer on `has_access_to` sets it. Framework detectors may upgrade it for their own edges in future iterations (ADR-0015, enrichment principle).
 
 ---
 
