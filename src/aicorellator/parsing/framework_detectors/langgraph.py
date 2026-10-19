@@ -159,6 +159,10 @@ class LangGraphDetector(FrameworkDetector):
                 target_id=dst_id,
                 kind=kind,
                 host_id=host_id,
+                # delegates_to is control flow with no confirmed data
+                # flow (ADR-0015, decision 4).
+                flow_kind="control",
+                data_flow_confirmed="unknown",
                 attributes={"framework": "langgraph"},
             ))
 

@@ -52,6 +52,23 @@ EDGE_KINDS: frozenset[str] = frozenset({
     "guards",
 })
 
+# Mirrors the CHECK constraint on edges.flow_kind in graph/schema.sql
+# and VALID_FLOW_KINDS in graph/models.py (ADR-0015).
+#   control    — X calls Y, or X can reach Y through calls.
+#   data       — data from X reaches Y (data flow confirmed).
+#   structural — a declaration, not a path (provides_tool, guards).
+FLOW_KINDS: frozenset[str] = frozenset({"control", "data", "structural"})
+
+# Edge kinds that describe declarations, not execution paths (ADR-0015).
+# These carry flow_kind = "structural" and are excluded from find_chains.
+STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({"provides_tool", "guards"})
+
+# Edge kinds that carry flow_kind = "control" and data_flow_confirmed
+# = "unknown" unless a framework detector enriches them (ADR-0015).
+CONTROL_EDGE_KINDS: frozenset[str] = frozenset({
+    "uses_model", "uses_tool", "delegates_to",
+})
+
 
 # ============================================================
 # File discovery — which files to read

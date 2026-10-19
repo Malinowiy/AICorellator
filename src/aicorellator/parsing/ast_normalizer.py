@@ -5,13 +5,16 @@ Responsibilities:
   2. Create edges between nodes using simple heuristics.
   3. Attach capabilities (ADR-0009) to nodes.
   4. Merge framework detector nodes and edges (ADR-0011).
+  5. Classify every edge's flow_kind (ADR-0015). For has_access_to
+     (tool → sink) a Flow Analyzer inspects the tool body — the one
+     place where source beyond the TSA index is read.
 
 Edges derived here:
-  - provides_tool  (mcp_server → tool)
-  - has_access_to  (tool → sink)
-  - delegates_to   (entry_point → agent)
-  - delegates_to   (agent → agent, orchestrator pattern)
-  - has_access_to  (agent → mcp_server, via create_mcp_server)
+  - provides_tool  (mcp_server → tool)              flow_kind=structural
+  - has_access_to  (tool → sink)                    flow_kind=data|control
+  - delegates_to   (entry_point → agent)            flow_kind=control
+  - delegates_to   (agent → agent, orchestrator)    flow_kind=control
+  - has_access_to  (agent → mcp_server)             flow_kind=control
 
 Nodes derived here:
   - agent, llm_endpoint (from classification)
@@ -28,8 +31,11 @@ Edges NOT derived here (require source analysis beyond TSA):
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..graph.models import Edge, Node
 from ..ingestion.discovery import FileManifest
@@ -42,6 +48,11 @@ from .classification import (
     classify_method,
 )
 from .entry_points import EntryPointOutput
+from .flow_analyzer import (
+    DATA_FLOW_DATA_VALUES,
+    FunctionNode,
+    analyze_has_access_to,
+)
 from .framework_detectors import DetectionResult
 from .llm_extractor import LLMExtractorOutput
 from .models import TSAOutput, TSASymbol
@@ -49,7 +60,21 @@ from .framework_detectors.cross_file import resolve_agent_tool_edges
 from ..patterns import MCP_DIR_SEGMENT, MCP_SERVERS_SEGMENT, SINK_CAPABILITIES
 
 
+log = logging.getLogger(__name__)
+
 HOST_ID = "localhost"       # Phase 0/1 — single host
+
+
+# Flow-kind values for edges whose kind fixes the classification
+# (ADR-0015, decisions 4 and 5). `provides_tool` and `guards` are
+# declarations, not paths: `structural`. `uses_model`, `uses_tool` and
+# `delegates_to` are control flow with no confirmed data flow:
+# `control` + `data_flow_confirmed = "unknown"`.
+STRUCTURAL_FLOW: dict[str, str] = {"flow_kind": "structural"}
+CONTROL_FLOW: dict[str, str] = {
+    "flow_kind": "control",
+    "data_flow_confirmed": "unknown",
+}
 
 
 @dataclass
@@ -159,19 +184,68 @@ def normalize(
                 target_id=tool_node.id,
                 kind="provides_tool",
                 host_id=HOST_ID,
+                # A declaration, not a path (ADR-0015, decision 5).
+                **STRUCTURAL_FLOW,
             ))
 
     # --- Edges: has_access_to (tool -> sink) ---
+    #
+    # The edge is a candidate: every tool in a file is linked to every
+    # sink in the same file. Whether data actually flows from the tool
+    # into the sink depends on the tool's body. The Flow Analyzer
+    # (ADR-0015) inspects the sink call inside the tool body and
+    # records how data reaches it; that result drives `flow_kind`.
+    #
+    # Files are read and parsed at most once per scan. If a file cannot
+    # be read or parsed, or the tool body or the sink call cannot be
+    # resolved, the edge falls back to `control` / `unknown`. Unit tests
+    # build manifests whose abs_path does not exist on disk, so the
+    # fallback is a normal path, not an error path.
+    abs_path_by_path = {entry.path: entry.abs_path for entry in manifest.files}
+    module_cache: dict[str, ast.Module | None] = {}
+
+    def _module_for(file_path: str) -> ast.Module | None:
+        """Parsed module for a manifest file, cached per scan.
+
+        A file is read and parsed at most once per `normalize()` call.
+        """
+        if file_path in module_cache:
+            return module_cache[file_path]
+        module = _parse_python_file(abs_path_by_path.get(file_path))
+        module_cache[file_path] = module
+        return module
+
     for file_path, tools in tools_by_file.items():
         sinks = sinks_by_file.get(file_path, [])
+        if not sinks:
+            continue
+        module = _module_for(file_path)
+        functions = _index_functions(module) if module is not None else {}
         for tool_node in tools:
+            tool_func = functions.get(tool_node.name)
             for sink_node in sinks:
+                sink_call = (
+                    _find_sink_call(tool_func, sink_node.name)
+                    if tool_func is not None
+                    else None
+                )
+                if sink_call is not None:
+                    # Flow Analyzer is inline for now. If cross-file data-flow
+                    # analysis is added (backlog), it moves to a separate pass.
+                    data_flow = analyze_has_access_to(tool_func, sink_call)
+                else:
+                    data_flow = "unknown"
                 delta.edges.append(Edge(
                     id=_edge_id(tool_node.id, sink_node.id, "has_access_to"),
                     source_id=tool_node.id,
                     target_id=sink_node.id,
                     kind="has_access_to",
                     host_id=HOST_ID,
+                    flow_kind=(
+                        "data" if data_flow in DATA_FLOW_DATA_VALUES
+                        else "control"
+                    ),
+                    data_flow_confirmed=data_flow,
                 ))
 
 
@@ -257,6 +331,7 @@ def normalize(
             target_id=agent_id,
             kind="delegates_to",
             host_id=HOST_ID,
+            **CONTROL_FLOW,
         ))
 
     # --- Edges: agent → agent (delegates_to) ---
@@ -275,6 +350,7 @@ def normalize(
             target_id=target_id,
             kind="delegates_to",
             host_id=HOST_ID,
+            **CONTROL_FLOW,
         ))
 
     # --- Edges: entry_point → sink (same file, transitive) ---
@@ -319,6 +395,10 @@ def normalize(
             target_id=server_id,
             kind="has_access_to",
             host_id=HOST_ID,
+            # Agent → MCP server is reachability, not a call into a sink
+            # (ADR-0015): there is no tool body and no sink call to
+            # analyze, so data flow stays unconfirmed.
+            **CONTROL_FLOW,
         ))
 
     # --- Framework detector nodes and edges ---
@@ -377,6 +457,8 @@ def normalize(
                     capabilities=edge.capabilities,
                     confidence=edge.confidence,
                     status=edge.status,
+                    flow_kind=edge.flow_kind,
+                    data_flow_confirmed=edge.data_flow_confirmed,
                 )
                 seen.add(new_id)
             new_edges.append(edge)
@@ -572,6 +654,63 @@ def _sha256(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _parse_python_file(abs_path: Path | None) -> ast.Module | None:
+    """Read and parse a Python file. Returns None on any failure.
+
+    The Flow Analyzer is name-based (ADR-0001): it needs the file's AST
+    but never evaluates it. A missing file, an unreadable file or a
+    syntax error all yield None, which the caller treats as
+    "cannot confirm data flow".
+    """
+    if abs_path is None:
+        return None
+    try:
+        source = abs_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        log.debug("flow analyzer: cannot read %s: %s", abs_path, exc)
+        return None
+    try:
+        return ast.parse(source, filename=str(abs_path))
+    except (SyntaxError, ValueError) as exc:
+        log.debug("flow analyzer: cannot parse %s: %s", abs_path, exc)
+        return None
+
+
+def _index_functions(module: ast.Module) -> dict[str, FunctionNode]:
+    """Map function/method name → node for a parsed module.
+
+    Built once per file. When a name is defined more than once the
+    first definition wins; either body is an acceptable stand-in for
+    the name-based analysis (ADR-0001), and redefinitions are rare.
+    """
+    index: dict[str, FunctionNode] = {}
+    for node in ast.walk(module):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            index.setdefault(node.name, node)
+    return index
+
+
+def _find_sink_call(
+    tool_func: FunctionNode,
+    sink_name: str,
+) -> ast.Call | None:
+    """Find the first call to `sink_name` inside `tool_func`'s body.
+
+    Matches a bare call (`delete_file(...)`) and a method call
+    (`self.delete_file(...)`) by the called name. Returns None when the
+    tool never calls the sink — the edge is then `control` / `unknown`.
+    """
+    for node in ast.walk(tool_func):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == sink_name:
+            return node
+        if isinstance(func, ast.Attribute) and func.attr == sink_name:
+            return node
+    return None
+
+
 def _server_name_for_file(file_path: str) -> str | None:
     """Extract mcp server name from a file path, or None."""
     parts = file_path.split("/")
@@ -637,6 +776,7 @@ def _link_orphan_entry_points(
                 "framework": agent_node.attributes.get("framework", ""),
                 "resolved_via": "orphan_entry_to_single_agent",
             },
+            **CONTROL_FLOW,
         ))
     return edges
 
@@ -700,6 +840,10 @@ def _link_entry_points_to_sinks(
                     target_id=sink_node.id,
                     kind="has_access_to",
                     host_id=HOST_ID,
+                    # Control-flow reachability, not dataflow (ADR-0015):
+                    # the call graph is name-based, so nothing is known
+                    # about what data reaches the sink.
+                    **CONTROL_FLOW,
                 ))
     # Fallback for CLI and Streamlit entries with no same-file sinks:
     # link to all sinks in the project. The rationale is the same as
@@ -733,6 +877,7 @@ def _link_entry_points_to_sinks(
                     kind="has_access_to",
                     host_id=HOST_ID,
                     attributes={"resolved_via": "cli_fallback"},
+                    **CONTROL_FLOW,
                 ))
     return edges
 
@@ -784,6 +929,7 @@ def _link_mcp_entries_to_tools(delta: GraphDelta) -> list[Edge]:
                 kind="delegates_to",
                 host_id=HOST_ID,
                 attributes={"resolved_via": "mcp_entry"},
+                **CONTROL_FLOW,
             ))
 
     return edges

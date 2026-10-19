@@ -304,6 +304,56 @@ def test_edge_add_persists_capabilities(store: GraphStore) -> None:
     assert store.edges.get("e:1").capabilities == ["data_flows_forward"]
 
 
+def test_edge_roundtrips_flow_kind_and_data_flow_confirmed(
+    store: GraphStore,
+) -> None:
+    """Edge.flow_kind and Edge.data_flow_confirmed survive add/get (ADR-0015)."""
+    store.nodes.add(Node(id="n:1", kind="tool", name="t", host_id="localhost"))
+    store.nodes.add(Node(id="n:2", kind="sink", name="s", host_id="localhost"))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        flow_kind="data", data_flow_confirmed="parameter_match",
+    ))
+
+    fetched = store.edges.get("e:1")
+    assert fetched.flow_kind == "data"
+    assert fetched.data_flow_confirmed == "parameter_match"
+
+
+def test_edge_flow_kind_defaults_to_control(store: GraphStore) -> None:
+    """An edge without an explicit flow_kind defaults to 'control' (ADR-0015)."""
+    store.nodes.add(Node(id="n:1", kind="agent", name="a", host_id="localhost"))
+    store.nodes.add(Node(id="n:2", kind="sink", name="s", host_id="localhost"))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+    ))
+
+    fetched = store.edges.get("e:1")
+    assert fetched.flow_kind == "control"
+    assert fetched.data_flow_confirmed is None
+
+
+def test_edge_upsert_upgrades_flow_kind(store: GraphStore) -> None:
+    """A later 'data' classification wins over the 'control' default."""
+    store.nodes.add(Node(id="n:1", kind="tool", name="t", host_id="localhost"))
+    store.nodes.add(Node(id="n:2", kind="sink", name="s", host_id="localhost"))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        flow_kind="data", data_flow_confirmed="local_var_match",
+    ))
+
+    fetched = store.edges.get("e:1")
+    assert fetched.flow_kind == "data"
+    assert fetched.data_flow_confirmed == "local_var_match"
+
+
 def test_edge_upsert_unions_capabilities(store: GraphStore) -> None:
     store.nodes.add(Node(id="n:1", kind="agent", name="a", host_id="localhost"))
     store.nodes.add(Node(id="n:2", kind="tool", name="t", host_id="localhost"))

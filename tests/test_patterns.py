@@ -17,6 +17,19 @@ def test_edge_kinds_match_models() -> None:
     assert patterns.EDGE_KINDS == VALID_EDGE_KINDS
 
 
+def test_flow_kinds_match_models() -> None:
+    """FLOW_KINDS mirrors VALID_FLOW_KINDS in graph models (ADR-0015)."""
+    from aicorellator.graph.models import VALID_FLOW_KINDS
+    assert patterns.FLOW_KINDS == VALID_FLOW_KINDS
+    assert patterns.FLOW_KINDS == {"control", "data", "structural"}
+
+
+def test_structural_edge_kinds_subset_of_edge_kinds() -> None:
+    """Structural edge kinds are real edge kinds (ADR-0015)."""
+    assert patterns.STRUCTURAL_EDGE_KINDS == {"provides_tool", "guards"}
+    assert patterns.STRUCTURAL_EDGE_KINDS <= patterns.EDGE_KINDS
+
+
 def test_class_suffix_kinds_unique() -> None:
     """No duplicate suffixes in CLASS_SUFFIX_KINDS."""
     suffixes = [s for s, _ in patterns.CLASS_SUFFIX_KINDS]

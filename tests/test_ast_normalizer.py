@@ -4,10 +4,12 @@ Tests use hand-built FileManifest and TSAOutput objects — no file
 system access, no TSA subprocess. Fast and deterministic.
 """
 
+import ast
 from pathlib import Path
 
 import pytest
 
+from aicorellator.graph.models import VALID_FLOW_KINDS
 from aicorellator.ingestion.discovery import FileEntry, FileManifest
 from aicorellator.ingestion.target import Target
 from aicorellator.parsing.ast_normalizer import (
@@ -21,6 +23,7 @@ from aicorellator.parsing.ast_normalizer import (
     normalize,
 )
 from aicorellator.parsing.classification import Classification
+from aicorellator.parsing.flow_analyzer import DATA_FLOW_DATA_VALUES
 from aicorellator.parsing.entry_points import (
     AgentCall,
     EntryPoint,
@@ -258,6 +261,9 @@ def test_normalize_provides_tool_edge(target: Target) -> None:
 
     edge = delta.edges[0]
     assert edge.kind == "provides_tool"
+    # ADR-0015: a declaration, not a path.
+    assert edge.flow_kind == "structural"
+    assert edge.data_flow_confirmed is None
     mcp_node = next(n for n in delta.nodes if n.kind == "mcp_server")
     tool_node = next(n for n in delta.nodes if n.kind == "tool")
     assert edge.source_id == mcp_node.id
@@ -305,6 +311,10 @@ def test_normalize_has_access_to_edge(target: Target) -> None:
     assert len(has_access) == 1
     assert has_access[0].source_id == tool_node.id
     assert has_access[0].target_id == sink_node.id
+    # The abs_path does not exist on disk, so the Flow Analyzer cannot
+    # confirm anything (ADR-0015): control / unknown, never a crash.
+    assert has_access[0].flow_kind == "control"
+    assert has_access[0].data_flow_confirmed == "unknown"
 
 
 def test_normalize_deterministic(target: Target) -> None:
@@ -382,6 +392,9 @@ def test_normalize_entry_to_agent_edge(target: Target) -> None:
     assert len(delegates) == 1
     assert delegates[0].source_id == entry_nodes[0].id
     assert delegates[0].target_id == agent_nodes[0].id
+    # ADR-0015: control flow, data flow unconfirmed.
+    assert delegates[0].flow_kind == "control"
+    assert delegates[0].data_flow_confirmed == "unknown"
 
 def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
     """Agent with create_mcp_server call → has_access_to edge."""
@@ -428,6 +441,9 @@ def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
         and e.target_id == mcp_nodes[0].id
     ]
     assert len(has_access) == 1
+    # ADR-0015: reachability, not a call into a sink.
+    assert has_access[0].flow_kind == "control"
+    assert has_access[0].data_flow_confirmed == "unknown"
 
 def test_normalize_cross_file_uses_tool(target: Target) -> None:
     """Agent in one file, tools in another, connected by import."""
@@ -475,6 +491,9 @@ def test_normalize_cross_file_uses_tool(target: Target) -> None:
     assert len(uses_tool) == 1
     assert uses_tool[0].source_id == "agent:1"
     assert uses_tool[0].target_id == "tool:1"
+    # ADR-0015: control flow, data flow unconfirmed.
+    assert uses_tool[0].flow_kind == "control"
+    assert uses_tool[0].data_flow_confirmed == "unknown"
 
 def test_orphan_entry_links_to_single_framework_agent(target: Target) -> None:
     """One framework agent + orphan entry_points → delegates_to edges."""
@@ -902,3 +921,249 @@ def test_cli_entry_fallback_to_all_sinks(target: Target) -> None:
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 1
     assert has_access[0].attributes.get("resolved_via") == "cli_fallback"
+
+
+# ============================================================
+# ADR-0015 — flow_kind / data_flow_confirmed
+# ============================================================
+
+SYSTEMUTILS_PATH = "mcp/servers/systemutils/server.py"
+
+# Two tools in one file, one sink. `read_file` forwards its parameter
+# to the sink (data flow); `list_files` passes only a literal (control
+# flow). `delete_file` is a sink by name (SINK_METHOD_NAMES).
+TWO_TOOLS_ONE_SINK = """\
+class SystemUtilsServer:
+    def read_file(self, query):
+        return self.delete_file(query)
+
+    def list_files(self):
+        return self.delete_file("/tmp/scratch")
+
+    def delete_file(self, path):
+        return path
+"""
+
+
+def _write_python_file(target: Target, rel_path: str, source: str) -> FileEntry:
+    """Write `source` to disk and return the matching FileEntry."""
+    abs_path = target.root / rel_path
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_text(source, encoding="utf-8")
+    return FileEntry(
+        path=rel_path,
+        abs_path=abs_path,
+        language="python",
+        content_hash="hash",
+        size=len(source),
+    )
+
+
+def _server_manifest(target: Target, source: str | None) -> FileManifest:
+    """A one-file mcp/servers/systemutils project.
+
+    `source` is written to disk. When it is None the manifest still
+    lists the file, but the abs_path does not exist — the shape the
+    pre-existing unit tests have.
+    """
+    manifest = FileManifest(target=target)
+    if source is None:
+        manifest.files = [
+            FileEntry(
+                path=SYSTEMUTILS_PATH,
+                abs_path=target.root / SYSTEMUTILS_PATH,
+                language="python",
+                content_hash="hash",
+                size=0,
+            ),
+        ]
+    else:
+        manifest.files = [_write_python_file(target, SYSTEMUTILS_PATH, source)]
+    return manifest
+
+
+def _systemutils_tsa(names: list[str]) -> TSAOutput:
+    """TSA output with one method symbol per name in SystemUtilsServer."""
+    return TSAOutput(symbols=[
+        TSASymbol(
+            name=name,
+            kind="method",
+            file_path=SYSTEMUTILS_PATH,
+            line_start=1,
+            line_end=2,
+            class_name="SystemUtilsServer",
+        )
+        for name in names
+    ])
+
+
+def _has_access_edges(delta: GraphDelta, tool_name: str) -> list:
+    """has_access_to edges whose source tool node is named `tool_name`."""
+    tool = next(n for n in delta.nodes if n.name == tool_name)
+    return [
+        e for e in delta.edges
+        if e.kind == "has_access_to" and e.source_id == tool.id
+    ]
+
+
+def test_has_access_to_parameter_is_data(target: Target) -> None:
+    """Tool forwards its own parameter to the sink → data / parameter_match."""
+    manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
+    tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    edges = _has_access_edges(delta, "read_file")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "data"
+    assert edges[0].data_flow_confirmed == "parameter_match"
+
+
+def test_has_access_to_literal_is_control(target: Target) -> None:
+    """Sink called with a literal only → control / literal_only."""
+    manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
+    tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    edges = _has_access_edges(delta, "list_files")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed == "literal_only"
+
+
+def test_two_has_access_to_edges_differ_in_flow_kind(target: Target) -> None:
+    """One file, one sink, two tools → one data edge and one control edge."""
+    manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
+    tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    has_access = [e for e in delta.edges if e.kind == "has_access_to"]
+    assert len(has_access) == 2
+    assert {e.flow_kind for e in has_access} == {"data", "control"}
+    assert {e.data_flow_confirmed for e in has_access} == {
+        "parameter_match", "literal_only",
+    }
+
+
+def test_has_access_to_tool_never_calls_sink_is_unknown(target: Target) -> None:
+    """Tool body does not call the sink → control / unknown."""
+    source = """\
+class SystemUtilsServer:
+    def read_file(self, query):
+        return query
+
+    def delete_file(self, path):
+        return path
+"""
+    manifest = _server_manifest(target, source)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    edges = _has_access_edges(delta, "read_file")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed == "unknown"
+
+
+def test_has_access_to_mixed_args_is_unknown(target: Target) -> None:
+    """A literal plus an unresolved attribute → unknown, not literal_only."""
+    source = """\
+class SystemUtilsServer:
+    def process_file(self, config):
+        return self.delete_file(config.path, "/tmp/scratch")
+
+    def delete_file(self, path, extra=None):
+        return path
+"""
+    manifest = _server_manifest(target, source)
+    tsa = _systemutils_tsa(["process_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    edges = _has_access_edges(delta, "process_file")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed == "unknown"
+
+
+
+def test_has_access_to_missing_file_is_unknown(target: Target) -> None:
+    """abs_path does not exist on disk → control / unknown, no crash."""
+    manifest = _server_manifest(target, None)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    edges = _has_access_edges(delta, "read_file")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed == "unknown"
+
+
+def test_has_access_to_syntax_error_is_unknown(target: Target) -> None:
+    """Unparseable file → control / unknown, no crash."""
+    manifest = _server_manifest(target, "def broken(:\n")
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    edges = _has_access_edges(delta, "read_file")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed == "unknown"
+
+
+def test_source_file_parsed_at_most_once_per_scan(
+    target: Target,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two tools, one sink, one file → exactly one ast.parse call."""
+    manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
+    tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
+
+    calls: list[str] = []
+    real_parse = ast.parse
+
+    def counting_parse(source, *args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(str(kwargs.get("filename", "")))
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counting_parse)
+    delta = normalize(manifest, tsa)
+
+    assert len([e for e in delta.edges if e.kind == "has_access_to"]) == 2
+    assert len(calls) == 1
+
+
+def test_every_edge_carries_flow_kind(target: Target) -> None:
+    """Normalizing leaves no edge without a valid flow_kind (ADR-0015)."""
+    manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
+    tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    assert delta.edges
+    for edge in delta.edges:
+        assert edge.flow_kind in VALID_FLOW_KINDS, edge
+        if edge.flow_kind == "structural":
+            # Declarations carry no data-flow verdict.
+            assert edge.data_flow_confirmed is None, edge
+        else:
+            # Control and data edges always record a verdict.
+            assert edge.data_flow_confirmed is not None, edge
+
+    data_edges = [e for e in delta.edges if e.flow_kind == "data"]
+    assert data_edges
+    assert all(
+        e.data_flow_confirmed in DATA_FLOW_DATA_VALUES for e in data_edges
+    )
+    structural = [e for e in delta.edges if e.flow_kind == "structural"]
+    assert structural
+    assert {e.kind for e in structural} == {"provides_tool"}
+
+
+def test_provides_tool_is_structural_for_real_file(target: Target) -> None:
+    """A parseable file does not change provides_tool's flow_kind."""
+    manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
+    tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    provides = [e for e in delta.edges if e.kind == "provides_tool"]
+    assert len(provides) == 2
+    assert all(e.flow_kind == "structural" for e in provides)
+    assert all(e.data_flow_confirmed is None for e in provides)

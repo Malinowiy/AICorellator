@@ -34,6 +34,9 @@ graph.add_edge("tools", "agent")
 
     edge_pairs = {(e.source_id, e.target_id) for e in result.edges}
     assert len(edge_pairs) == 2
+    # ADR-0015: delegates_to is control flow, data flow unconfirmed.
+    assert all(e.flow_kind == "control" for e in result.edges)
+    assert all(e.data_flow_confirmed == "unknown" for e in result.edges)
 
 
 def test_node_kinds_inferred() -> None:

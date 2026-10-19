@@ -105,6 +105,9 @@ def get_agent(role):
 """)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
+    # ADR-0015: control flow, data flow unconfirmed.
+    assert uses_model[0].flow_kind == "control"
+    assert uses_model[0].data_flow_confirmed == "unknown"
 
 
 def test_uses_tool_from_local_assignment() -> None:
@@ -123,6 +126,9 @@ def get_agent():
 """)
     uses_tool = [e for e in result.edges if e.kind == "uses_tool"]
     assert len(uses_tool) == 1
+    # ADR-0015: control flow, data flow unconfirmed.
+    assert uses_tool[0].flow_kind == "control"
+    assert uses_tool[0].data_flow_confirmed == "unknown"
 
 
 def test_assignment_later_wins() -> None:

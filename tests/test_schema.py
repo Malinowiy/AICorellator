@@ -94,6 +94,43 @@ def test_finding_exclusivity_check(store: GraphStore) -> None:
         )
 
 
+def test_edge_flow_kind_check(store: GraphStore) -> None:
+    """Invalid flow_kind is rejected by the CHECK constraint (ADR-0015)."""
+    store.nodes.upsert(Node(
+        id="n:1", kind="agent", name="x", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="sink", name="s", host_id="localhost",
+    ))
+    with pytest.raises(sqlite3.IntegrityError):
+        store.edges.add(Edge(
+            id="e:1", source_id="n:1", target_id="n:2",
+            kind="has_access_to", host_id="localhost",
+            flow_kind="not-a-flow-kind",
+        ))
+
+
+def test_edge_data_flow_confirmed_check(store: GraphStore) -> None:
+    """Invalid data_flow_confirmed is rejected by CHECK; NULL is allowed."""
+    store.nodes.upsert(Node(
+        id="n:1", kind="agent", name="x", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="sink", name="s", host_id="localhost",
+    ))
+    with pytest.raises(sqlite3.IntegrityError):
+        store.edges.add(Edge(
+            id="e:1", source_id="n:1", target_id="n:2",
+            kind="has_access_to", host_id="localhost",
+            data_flow_confirmed="not-a-value",
+        ))
+    # NULL is the default — no error.
+    store.edges.add(Edge(
+        id="e:2", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+    ))
+
+
 def test_confidence_clamped(store: GraphStore) -> None:
     """confidence outside [0, 1] is rejected."""
     with pytest.raises(sqlite3.IntegrityError):

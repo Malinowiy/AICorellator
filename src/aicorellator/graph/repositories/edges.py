@@ -35,10 +35,12 @@ class EdgesRepository:
             """
             INSERT INTO edges (
                 id, source_id, target_id, kind, host_id, precision,
+                flow_kind, data_flow_confirmed,
                 attributes, capabilities, confidence, status,
                 created_at, updated_at
             ) VALUES (
                 :id, :source_id, :target_id, :kind, :host_id, :precision,
+                :flow_kind, :data_flow_confirmed,
                 :attributes, :capabilities, :confidence, :status,
                 :created_at, :updated_at
             )
@@ -54,6 +56,10 @@ class EdgesRepository:
           - capabilities are UNIONED.
           - precision is upgraded: 'compiler-verified' wins over
             'syntactic'.
+          - flow_kind is upgraded: 'data'/'structural' win over the
+            default 'control' (ADR-0015).
+          - data_flow_confirmed is upgraded: a non-NULL value wins over
+            NULL (framework detectors may enrich it).
           - confidence takes the max.
           - status is overwritten.
         """
@@ -70,6 +76,18 @@ class EdgesRepository:
             if "compiler-verified" in (existing.precision, edge.precision)
             else "syntactic"
         )
+        # Prefer the more specific flow kind. 'control' is the default;
+        # 'data' and 'structural' are explicit classifications.
+        merged_flow_kind = edge.flow_kind
+        if merged_flow_kind == "control" and existing.flow_kind in (
+            "data", "structural",
+        ):
+            merged_flow_kind = existing.flow_kind
+        merged_data_flow = (
+            edge.data_flow_confirmed
+            if edge.data_flow_confirmed is not None
+            else existing.data_flow_confirmed
+        )
 
         self._conn.execute(
             """
@@ -79,6 +97,8 @@ class EdgesRepository:
                 kind         = :kind,
                 host_id      = :host_id,
                 precision    = :precision,
+                flow_kind    = :flow_kind,
+                data_flow_confirmed = :data_flow_confirmed,
                 attributes   = :attributes,
                 capabilities = :capabilities,
                 confidence   = :confidence,
@@ -92,6 +112,8 @@ class EdgesRepository:
                 "kind": edge.kind,
                 "host_id": edge.host_id,
                 "precision": merged_precision,
+                "flow_kind": merged_flow_kind,
+                "data_flow_confirmed": merged_data_flow,
                 "attributes": json.dumps(merged_attrs),
                 "capabilities": json.dumps(merged_caps),
                 "confidence": merged_confidence,
