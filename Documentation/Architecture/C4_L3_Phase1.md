@@ -298,7 +298,7 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 6. **LLM endpoint nodes** — from the LLM extractor.
 7. **Delegation edges** — entry point to agent, agent to agent, agent to MCP server.
 8. **Detector node merge** — detector nodes are authoritative for kind. When a detector node and a TSA node share name and source file, the detector node replaces the TSA node. Capabilities are merged from the TSA node if the detector node has none. Edges pointing at the removed node are re-pointed to the replacement, and their IDs are recomputed and deduplicated. `flow_kind` and `data_flow_confirmed` are preserved across the merge.
-9. **Flow-kind assignment** — every edge created in steps 4, 7, and the resolvers below is assigned `flow_kind` per ADR-0015. `provides_tool` and `guards` are `structural`. `uses_model`, `uses_tool`, `delegates_to` are `control` with `data_flow_confirmed = "unknown"`. `has_access_to` is `data` or `control` based on `data_flow_confirmed` from the Flow Analyzer.
+9. **Flow-kind assignment** — every edge created in steps 4, 7, and the resolvers below is assigned `flow_kind` per ADR-0015. `provides_tool` is `control` with `data_flow_confirmed = "unknown"` — the access path to a tool is the candidate attack path, not a declaration. `guards` is `structural`. `uses_model`, `uses_tool`, `delegates_to` are `control` with `data_flow_confirmed = "unknown"`. `has_access_to` is `data` or `control` based on `data_flow_confirmed` from the Flow Analyzer.
 10. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1).
 11. **MCP entry synthesis** — for each `mcp_server` node carrying a `framework` attribute, create a virtual `entry_point` node named `MCP:<server_name>` and emit `delegates_to` edges to every tool whose `parent_server` matches (ADR-0013, Resolver 3).
 12. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013, Resolver 2).
@@ -311,7 +311,7 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 - Removed nodes do not leave dangling edges.
 - MCP entries are marked with `entry_kind = "mcp"`; CLI and Streamlit entries are marked with `entry_kind = "cli"` and `entry_kind = "streamlit"`. HTTP routes remain unmarked.
 - **Every edge carries `flow_kind`.** An edge without `flow_kind` is a construction bug, caught by tests.
-- **`structural` edges do not participate in `find_chains`.** They describe declarations, not paths.
+- **`structural` edges do not participate in `find_chains`.** `guards` describes a defensive control, not a path. `provides_tool` is `control` and is traversed.
 
 ---
 
@@ -413,8 +413,9 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 12. **Two MCP detectors, one entry synthesis.** FastMCP and the Python SDK are detected separately; the MCP entry synthesis is shared.
 13. **Call-graph reachability extends to MCP, CLI, and Streamlit.** The `_link_entry_points_to_sinks` resolver operates on any entry point. A chain can start at an MCP tool, a CLI script, or a Streamlit app, and reach a sink through same-file calls.
 14. **`flow_kind` on every edge is mandatory.** Every edge created in Phase 1 carries `control`, `data`, or `structural`. Missing `flow_kind` is a construction bug (ADR-0015).
-15. **Structural edges do not participate in `find_chains`.** `provides_tool` and `guards` describe declarations, not paths.
-16. **`data_flow_confirmed` is enrichable.** Today only the Flow Analyzer on `has_access_to` sets it. Framework detectors may upgrade it for their own edges in future iterations (ADR-0015, enrichment principle).
+15. **Structural edges do not participate in `find_chains`.** `guards` describes a defensive control, not a path. `provides_tool` is `control` and is traversed.
+16. **`provides_tool` is control because the access path is the attack path.** "The agent can reach a server that exposes `delete_file`" puts `delete_file` in the agent's reachable action set. Whether a particular request invokes it is a runtime question. Classifying the edge as a declaration would hide reachable dangerous actions whenever invocation is indirect — dispatched by the MCP framework, selected by the model, or triggered by a prompt — which are exactly the cases the analysis exists to evaluate. `guards` stays `structural`: a guardrail is a defensive control, and no data or control flows from it to the guarded component along that edge. Phase 2 runtime monitoring will separate exposure from invocation (ADR-0015, Deferred).
+17. **`data_flow_confirmed` is enrichable.** Today only the Flow Analyzer on `has_access_to` sets it. Framework detectors may upgrade it for their own edges in future iterations (ADR-0015, enrichment principle).
 
 ---
 

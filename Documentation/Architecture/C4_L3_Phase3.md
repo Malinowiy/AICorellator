@@ -71,7 +71,8 @@ flowchart TB
 **Edge traversal:**
 
 - `control` and `data` edges are traversed.
-- `structural` edges are **not** traversed. `provides_tool` and `guards` describe declarations, not paths (ADR-0015).
+- `provides_tool` is `control` and **is** traversed. The access path from an agent to a tool an MCP server exposes is the candidate attack path: "the agent can call the tool" is the step an attacker uses (ADR-0015).
+- `guards` is `structural` and is **not** traversed. A guardrail is a defensive control, not a step in an attack path (ADR-0015).
 
 **`data_edges_only` parameter:**
 

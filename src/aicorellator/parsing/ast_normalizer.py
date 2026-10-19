@@ -10,7 +10,7 @@ Responsibilities:
      place where source beyond the TSA index is read.
 
 Edges derived here:
-  - provides_tool  (mcp_server → tool)              flow_kind=structural
+  - provides_tool  (mcp_server → tool)              flow_kind=control
   - has_access_to  (tool → sink)                    flow_kind=data|control
   - delegates_to   (entry_point → agent)            flow_kind=control
   - delegates_to   (agent → agent, orchestrator)    flow_kind=control
@@ -66,10 +66,21 @@ HOST_ID = "localhost"       # Phase 0/1 — single host
 
 
 # Flow-kind values for edges whose kind fixes the classification
-# (ADR-0015, decisions 4 and 5). `provides_tool` and `guards` are
-# declarations, not paths: `structural`. `uses_model`, `uses_tool` and
-# `delegates_to` are control flow with no confirmed data flow:
-# `control` + `data_flow_confirmed = "unknown"`.
+# (ADR-0015, decisions 4 and 5).
+#
+# `uses_model`, `uses_tool`, `provides_tool` and `delegates_to` are
+# control flow with no confirmed data flow: `control` +
+# `data_flow_confirmed = "unknown"`.
+#
+# `provides_tool` is control, not structural: "the agent can call the
+# tool" is, for attack-path purposes, the same as "the agent calls the
+# tool". The access path is the candidate attack path until runtime
+# monitoring (Phase 2) can distinguish an exposed tool from an invoked
+# one. `guards` stays structural — a guardrail is a defensive control,
+# not a step in an attack path.
+# Reserved for `guards` (guardrail → component). No resolver emits
+# that edge yet; the constant is kept so the kind has one declared
+# source of truth.
 STRUCTURAL_FLOW: dict[str, str] = {"flow_kind": "structural"}
 CONTROL_FLOW: dict[str, str] = {
     "flow_kind": "control",
@@ -184,8 +195,10 @@ def normalize(
                 target_id=tool_node.id,
                 kind="provides_tool",
                 host_id=HOST_ID,
-                # A declaration, not a path (ADR-0015, decision 5).
-                **STRUCTURAL_FLOW,
+                # Access path, not a declaration (ADR-0015, decision 5):
+                # "the agent can call the tool" is the candidate attack
+                # path until runtime monitoring separates the two.
+                **CONTROL_FLOW,
             ))
 
     # --- Edges: has_access_to (tool -> sink) ---

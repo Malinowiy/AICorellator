@@ -261,9 +261,9 @@ def test_normalize_provides_tool_edge(target: Target) -> None:
 
     edge = delta.edges[0]
     assert edge.kind == "provides_tool"
-    # ADR-0015: a declaration, not a path.
-    assert edge.flow_kind == "structural"
-    assert edge.data_flow_confirmed is None
+    # ADR-0015: the access path is the candidate attack path.
+    assert edge.flow_kind == "control"
+    assert edge.data_flow_confirmed == "unknown"
     mcp_node = next(n for n in delta.nodes if n.kind == "mcp_server")
     tool_node = next(n for n in delta.nodes if n.kind == "tool")
     assert edge.source_id == mcp_node.id
@@ -1152,12 +1152,20 @@ def test_every_edge_carries_flow_kind(target: Target) -> None:
     assert all(
         e.data_flow_confirmed in DATA_FLOW_DATA_VALUES for e in data_edges
     )
-    structural = [e for e in delta.edges if e.flow_kind == "structural"]
-    assert structural
-    assert {e.kind for e in structural} == {"provides_tool"}
+
+    # `provides_tool` is control (ADR-0015): the access path to a tool
+    # is the candidate attack path.
+    provides = [e for e in delta.edges if e.kind == "provides_tool"]
+    assert provides
+    assert all(e.flow_kind == "control" for e in provides)
+    assert all(e.data_flow_confirmed == "unknown" for e in provides)
+
+    # No resolver emits a structural edge yet (`guards`). When one does,
+    # it must carry no data-flow verdict.
+    assert [e for e in delta.edges if e.flow_kind == "structural"] == []
 
 
-def test_provides_tool_is_structural_for_real_file(target: Target) -> None:
+def test_provides_tool_is_control(target: Target) -> None:
     """A parseable file does not change provides_tool's flow_kind."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
@@ -1165,5 +1173,5 @@ def test_provides_tool_is_structural_for_real_file(target: Target) -> None:
 
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert len(provides) == 2
-    assert all(e.flow_kind == "structural" for e in provides)
-    assert all(e.data_flow_confirmed is None for e in provides)
+    assert all(e.flow_kind == "control" for e in provides)
+    assert all(e.data_flow_confirmed == "unknown" for e in provides)

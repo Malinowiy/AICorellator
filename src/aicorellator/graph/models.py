@@ -42,7 +42,7 @@ VALID_EDGE_KINDS = frozenset({
 # Valid flow kinds (ADR-0015). Mirrors the CHECK constraint in schema.sql.
 #   control    — X calls Y, or X can reach Y through calls.
 #   data       — data from X reaches Y (data flow confirmed).
-#   structural — a declaration, not a path (provides_tool, guards).
+#   structural — a declaration, not a path (guards).
 VALID_FLOW_KINDS = frozenset({"control", "data", "structural"})
 
 

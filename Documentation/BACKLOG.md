@@ -26,46 +26,57 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ## Recently done
 
+### 2026-10-20 — ADR-0015 implementation (backlog item 1.2a)
+
+- **ADR-0015 accepted.** `flow_kind` on every edge (control | data | structural). `data_flow_confirmed` on `has_access_to` (six values). Structural edges (guards) excluded from `find_chains`. `provides_tool` is **control** (access path = attack path until runtime monitoring). `data_edges_only` parameter on `find_chains`. Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
+- **Flow Analyzer** (`parsing/flow_analyzer.py`): name-based argument matching, non-linear ranking, `literal_only` requires all literals.
+- **Normalizer:** per-scan module cache; every edge carries `flow_kind`; `id_remap` preserves flow fields.
+- **Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four validation corpora (FinBot, NMB, dvmcp, mcploitable). The generic analyzer finds no direct call from a tool to a sink in these projects — all four are colocation-only. `data_edges_only = 0` everywhere. Two follow-ups recorded as 1.2a.1 and 1.2a.2.
+- **TSA fix:** `tsa_worker.py` pins `uvx --python 3.14` (tree-sitter-analyzer 2.2.0 → cachebox 5.2.3 → PyO3 0.27.1 does not support Python 3.15).
+- **Tests:** 344 passed.
+- **Scans (fresh, post-implementation):**
+
+  | Target | nodes | edges | chains | data_edges_only |
+  |---|---|---|---|---|
+  | finbot-ctf | 283 | 93 | 182 | 0 |
+  | NMB | 26 | 26 | 16 | 0 |
+  | dvmcp | 33 | 47 | 39 | 0 |
+  | mcploitable | 74 | 45 | 17 | 0 |
+
 ### 2026-10-20 — ADR-0015 design and documentation
 
-- **ADR-0015 accepted** (design). Control flow vs data flow: `flow_kind` on every edge, `data_flow_confirmed` on `has_access_to`, structural edges excluded from `find_chains`, `data_edges_only` parameter.
-- **ADR-0009 updated** — edge capabilities are orthogonal to `flow_kind`.
-- **ADR-0013 updated** — cross-file edges carry `flow_kind`.
-- **ADR-0007 updated** — `guards` edge carries `flow_kind = "structural"`.
-- **C4 L2 updated** — `flow_kind` lives in Graph Store; no container boundary change.
-- **C4 L3 Phase 1 updated** — Flow Analyzer component; `flow_kind` in normalizer pipeline.
-- **C4 L3 Phase 3 created** — Analysis and Reporting component view, including the prompt contract for `flow_kind`.
+- **ADR-0015 written and accepted** (design).
+- **ADR-0009, ADR-0013, ADR-0007 updated** to reference `flow_kind`.
+- **C4 L2, L3 Phase 1, L3 Phase 3 updated** — Flow Analyzer component; `flow_kind` in normalizer pipeline and prompt contract.
 
 ### 2026-10-14 — TSA investigation (item 1.1)
 
-- **TSA `--structure --format json` provides symbols only.** Classes, methods, fields, imports, annotations, line ranges. No call edges, no type information, no argument information.
-- **Implication:** `TSAOutput.call_edges` will never be populated. Flow-kind determination is our own AST analysis.
-- **Action:** `TSAOutput.call_edges` cleanup (see Parsing). Unblocks 1.2.
+- **TSA `--structure --format json` provides symbols only.** No call edges, no type information, no argument information. `TSAOutput.call_edges` will never be populated from TSA. Flow-kind determination is our own AST analysis.
 
 ### 2026-10-14 — P0/P2 review fixes (commit 2263fa7)
 
-- `voters.py` — `exploitable` must be a real JSON boolean; non-boolean rejected as invalid.
-- `judge.py` — per-judge `temperature`/`max_tokens` overrides honored.
-- `evaluator.py` — node/edge serialization includes capabilities and precision; evidence validated against the candidate chain (`evidence_valid` / `evidence_unknown`).
-- `prompts.py` — `PROMPT_VERSION` v1.1.0 → v1.2.0; calibration rules for FinBot FP root cause.
+- `exploitable` must be a real JSON boolean; non-boolean rejected as invalid.
+- Per-judge `temperature`/`max_tokens` overrides honored.
+- Node/edge serialization includes capabilities and precision; evidence validated against the candidate chain.
+- `PROMPT_VERSION` v1.1.0 → v1.2.0; calibration rules for FinBot FP root cause.
 
 ### Earlier
 
-- **CLI and Streamlit entry points** (commit fc266b0). `if __name__ == "__main__":` at module level; Streamlit `st.chat_input` / `st.button` / `st.form_submit_button` / `st.file_uploader`. Both marked with `entry_kind`.
-- **Project backlog created** (commit 8c78d15).
-- **README user manual** (commit 49f0cd9).
-- **PolyForm Noncommercial 1.0.0 license** (commit dd6da36).
+- CLI and Streamlit entry points (commit fc266b0).
+- Project backlog created (commit 8c78d15).
+- README user manual (commit 49f0cd9).
+- PolyForm Noncommercial 1.0.0 license (commit dd6da36).
 
 ### Deferred from the P0/P2 review
 
-- **Judge determinism.** The judge runs with `temperature=0.6` (from `models.yaml`). Deterministic verdicts require `0.0`. Priority: Low. Configuration choice, not a code default.
+- **Judge determinism.** The judge runs with `temperature=0.6`. Deterministic verdicts require `0.0`. Priority: Low. Configuration choice, not a code default.
 - **Raw voter response persistence.** ADR-0005 asks for provenance; `evaluator.py` drops `raw` before persistence. Decision needed: store or not. Priority: Medium.
 
 ---
 
 ## Flow Semantics and Chain Precision
 
-The graph mixes control flow and data flow, does not track taint, and produces chains whose verdicts depend on sampling noise rather than structure. On FinBot, ~160 of 180 chains are false positives. This category addresses the root cause. It sits at the top of the backlog because it is critical for MVP.
+The graph mixes control flow and data flow, does not track taint, and produces chains whose verdicts depend on sampling noise rather than structure. On FinBot, ~160 of 180 chains are false positives. This category addresses the root cause.
 
 **Reference:** `Documentation/Analysis/FP_TP_analysis.md`.
 
@@ -73,96 +84,72 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 **Priority:** High
 **Status:** **Done** (2026-10-13)
-**Result:** `Documentation/Analysis/FP_TP_analysis.md` — three FP examples, three TP examples, structural observations.
 
 ### 1.1 — Investigate what TSA can still provide
 
 **Priority:** High
 **Status:** **Done** (2026-10-14)
-**Finding:** TSA `--structure --format json` provides symbols only — classes (name, visibility, line_range), methods (name, visibility, line_range, class_name, is_method), fields, imports, annotations. No call edges, no type information, no argument information. `TSAOutput.call_edges` will never be populated from TSA.
-**Action taken:** Recorded in "Recently done". Unblocked 1.2. Triggers a cleanup item (Parsing / TSAOutput cleanup).
 
 ### 1.2 — ADR-0015: Control flow vs data flow
 
 **Priority:** High
-**Status:** **Design done** (2026-10-20). Implementation is 1.2a.
-**Result:** `Documentation/ADR/ADR_015.md` accepted. `flow_kind` on every edge (`control` | `data` | `structural`). `has_access_to` additionally carries `data_flow_confirmed` (six values). Structural edges are excluded from `find_chains`. `data_edges_only` parameter on `find_chains`. Prompt receives `flow_kind` and `data_flow_confirmed`. No hard calibration rules — the LLM decides confidence.
-**References:** ADR-0015, ADR-0009 (updated), ADR-0013 (updated), ADR-0007 (updated), C4 L2 (updated), C4 L3 Phase 1 (updated), C4 L3 Phase 3 (created).
+**Status:** **Done** (2026-10-20) — design and documentation.
 
 ### 1.2a — Implement ADR-0015
 
 **Priority:** High
-**Status:** Not started. Next item after documentation.
-**Rationale:** The design is accepted, but no code exists yet. Every edge in the graph is still missing `flow_kind`, and `data_flow_confirmed` is not computed. Until implementation, the FinBot FP rate is unchanged — the prompt calibration (P0/P2, v1.2.0) mitigates the symptom, but the payload still lacks the facts the LLM needs.
-**Approach:**
-1. **Schema** — `edges.flow_kind TEXT NOT NULL DEFAULT 'control'` with `CHECK`. `edges.data_flow_confirmed TEXT` (nullable) with `CHECK`. `graph/schema.sql`.
-2. **Models** — `Edge.flow_kind: str`, `Edge.data_flow_confirmed: str | None`. `graph/models.py`. `VALID_FLOW_KINDS`.
-3. **Patterns** — `FLOW_KINDS`, `STRUCTURAL_EDGE_KINDS`. `patterns.py`.
-4. **Flow Analyzer** — `_analyze_data_flow(tool_body, sink_call)` in `ast_normalizer.py` (or a dedicated `flow_analyzer.py`). Name-based argument matching: parameter, local variable, call result, literal, no args, unknown.
-5. **Normalizer** — set `flow_kind` on every edge. `structural` for `provides_tool` and `guards`. `control` for `uses_model`, `uses_tool`, `delegates_to`. `control` or `data` for `has_access_to`, based on `data_flow_confirmed`.
-6. **Query layer** — `find_chains` gains `data_edges_only: bool = False`. Traverses `control` and `data` edges only; `structural` edges are excluded.
-7. **Prompt** — `flow_kind` and `data_flow_confirmed` in the edge payload. `PROMPT_VERSION` → v1.3.0. Instructions: data chains are stronger evidence; structural edges on a chain path are a construction error; the LLM decides confidence.
-8. **Tests** — unit tests for the Flow Analyzer (all six values); integration tests for `find_chains` with `data_edges_only` true and false; regression on FinBot (expected chain count drop from ~180 to a few).
-9. **Update ADR-0015** — status `Accepted`, with a note that implementation is in place.
+**Status:** **Done** (2026-10-20) — code in place, tests green, scans run.
+**Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four corpora. `data_edges_only = 0`. Follow-ups: 1.2a.1 and 1.2a.2.
 
-**References:** ADR-0015.
+### 1.2a.1 — Analyzer asks the right question
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** The generic Flow Analyzer asks "does this tool call a function named like the sink?" On real code, the sink node is the **definition** of the dangerous operation, not a call site. The interesting question for FinBot-style layouts is: "how does data reach the dangerous call **inside the sink method's own body**?" (`delete_file(file_id)` → `self.db.delete(f)` → `parameter_match`).
+**Approach:** Add a second analyzer pass that inspects the body of each sink function and asks whether tool arguments reach the dangerous call inside it. Keep the existing `has_access_to` analyzer as-is (it correctly reports "no direct call" for colocation layouts).
+**References:** Step 6 report; ADR-0015 Deferred.
+
+### 1.2a.2 — Detector enrichment of `data_flow_confirmed`
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** ADR-0015 decision 7 declares `data_flow_confirmed` enrichable. Framework detectors know their framework's argument-passing patterns; the generic analyzer does not. Enrichment is the path to `data` edges on real projects until 1.2a.1 lands.
+**Approach:** Each framework detector may upgrade `data_flow_confirmed` on the edges it owns:
+- LangChain: if `create_agent(tools=[...])` and the agent's prompt template passes user input to a tool argument → `parameter_match`.
+- FastMCP / MCP Python: if the tool function takes a parameter that flows to a dangerous call → `parameter_match`.
+- OpenAI Agents SDK (when the detector lands): same.
+**References:** ADR-0015 decision 7; Step 6 report.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
 **Priority:** High
-**Status:** Blocked by 1.2a (needs `flow_kind` in the graph) and by `reads_untrusted`
-**Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Capability-based taint gives this without full dataflow analysis. Non-linear chains (chain groups, ADR-0010) require untrusted sources.
-**References:** ADR-0009, ADR-0010, ADR-0012, TP examples #1, #2.
-**Approach:**
-- Entry point must have `reads_untrusted` or `http_ingress` or `cli_input` (new capability).
-- Path must contain at least one `data_flows_to` edge (currently: `flow_kind = "data"` on `has_access_to`).
-- Sink must have a sink capability.
-- Combine with `find_chain_groups` for non-linear chains.
+**Status:** Blocked by `reads_untrusted` and by 1.2a.1/1.2a.2 (needs `data` edges on real targets)
+**Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Non-linear chains (chain groups, ADR-0010) require untrusted sources.
+**References:** ADR-0009, ADR-0010, ADR-0012.
 
 ### 1.3a — Architecture and data-model review
 
 **Priority:** High
-**Status:** Blocked by 1.2a and 1.3
-**Rationale:** Introducing capability-based taint and non-linear chains changes the data model further (taint sources, chain groups table usage). This review happens once 1.2a and 1.3 are in place, so it can verify the whole picture, not the first half.
-**Deliverables:**
-1. **Data-model review** — taint sources on nodes, `chain_groups` table population, any new tables or columns.
-2. **Python model review** — `Node.lethal_trifecta`, `Node.taint_sources`, `ChainGroup`.
-3. **Query layer review** — `find_chain_groups`, interaction with `data_edges_only`.
-4. **Normalizer review** — taint propagation.
-5. **Prompt contract review** — taint information in the payload, prompt version bump.
-6. **ADR updates** — ADR-0009, ADR-0010, ADR-0015, ADR-0016 (taint model, if needed).
-7. **C4 updates** — C4 L3 Phase 1, C4 L3 Phase 3.
-8. **Test plan.**
+**Status:** Blocked by 1.3
+**Rationale:** Introducing capability-based taint and non-linear chains changes the data model further (taint sources, chain groups table usage).
+**Deliverables:** Data-model review, Python model review, query layer review, normalizer review, prompt contract review, ADR updates, C4 updates, test plan.
 
 ### 1.4 — Prompt engineering: grounded evaluation
 
 **Priority:** High
-**Status:** **Partially done** (P0/P2, v1.2.0: calibration rules for the FinBot root cause). Full version blocked by 1.2a (prompt receives `flow_kind` only after implementation).
-**Rationale:** The FP examples show the LLM gives contradictory verdicts on structurally identical chains. The prompt lacks grounding criteria. The P0/P2 fix added calibration rules; the full fix needs `flow_kind` in the payload.
-**Approach (remaining after 1.2a):**
-- Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
-- Instructions: data chains are stronger than control chains; structural edges on a path are a construction error; `data_flow_confirmed` describes how the data flow was established.
-- `uncertain` verdict with concrete criteria for structural reachability without implementation details.
-- Test scripts and dev scripts distinguished from production entry points.
-- **No hard confidence rules.** The LLM decides.
+**Status:** **Partially done** (P0/P2 v1.2.0 calibration; v1.3.0 flow_kind instructions). Full version blocked by 1.3a.
+**Remaining:** `uncertain` verdict with concrete criteria; explicit production-vs-test entry point distinction; prompt regression tests.
 
 ### 1.5 — Graph densification
 
 **Priority:** Medium
-**Status:** Deferred until 1.2a is complete and 1.3 design is in place.
-**Rationale:** The graph is sparse (FinBot: 283 nodes, 93 edges — ratio 0.33). Many real paths go through intermediate functions that are not classified. Adding call-graph edges without flow semantics would worsen false positives: more paths, same lack of data-flow distinction. Densification must come after `flow_kind` and taint are in place.
-**Approach (when unblocked):**
-- Add call-graph edges (`calls`) between all functions.
-- Add import edges (`imports`) between modules.
-- Extend cross-file resolution to all edge kinds.
-- Re-tune `max_hops` — denser graphs produce longer paths.
+**Status:** Deferred until 1.2a.1, 1.2a.2, and 1.3 design are in place.
+**Rationale:** The graph is sparse (FinBot: 283 nodes, 93 edges — ratio 0.33). Adding call-graph edges without taint would worsen false positives.
 
 ### 1.6 — Lethal trifecta detection
 
 **Priority:** High
 **Status:** Blocked by 1.3 (needs `reads_untrusted`)
-**Rationale:** ADR-0009 defines the combination but nothing implements it. Cheap to implement once `reads_untrusted` exists.
-**Approach:** On node write, compute `lethal_trifecta`. Chains passing through such nodes get `priority: high`.
 
 ---
 
@@ -172,21 +159,20 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Currently `has_access_to` (tool → sink) is built only within a single file. In mcploitable and dvmcp, 8–12 sink nodes have no incoming edges because the tools that reach them live in other files.
-**Approach:** Extend the call graph to span imports. Reuse the import table in `entry_points._collect_module_imports`. Populate `flow_kind` and `data_flow_confirmed` on the resulting edges (ADR-0015).
+**Rationale:** `has_access_to` (tool → sink) is built only within a single file. In mcploitable and dvmcp, sink nodes with no incoming edges exist because tools that reach them live in other files.
+**Approach:** Extend the call graph to span imports. Populate `flow_kind` and `data_flow_confirmed` on the resulting edges (ADR-0015).
 
 ### `openai_agents.py` detector
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Last detector in ADR-0011 implementation order.
+**Rationale:** Last detector in ADR-0011 implementation order. The OpenAI Agents SDK is a rising framework; targets using it currently produce an empty graph.
 
 ### TSAOutput cleanup
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** `TSAOutput.call_edges` and `TSAOutput.precision` are unused and will never be populated from TSA (item 1.1). Keeping them is misleading.
-**Approach:** Remove `call_edges` from `TSAOutput`. Either remove `precision` or document it is always `"syntactic"`. Update `tsa_worker.py` and tests.
+**Rationale:** `TSAOutput.call_edges` and `TSAOutput.precision` are unused and will never be populated from TSA.
 
 ### Additional TSA modules for non-Python languages
 
@@ -210,7 +196,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### Chain groups (ADR-0010)
 
 **Priority:** High
-**Status:** Not started. Goes with Flow Semantics item 1.3.
+**Status:** Not started. Goes with 1.3.
 
 ### Chain group prioritization (ADR-0012)
 
@@ -220,7 +206,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `reads_untrusted` capability
 
 **Priority:** High
-**Status:** Blocked by untrusted source detection. Goes with Flow Semantics item 1.3.
+**Status:** Blocked by untrusted source detection. Goes with 1.3.
 
 ### Dynamic chain selection
 
@@ -239,7 +225,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `guards` edge emission
 
 **Priority:** High
-**Status:** Partially done (node kind only). When emitted, the edge carries `flow_kind = "structural"` (ADR-0015).
+**Status:** Partially done (node kind only). When emitted, the edge carries `flow_kind = "structural"`.
 
 ### Guardrail attributes
 
@@ -263,7 +249,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `untrusted_source` node kind
 
 **Priority:** High
-**Status:** Not started. Goes with Flow Semantics item 1.3.
+**Status:** Not started. Goes with 1.3.
 
 ### Untrusted source detection
 
@@ -335,7 +321,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### SCIP integration
 
 **Priority:** Icebox
-**Status:** Deferred until a target requires it. TSA does not provide call edges (item 1.1), so SCIP would not change flow-kind determination.
+**Status:** Deferred until a target requires it.
 
 ### Multi-host (Core + Agent)
 
@@ -343,7 +329,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 ### `structural_heuristics.py`
 
-**Priority:** Cancelled. Its role was absorbed by `classification.py` (ADR-0011).
+**Priority:** Cancelled. Its role was absorbed by `classification.py`.
 
 ---
 

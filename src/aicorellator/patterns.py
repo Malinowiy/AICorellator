@@ -56,18 +56,30 @@ EDGE_KINDS: frozenset[str] = frozenset({
 # and VALID_FLOW_KINDS in graph/models.py (ADR-0015).
 #   control    — X calls Y, or X can reach Y through calls.
 #   data       — data from X reaches Y (data flow confirmed).
-#   structural — a declaration, not a path (provides_tool, guards).
+#   structural — a declaration, not a path (guards).
 FLOW_KINDS: frozenset[str] = frozenset({"control", "data", "structural"})
 
 # Edge kinds that describe declarations, not execution paths (ADR-0015).
 # These carry flow_kind = "structural" and are excluded from find_chains.
-STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({"provides_tool", "guards"})
+#
+# `provides_tool` is deliberately NOT here. From an attack-path
+# standpoint, "the agent can call the tool" is equivalent to "the agent
+# calls the tool under attack": the access path is the candidate attack
+# path until runtime monitoring (Phase 2) can tell the two apart.
+STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({"guards"})
 
 # Edge kinds that carry flow_kind = "control" and data_flow_confirmed
 # = "unknown" unless a framework detector enriches them (ADR-0015).
 CONTROL_EDGE_KINDS: frozenset[str] = frozenset({
-    "uses_model", "uses_tool", "delegates_to",
+    "uses_model", "uses_tool", "provides_tool", "delegates_to",
 })
+
+# Flow kinds that find_chains traverses (ADR-0015, decision 5).
+# `structural` edges are declarations, not paths: a guardrail "guards"
+# an action but is not something execution flows along. Skipping them
+# is a semantic rule of the traversal, not a caller-facing filter
+# option.
+TRAVERSABLE_FLOW_KINDS: frozenset[str] = frozenset({"control", "data"})
 
 
 # ============================================================
