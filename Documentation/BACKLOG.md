@@ -112,13 +112,38 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.2 — Detector enrichment of `data_flow_confirmed`
 
 **Priority:** High
+**Status:** **Done** (2026-10-20)
+**Result:** `enrichment.py` with three pure helpers. LangChain: `uses_tool` → `parameter_match` if the tool is named in the system prompt; `uses_model` → `literal_only` / `parameter_match` / `unknown`. FastMCP and MCP Python: `tool_data_flow` on tool nodes (`parameter_match` / `no_args`). Normalizer copies `tool_data_flow` at two waived sites (`provides_tool` loop, `_link_mcp_entries_to_tools`). Shape unchanged on all four corpora. Prompt version stays v1.4.1.
+**Results:** dvmcp `data_edges_only` 0 → 24; mcploitable 0 → 6; NMB 0 (uses_model enriched but not on a path); FinBot 0 (path-heuristic servers, no `framework` attribute; `provides_tool` site wired but dormant, unit-tested). **Step 6 caveat closed**: `data_edges_only > 0` for the first time on a real corpus.
+**Gaps (follow-ups):**
+- FinBot: `_node_from_method` / `_body_attributes` would need to set `tool_data_flow` → new item 1.2a.2a.
+- NMB `uses_tool`: `cross_file.py` resolver does not read the system prompt → new item 1.2a.2b.
+- LangChain `Tool(...)` instances: no function node, no signature.
+- Latent upsert hazard: an explicit `"unknown"` overwrites an enriched `"data"`; no duplicate ids today → new item 1.2a.2c if needed.
+
+### 1.2a.2a — FinBot-style MCP tool enrichment
+
+**Priority:** Medium
 **Status:** Not started
-**Rationale:** ADR-0015 decision 7 declares `data_flow_confirmed` enrichable. Framework detectors know their framework's argument-passing patterns; the generic analyzer does not. Enrichment is the path to `data` edges on real projects until 1.2a.1 lands.
-**Approach:** Each framework detector may upgrade `data_flow_confirmed` on the edges it owns:
-- LangChain: if `create_agent(tools=[...])` and the agent's prompt template passes user input to a tool argument → `parameter_match`.
-- FastMCP / MCP Python: if the tool function takes a parameter that flows to a dangerous call → `parameter_match`.
-- OpenAI Agents SDK (when the detector lands): same.
-**References:** ADR-0015 decision 7; Step 6 report.
+**Rationale:** FinBot's MCP servers are path-heuristic (no `framework` attribute) and tool nodes are normalizer-created from TSA symbols. `tool_data_flow` never reaches them, so the `provides_tool` enrichment site is dormant. Closing the gap requires normalizer-side enrichment of tool nodes.
+**Approach:** In `_node_from_method` (or `_body_attributes`), set `tool_data_flow` on normalizer-created tool nodes by analysing the TSA method body (`os.remove(param)` etc.). Reuses the same rules as the detector enrichment.
+**References:** 1.2a.2 report, gap 1.
+
+### 1.2a.2b — Cross-file `uses_tool` enrichment
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** NMB's 9 `uses_tool` edges are built by `cross_file.py` (import-driven) and never read the system prompt, so they stay `control/unknown`.
+**Approach:** Extend `resolve_agent_tool_edges` to read the agent's system prompt from the same file and enrich per tool named there. Same helper as LangChain.
+**References:** 1.2a.2 report, gap 2.
+
+### 1.2a.2c — Upsert enrichment precedence
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `EdgesRepository.upsert` lets a later explicit `"unknown"` overwrite an enriched `data_flow_confirmed` (only `NULL` falls back). `flow_kind` is safe (`data` wins). No duplicate edge ids today, but the hazard is latent.
+**Approach:** Change `upsert` to prefer non-`"unknown"` over `"unknown"` on `data_flow_confirmed`, mirroring the `flow_kind` rule. Verify against the four corpora for shape stability.
+**References:** 1.2a.2 report, gap 5.
 
 ### 1.2a.3 — ORM call sites in capability patterns
 
