@@ -20,7 +20,11 @@ import json
 # Increment when prompt structure changes. Stored per chain row.
 # v1.3.0: edges carry flow_kind (and data_flow_confirmed) — ADR-0015.
 # v1.4.0: nodes carry sink_data_flow and returns_data — 1.2a.1.
-PROMPT_VERSION = "v1.4.0"
+# v1.4.1: test-file nodes are not production entry points — 1.2a.3d.
+#   Patch bump: the payload is unchanged (no new fields, no new schema);
+#   only the instructions changed, and only about reading the existing
+#   `source_file` attribute.
+PROMPT_VERSION = "v1.4.1"
 
 
 SYSTEM_PROMPT = """You are a security analyst evaluating the exploitability of attack chains in AI infrastructure.
@@ -65,6 +69,17 @@ Flow semantics (ADR-0015):
   "has_access_to" edge is "control" — weaker than a confirmed "data" edge,
   stronger than reachability alone. It is a node property, not an edge: it
   never changes an edge's "flow_kind".
+- Test files and fixtures (1.2a.3d): some nodes come from test files
+  (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) and from test
+  fixtures (setup/teardown helpers, in-test database setup). A test script
+  is not a production entry point: no external attacker reaches it, so a
+  sink reached only through test code is not an exploitable path in
+  production. Treat a chain whose entry point or intermediate nodes are
+  exclusively test-file nodes as low-confidence, unless the test exercises
+  a production code path that a real attacker could also reach. Test files
+  in the target are useful signal — they show what the code is expected to
+  do — but they are not the attack surface. Every node carries
+  `source_file`: use it to tell test code from production code.
 - The confidence you assign is your judgement; these definitions constrain
   what an edge means, not how exploitable you must find the chain.
 """
@@ -97,6 +112,11 @@ Flow semantics:
   potential data flow through the agent — weaker than a confirmed "data" edge,
   stronger than reachability alone. It is a node property and does not change
   an edge's "flow_kind".
+- Test-file nodes (1.2a.3d): voters may flag a chain as test-only (`tests/`,
+  `test_*.py`, `*_test.py`, `conftest.py`) — the nodes' `source_file` says
+  what came from the target's test suite. Weigh that signal: a chain that
+  is test-only should not receive a high final verdict unless the voters
+  give a concrete production path that a real attacker could also reach.
 """
 
 
@@ -163,6 +183,9 @@ Calibration rules:
   "data" edge. Treat it as a hypothesis to argue for or against, not as proof.
 - Distinguish production entry points from test/dev scripts; a test or CLI
   helper is not reachable by an external attacker.
+- A chain that reaches its sink only through test-file nodes (`tests/`,
+  `test_*.py`, `*_test.py`, `conftest.py`) is not a production attack path —
+  lower the confidence unless the test exercises a production code path.
 - If reachability is plausible but exploitability cannot be confirmed from the
   provided structure, prefer a low-confidence verdict over an invented scenario.
 - The confidence you assign is your judgement. These definitions constrain what
@@ -276,6 +299,16 @@ Flow semantics (ADR-0015):
   "has_access_to" edge is "control" — weaker than a confirmed "data" edge,
   stronger than reachability alone. It is a node property, not an edge: it
   never changes an edge's "flow_kind".
+- Test files and fixtures (1.2a.3d): some nodes come from test files
+  (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) and from test
+  fixtures (setup/teardown helpers, in-test database setup). A test script
+  is not a production entry point: no external attacker reaches it, so a
+  sink reached only through test code is not an exploitable path in
+  production. Read each node's `source_file` in step 1: if the entry point
+  and the intermediate nodes are all test-file nodes, treat the chain as
+  low-confidence unless the test exercises a production code path that a
+  real attacker could also reach. Test files are useful signal about what
+  the code is expected to do, but they are not the attack surface.
 - The confidence you assign is your judgement; these definitions constrain what
   an edge means, not how exploitable you must find the chain.
 """
