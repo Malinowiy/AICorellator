@@ -9,10 +9,12 @@ import pytest
 from aicorellator import patterns
 from aicorellator.parsing.capability_extractor import _matches_any, extract
 from aicorellator.patterns import (
+    CAPABILITY_DB_STATEMENT_CALLS,
     CAPABILITY_ORM_READS_DB,
     CAPABILITY_ORM_WRITES_DB,
     CAPABILITY_READS_DB,
     CAPABILITY_WRITES_DB,
+    ORM_COMMIT_CALLS,
 )
 
 
@@ -482,3 +484,123 @@ def vendors(self):
     caps = extract(path, "a.py").symbols[0].capabilities
     assert "reads_db" in caps
     assert "session.query" in CAPABILITY_READS_DB
+
+
+# --- Leading-underscore qualifiers (1.2a.3e) ---
+# A private attribute is the same object as a public one, so the
+# matcher ignores leading underscores on the receiver: `_db` matches
+# `db`, `_conn` matches `conn`, `_cur` matches `cur`. mcploitable
+# writes `_conn.commit()` and `cur.execute(...)` throughout and was
+# invisible to the ORM lists before this. The verb is never
+# normalized — `db._delete` is a private method, not the public ORM
+# `delete`.
+
+def test_private_db_qualifier_delete_is_a_write(tmp_path: Path) -> None:
+    """`self._db.delete(f)` is `self.db.delete(f)` on a private session."""
+    path = _write(tmp_path, "a.py", """
+def purge(self, f):
+    self._db.delete(f)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "writes_db" in caps
+
+
+def test_private_session_qualifier_commit_is_a_write(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def save(self):
+    self._session.commit()
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "writes_db" in caps
+
+
+def test_double_underscore_qualifier_is_normalized(tmp_path: Path) -> None:
+    """`self.__db` is class-private: name mangling rewrites it to
+    `_Class__db` at runtime, but the AST holds the source spelling, so
+    the double underscore normalizes to `db` like any other."""
+    path = _write(tmp_path, "a.py", """
+def purge(self, f):
+    self.__db.delete(f)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "writes_db" in caps
+
+
+def test_private_repo_qualifier_get_is_a_read(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def load(self, id):
+    return self._repo.get(id)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "reads_db" in caps
+
+
+def test_private_verb_is_not_normalized(tmp_path: Path) -> None:
+    """`db._delete` is a private method, not the public ORM `delete`."""
+    path = _write(tmp_path, "a.py", """
+def purge(self, f):
+    self.db._delete(f)
+""")
+    result = extract(path, "a.py")
+    assert all(
+        "writes_db" not in s.capabilities for s in result.symbols
+    )
+
+
+def test_underscore_normalization_preserves_exact_matching() -> None:
+    """The new rule is additive: nothing that matched before stops."""
+    assert _matches_any("self.db.delete", ("db.delete",))
+    assert _matches_any("self.db.get_user", ("db.get*",))
+    assert not _matches_any("notrepo.get_file", ("repo.get*",))
+    # Underscores are stripped, not ignored: a different name stays
+    # a different name.
+    assert not _matches_any("_notdb.get_file", ("db.get*",))
+    assert not _matches_any("_myrepository.get", ("repository.get",))
+
+
+def test_private_conn_commit_is_a_commit_but_not_a_write() -> None:
+    """1.2a.3c kept `conn.commit` out of the write capabilities; the
+    underscore normalization reaches the Flow Analyzer's commit list
+    without changing that decision (1.2a.3e)."""
+    assert _matches_any("self._conn.commit", ORM_COMMIT_CALLS)
+    assert not _matches_any("self._conn.commit", CAPABILITY_WRITES_DB)
+
+
+# --- Cursor abbreviation (1.2a.3e) ---
+
+def test_matches_any_cursor_abbreviation() -> None:
+    """`cur` is the usual abbreviation for a cursor object; the verb
+    that follows decides how the statement is classified."""
+    assert _matches_any("cur.execute", CAPABILITY_DB_STATEMENT_CALLS)
+    assert _matches_any("cur.executemany", CAPABILITY_DB_STATEMENT_CALLS)
+    # The receiver may be private, like any other qualifier.
+    assert _matches_any("_cur.execute", CAPABILITY_DB_STATEMENT_CALLS)
+    assert _matches_any("_cursor.execute", CAPABILITY_DB_STATEMENT_CALLS)
+    # Only the two statement shapes — `cur.rowcount` is an attribute,
+    # and a different name is still a different name.
+    assert not _matches_any("cur.fetchall", CAPABILITY_DB_STATEMENT_CALLS)
+    assert not _matches_any("mycur.execute", CAPABILITY_DB_STATEMENT_CALLS)
+
+
+def test_private_cursor_execute_with_sql_keyword_is_a_read(
+    tmp_path: Path,
+) -> None:
+    """mcploitable's `cur = _conn.cursor(); cur.execute("SELECT ...")`."""
+    path = _write(tmp_path, "a.py", """
+def count(self, ticket_id):
+    _cur.execute("SELECT COUNT(*) FROM support_tickets")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "reads_db" in caps
+
+
+def test_cursor_executemany_with_sql_keyword_is_a_write(
+    tmp_path: Path,
+) -> None:
+    """mcploitable's seeding shape: `cur.executemany("INSERT ...", rows)`."""
+    path = _write(tmp_path, "a.py", """
+def seed(self, rows):
+    cur.executemany("INSERT INTO tokens (service, token) VALUES (?, ?)", rows)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "writes_db" in caps

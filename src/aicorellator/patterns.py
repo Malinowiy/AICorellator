@@ -357,6 +357,15 @@ CAPABILITY_WRITES_FILESYSTEM: tuple[str, ...] = (
 # Every pattern is matched with trailing-segment logic
 # (capability_extractor._matches_any), so `db.delete` matches
 # `self.db.delete` and `session.db.delete`, but not `self.delete`.
+#
+# Leading underscores on the receiver are ignored (1.2a.3e): `_db`,
+# `_session`, `_conn` and `_cur` match `db`, `session`, `conn` and
+# `cur`. A private attribute is the same object as a public one, and
+# mcploitable writes `_conn.commit()` / `_cur.execute(...)`
+# throughout. The verb is never normalized — `db._delete` is a
+# private method, not the public ORM `delete`. See
+# capability_extractor._qualifier_matches.
+#
 # The two-segment shape is deliberate: a bare `delete`, `add`,
 # `save`, `get`, or `query` is far too common in unrelated code
 # (ADR-0009 — keep the false-positive rate controlled).
@@ -385,6 +394,8 @@ CAPABILITY_DB_STATEMENT_CALLS: tuple[str, ...] = (
     "connection.execute",
     "session.execute",
     "engine.execute",
+    "cur.execute",          # `cur` — the usual cursor abbreviation
+    "cur.executemany",      # (1.2a.3e); same statement-call shape
     "text",                 # SQLAlchemy
 )
 

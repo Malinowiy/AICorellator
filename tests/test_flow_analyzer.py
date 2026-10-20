@@ -754,6 +754,55 @@ def test_commit_of_a_qualifier_outside_the_capabilities_counts() -> None:
     """
     assert _sink_body(src) == "parameter_match"
 
+# --- Private qualifiers (1.2a.3e) ---
+
+def test_commit_call_accepts_a_private_qualifier() -> None:
+    """`_conn.commit` is `conn.commit` on a private connection — the
+    spelling mcploitable uses throughout (1.2a.3e)."""
+    src = """
+    def seed(self):
+        self._conn.commit()
+    """
+    call = _sink_call(_func(src), "commit")
+    assert _is_commit_call(call)
+
+
+def test_private_conn_commit_with_parameter_is_parameter_match() -> None:
+    """mcploitable's `create_ticket(customer, subject, body)` shape: the
+    body's persistence step is a `_conn.commit()` the capability
+    extractor does not treat as a write, so only the commit exception
+    can carry the data — and it does once the underscore is ignored
+    (1.2a.3e)."""
+    src = """
+    def create_ticket(self, customer, body):
+        self._conn.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_private_conn_commit_without_parameters_is_unknown() -> None:
+    """The 1.2a.3c edge-case rule is unaffected by the normalization: a
+    parameterless sink has no parameter-derived state to persist."""
+    src = """
+    def flush(self):
+        self._conn.commit()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_private_commit_does_not_outrank_a_literal_only_body() -> None:
+    """`self._db.add("literal")` + `self._conn.commit()` — the write is a
+    constant, the commit still counts (the accepted 1.2a.3c
+    consequence), now also for a private qualifier."""
+    src = """
+    def seed(self, tag):
+        self._db.add("literal")
+        self._conn.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+
 
 def test_subprocess_run_with_empty_string_stays_literal_only() -> None:
     """A commit-shaped exception must not widen literal calls (1.2a.3c)."""

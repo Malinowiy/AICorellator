@@ -304,6 +304,12 @@ def _matches_any(dotted: str, patterns: tuple[str, ...]) -> bool:
     To avoid matching too broadly, patterns longer than one segment
     are matched on the trailing segments.
 
+    Leading underscores on the receiver are normalized away (1.2a.3e):
+    `_db.delete` matches `db.delete`, `_conn.commit` matches
+    `conn.commit`, and `_cur.execute` matches `cur.execute` — a private
+    attribute is the same object as a public one. Nothing else about
+    the qualifier changes; the two matchers below share the rule.
+
     A pattern ending in `*` is a verb family (1.2a.3b): the qualifier
     segments still have to match exactly, and the final segment only
     has to start with the verb. Used by the ORM read/write lists
@@ -320,28 +326,61 @@ def _matches_any(dotted: str, patterns: tuple[str, ...]) -> bool:
             if _matches_prefix(dotted, p[:-1]):
                 return True
             continue
-        if dotted.endswith("." + p):
-            return True
-        # Single-segment pattern: match the last segment only.
-        if "." not in p and dotted.endswith("." + p):
+        if _matches_exact(dotted, p):
             return True
     return False
+
+
+def _matches_exact(dotted: str, pattern: str) -> bool:
+    """True if `dotted` ends with `pattern` as whole dotted segments.
+
+    The same trailing-segment rule as `_matches_prefix`, with equality
+    on the verb instead of a prefix test — a pattern without `*` names
+    the method exactly:
+
+        self.db.delete      vs db.delete  → True
+        session.db.delete   vs db.delete  → True   (trailing segments)
+        self._db.delete     vs db.delete  → True   (1.2a.3e)
+        self.db.delete_file vs db.delete  → False  (exact verb required)
+        self.delete         vs db.delete  → False  (no qualifier segment)
+        notdb.delete        vs db.delete  → False  (qualifier differs)
+
+    A single-segment pattern (`open`, `text`) has no qualifier, so
+    there is nothing to normalize: it has to be the final segment.
+    """
+    if "." not in pattern:
+        return dotted.endswith("." + pattern)
+    qualifier, verb = pattern.rsplit(".", 1)
+    segments = dotted.split(".")
+    if len(segments) < 2:
+        return False
+    if segments[-1] != verb:
+        return False
+    return _qualifier_matches(segments[:-1], qualifier.split("."))
 
 
 def _matches_prefix(dotted: str, prefix: str) -> bool:
     """True if `dotted` ends with `prefix` as a whole dotted prefix.
 
-    `prefix` is a `<qualifier>.<verb>` pattern (no `*`). The qualifier
-    segments must match exactly; the final segment must start with the
-    verb (1.2a.3b):
+    `prefix` is a `<qualifier>.<verb>` pattern (no `*`). The final
+    segment must start with the verb (1.2a.3b) and the qualifier must
+    match under `_qualifier_matches` (leading underscore ignored,
+    1.2a.3e):
 
-        repo.get_file     vs repo.get → True
-        repo.get          vs repo.get → True
-        self.db.get_user  vs db.get   → True
-        repo.get_file     vs repo.create → False
-        notrepo.get_file  vs repo.get → False  (qualifier differs)
-        self.get_file     vs repo.get → False  (no qualifier segment)
-        get_file          vs repo.get → False  (too short)
+        repo.get_file       vs repo.get   → True
+        repo.get            vs repo.get   → True
+        self.db.get_user    vs db.get     → True
+        self._repo.get_file vs repo.get   → True  (private receiver)
+        repo.get_file       vs repo.create → False
+        db._delete          vs db.delete  → False (private verb)
+        notrepo.get_file    vs repo.get   → False  (qualifier differs)
+        _notdb.get_file     vs db.get     → False  (underscore only)
+        self.get_file       vs repo.get   → False  (no qualifier segment)
+        get_file            vs repo.get   → False  (too short)
+
+    Only the qualifier is normalized, never the verb: this wildcard form
+    is a verb family, and `db._delete` names a private method rather
+    than extending the public ORM `delete`.
     """
     qualifier, verb = prefix.rsplit(".", 1)
     segments = dotted.split(".")
@@ -349,11 +388,52 @@ def _matches_prefix(dotted: str, prefix: str) -> bool:
         return False
     if not segments[-1].startswith(verb):
         return False
-    head = segments[:-1]
-    qualifier_segments = qualifier.split(".")
+    return _qualifier_matches(segments[:-1], qualifier.split("."))
+
+
+def _qualifier_matches(
+    head: list[str], qualifier_segments: list[str]
+) -> bool:
+    """True if `head` ends with the pattern's qualifier segments.
+
+    `_matches_exact` and `_matches_prefix` differ only in how they treat
+    the verb; the qualifier rule is shared, and this is it: the trailing
+    segments of the dotted name must equal the pattern's qualifier,
+    except that leading underscores on the first matched segment are
+    ignored (1.2a.3e). `self._db.delete`, `db.delete` and
+    `session._db.delete` all reach `db.delete`.
+
+    An underscore on the receiver is a visibility convention, not part
+    of its identity: `_db` is a database session the author marked
+    private, and mcploitable writes `_conn.commit()` and
+    `_cur.execute(...)` throughout. `__db` is deliberate too — the AST
+    holds the source spelling, and name mangling rewrites a
+    class-private `self.__db` to `_Class__db` only at runtime — so
+    `self.__db.delete` matches `db.delete`. (The mangled spelling is
+    never written in source, and stripping one underscore from it
+    leaves `Class__db`, which matches nothing.)
+
+    The normalization is confined to the first matched segment: the
+    receiver itself for a single-segment qualifier, and its leftmost
+    segment for a multi-segment one (`os.environ.get`). Nothing else
+    changes — `not_db.delete` still fails, and a qualifier written
+    without underscores matches exactly as before.
+    """
     if len(head) < len(qualifier_segments):
         return False
-    return head[-len(qualifier_segments):] == qualifier_segments
+    tail = head[-len(qualifier_segments):]
+    normalized = [_strip_leading_underscores(tail[0]), *tail[1:]]
+    return normalized == qualifier_segments
+
+
+def _strip_leading_underscores(segment: str) -> str:
+    """Return `segment` without its leading underscores (1.2a.3e).
+
+    `_db` and `__db` both become `db`; a segment with no leading
+    underscore is returned unchanged. Only the underscore is
+    stripped — `not_db` stays `not_db`.
+    """
+    return segment.lstrip("_")
 
 
 def _has_shell_keyword(call: ast.Call) -> bool:
