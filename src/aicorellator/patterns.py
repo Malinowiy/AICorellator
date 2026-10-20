@@ -414,6 +414,21 @@ CAPABILITY_ORM_READS_DB: tuple[str, ...] = (
     "repo.list",
     "repo.filter",
     "repo.all",
+    # Cursor fetches (1.2a.3h). A fetch is the read half of a statement
+    # call: `cur.execute("SELECT ...")` runs the query and
+    # `cur.fetchone()` collects the rows, so the fetch is where the data
+    # actually arrives. It cannot live in CAPABILITY_DB_STATEMENT_CALLS:
+    # that list is routed through the SQL-keyword branch, and a fetch
+    # has no SQL string to inspect (the query was executed earlier) —
+    # the method name is the only evidence there is, which is exactly
+    # what this list is for. `cursor` is spelled out because a cursor is
+    # stored on `self.cursor` as often as in a local `cur`.
+    "cur.fetchone",
+    "cur.fetchall",
+    "cur.fetchmany",
+    "cursor.fetchone",
+    "cursor.fetchall",
+    "cursor.fetchmany",
     # Verb families (1.2a.3b) — a qualifier plus a read verb, any noun.
     "db.get*", "db.find*", "db.list*", "db.filter*", "db.all*",
     "session.get*", "session.find*", "session.list*", "session.filter*",

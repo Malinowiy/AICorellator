@@ -1544,3 +1544,47 @@ def test_class_sink_nested_function_inside_method_counts() -> None:
             inner()
     """
     assert _class_sink(src) == "parameter_match"
+
+
+# ============================================================
+# Cursor fetch reads (1.2a.3h)
+# ============================================================
+# A fetch gives `reads_db` (patterns.CAPABILITY_ORM_READS_DB), and
+# `reads_db` is deliberately not in `SINK_CAPABILITIES`: a fetch is
+# read evidence, not sink evidence. So a fetch never makes a body
+# dangerous, and these tests pin that the analyzer stays honest.
+
+def test_fetch_only_body_has_no_sink_evidence() -> None:
+    """`cursor.fetchall()` alone is not a dangerous call → `unknown`.
+
+    Such a body is not a sink node at all, so this path is unreachable
+    in a scan; the test pins the analyzer's logic, not a corpus shape.
+    """
+    src = """
+    def list_rows(self):
+        return cursor.fetchall()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_fetch_after_a_read_statement_has_no_sink_evidence() -> None:
+    """The realistic shape: `execute("SELECT ...")` + `fetchall()`.
+    Both are reads, so neither is a dangerous call."""
+    src = """
+    def list_rows(self):
+        cursor.execute("SELECT * FROM rows")
+        return cursor.fetchall()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_fetch_does_not_change_a_write_sinks_data_flow() -> None:
+    """On a real sink the fetch sits next to the write: it adds
+    `reads_db` to the node's capabilities but contributes no argument
+    evidence, so the value is still the write's `parameter_match`."""
+    src = """
+    def insert_and_read(self, rows):
+        self.db.add(rows)
+        return cursor.fetchall()
+    """
+    assert _sink_body(src) == "parameter_match"

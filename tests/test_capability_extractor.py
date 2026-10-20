@@ -577,7 +577,9 @@ def test_matches_any_cursor_abbreviation() -> None:
     assert _matches_any("_cur.execute", CAPABILITY_DB_STATEMENT_CALLS)
     assert _matches_any("_cursor.execute", CAPABILITY_DB_STATEMENT_CALLS)
     # Only the two statement shapes — `cur.rowcount` is an attribute,
-    # and a different name is still a different name.
+    # and a different name is still a different name. (`cur.fetchall`
+    # is a read since 1.2a.3h, but it lives in CAPABILITY_ORM_READS_DB:
+    # a fetch carries no SQL string for the keyword branch to inspect.)
     assert not _matches_any("cur.fetchall", CAPABILITY_DB_STATEMENT_CALLS)
     assert not _matches_any("mycur.execute", CAPABILITY_DB_STATEMENT_CALLS)
 
@@ -604,3 +606,90 @@ def seed(self, rows):
 """)
     caps = extract(path, "a.py").symbols[0].capabilities
     assert "writes_db" in caps
+
+
+# --- Cursor fetch reads (1.2a.3h) ---
+# A fetch is the read half of a statement call: `cur.execute("SELECT ...")`
+# runs the query, `cur.fetchone()` collects the rows. It cannot be a
+# statement call — there is no SQL string on the fetch to inspect, the
+# query was executed earlier — so the method name is the evidence and the
+# patterns live in CAPABILITY_ORM_READS_DB.
+
+def test_cursor_fetch_calls_are_reads(tmp_path: Path) -> None:
+    """Every cursor fetch shape gives `reads_db` and nothing else."""
+    for call in (
+        "cur.fetchone()",
+        "cur.fetchall()",
+        "cur.fetchmany(10)",
+        "cursor.fetchall()",
+        "self.cursor.fetchone()",
+    ):
+        path = _write(tmp_path, "a.py", f"""
+def read_rows(self):
+    {call}
+""")
+        caps = extract(path, "a.py").symbols[0].capabilities
+        assert "reads_db" in caps, call
+        assert "writes_db" not in caps, call
+
+
+def test_private_cursor_fetch_is_a_read(tmp_path: Path) -> None:
+    """`_cur` / `_cursor` are cursors too — the 1.2a.3e qualifier rule
+    reaches the fetch patterns without a matcher change."""
+    path = _write(tmp_path, "a.py", """
+def read_rows(self):
+    _cur.fetchone()
+    _cursor.fetchall()
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "reads_db" in caps
+
+
+def test_fetch_on_a_non_cursor_receiver_is_not_a_read(
+    tmp_path: Path,
+) -> None:
+    """A row-like object is not a cursor: the qualifier is the evidence.
+    `open(...)` is the anchor — it keeps the symbol in the result so the
+    assertion is not an empty-set pass."""
+    path = _write(tmp_path, "a.py", """
+def read_rows(self, row, queue):
+    row.fetchone()
+    queue.fetchall()
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_fetch_next_to_a_write_gives_both_capabilities(
+    tmp_path: Path,
+) -> None:
+    """The real effect: a sink that writes and reads back its rows now
+    carries `writes_db` **and** `reads_db` — the prompt can weigh both."""
+    path = _write(tmp_path, "a.py", """
+def insert_and_read(self, rows):
+    cursor.execute("INSERT INTO t VALUES (1)")
+    cursor.executemany("INSERT INTO t VALUES (?)", rows)
+    return cursor.fetchall()
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert "writes_db" in caps
+    assert "reads_db" in caps
+
+
+def test_matches_any_cursor_fetch_patterns() -> None:
+    """The fetch patterns are reads, not statement calls (1.2a.3h)."""
+    for target in (
+        "cur.fetchone", "cur.fetchall", "cur.fetchmany",
+        "cursor.fetchone", "cursor.fetchall", "cursor.fetchmany",
+        "_cur.fetchone", "self.cursor.fetchall",
+    ):
+        assert _matches_any(target, CAPABILITY_ORM_READS_DB), target
+        # Unchanged: a fetch is not a statement call.
+        assert not _matches_any(target, CAPABILITY_DB_STATEMENT_CALLS), target
+    # A different receiver is still a different receiver, and
+    # `cursor.description` / `cursor.rowcount` are metadata, not reads.
+    assert not _matches_any("row.fetchone", CAPABILITY_ORM_READS_DB)
+    assert not _matches_any("mycur.fetchall", CAPABILITY_ORM_READS_DB)
+    assert not _matches_any("cursor.description", CAPABILITY_ORM_READS_DB)
+    assert not _matches_any("cursor.rowcount", CAPABILITY_ORM_READS_DB)
