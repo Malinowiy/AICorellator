@@ -136,13 +136,13 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Approach:** In `_classify_argument`, treat a collection whose elements are all constants as `literal_only`. Nested collections recurse. Empty collections count as literal.
 **References:** Step 7 report, limitation 2.
 
-### 1.2a.5 — Class-body sink variant
+### 1.2a.5 — Class-body sink analyzer
 
 **Priority:** Medium
-**Status:** Not started
-**Rationale:** dvmcp's `DVMCPClient`, `VulnerableMCPServer`, `VulnerableChatAssistant` are class-kind sinks with no `FunctionNode` body. The analyzer takes a function and cannot see them. A class-body variant would inspect `__init__` and `__call__` (and class-level statements) for dangerous calls.
-**Approach:** `analyze_sink_class(cls: ast.ClassDef) -> str`. Reuse `analyze_sink_body` for `__init__` and `__call__`; merge results with the same non-linear ranking. Wire when the sink node's source resolves to a class, not a function.
-**References:** Step 7 report, limitation 4.
+**Status:** **Done** (2026-10-20)
+**Result:** `analyze_sink_class` inspects every direct method of the class plus class-level statements (nested classes excluded; nested functions inside methods count). Class sink = container of callable entry points; the dangerous call receives the caller's data in the method the caller invokes, not in `__init__`.
+**Results:** FinBot `sink_data_flow` 81/2/31 → 101/2/11 (20 of 21 class sinks → `parameter_match`). dvmcp 4/4/4 → 6/4/2. mcploitable 4/1/3 → 5/1/2. NMB unchanged (no class sinks). Shape untouched everywhere; function-kind sinks unchanged.
+**Remaining `unknown` on FinBot (11):** `VulnerableChatAssistant` (f-string/dict arguments, ADR-0001 name-based limits → 1.2a.3g); `TestLabsGuardrailConfigRepository` (no-argument `delete_config`, 1.2a.3c rule); class nodes with no dangerous call in any method or at class level.
 
 ### 1.2a.3b — repo.<verb>_<noun> handling
 
