@@ -154,10 +154,10 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3c — db.commit()-only sinks
 
 **Priority:** Medium
-**Status:** Not started
-**Rationale:** 67 of FinBot's 102 sinks are `unknown`, dominated by bodies that call only `db.commit()`. The no-argument rule from 1.2a.1 (a dangerous call with no arguments is skipped) is correct for `subprocess.run()` with no args, but `db.commit()` *is* the dangerous operation — it persists whatever the ORM session holds, which is the result of prior state changes. The rule needs refinement for the commit case.
-**Approach:** Treat a bare `db.commit()` / `session.commit()` (no arguments) as a dangerous operation with `parameter_match` semantics — the sink's own state (set by prior calls) is what flows. This is a deliberate loosening of the no-argument rule for commit specifically. Do not change the rule for `subprocess.run()` with no args (which is genuinely safe).
-**References:** Step 8 report, limitation 2.
+**Status:** **Done** (2026-10-20)
+**Result:** A bare `db.commit()` / `session.commit()` / `repo.commit()` / `conn.commit()` in a sink body is `parameter_match`. Exception lives in `analyze_sink_body`, not in `_dangerous_calls`. `ORM_COMMIT_CALLS` in `patterns.py` (not merged into `CAPABILITY_ORM_WRITES_DB`). Edge case: parameterless sink with commit-only body stays `unknown`.
+**FinBot:** 43/69/2 → 81/31/2 (38 sinks changed, all `unknown → parameter_match`, 0 shape change). NMB/dvmcp/mcploitable unchanged.
+**Follow-ups:** 1.2a.3e (leading-underscore qualifier), 1.2a.3f (function resolution by `(name, line_start)`), 1.2a.3g (attribute-based dangerous calls). Class-kind sinks are 1.2a.5.
 
 ### 1.2a.3d — Test-file sinks
 
@@ -167,6 +167,30 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Decision (current):** do not exclude `tests/`. Instead, add a note to the prompt: test scripts and test fixtures are not production entry points, and chains that reach a sink only through test code should be treated as low-confidence unless the test exercises a production path.
 **Approach (when picked up):** add the prompt note. Optionally add an attribute `is_test_code: true` on nodes whose source file matches `tests/`, `test_*.py`, `*_test.py`. Do not change discovery.
 **References:** Step 8 report, limitation 3.
+
+### 1.2a.3e — Leading-underscore qualifier normalization
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** `_conn.commit()`, `_db.commit()`, `_session.commit()`, `_repo.get()` — leading underscore defeats exact-qualifier matching. mcploitable uses `_conn.commit()` throughout and shows no delta on 1.2a.3c because of it. Also `cur.execute(...)` vs `cursor.execute(...)` (abbreviated qualifier).
+**Approach:** Normalize a leading `_` off the qualifier segment inside `_matches_prefix` / `_matches_any`. Touches capability extraction, so it must be verified against all four corpora for over-match. Optionally add `cur.execute` / `cur.executemany` / `cur.fetchone` / `cur.fetchall` to the DB statement call patterns.
+**References:** 1.2a.3c report, finding 1.
+
+### 1.2a.3f — Function resolution by (name, line_start)
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `_index_functions` is keyed by function name, first-definition-wins. When a module defines the same name twice (`toggle_enabled` at finbot/core/data/repositories.py:664 and :1426), the body analysis uses the wrong body. 1 of 38 sink changes in 1.2a.3c is this artifact.
+**Approach:** Key `_index_functions` on `(name, line_start)` or `(name, line_start, end)`, and resolve a sink/tool node to the function definition that contains its `line_start`. Touches all three analyzers (flow, sink, tool).
+**References:** 1.2a.3c report, finding 2.
+
+### 1.2a.3g — Attribute-based dangerous calls
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** 10 of FinBot's remaining 31 unknown sinks call dangerous operations via attribute chains (`self.adapter.run(...)`, `self.client.post(...)`) or have no argument-level evidence at all. The capability patterns cover the well-known module-level functions (`subprocess.run`, `os.remove`, `cursor.execute`) but not class-attribute chains.
+**Approach:** Deferred — needs a decision on how deep to chase attribute chains without turning the classifier into a type-inference engine. ADR-0001 (no full dataflow) suggests a conservative approach: only well-known adapter shapes (`self.<known-adapter>.<method>`), not arbitrary attribute chains.
+**References:** 1.2a.3c report, finding 3.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
