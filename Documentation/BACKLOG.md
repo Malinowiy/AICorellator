@@ -177,10 +177,10 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3f — Function resolution by (name, line_start)
 
 **Priority:** Low
-**Status:** Not started
-**Rationale:** `_index_functions` is keyed by function name, first-definition-wins. When a module defines the same name twice (`toggle_enabled` at finbot/core/data/repositories.py:664 and :1426), the body analysis uses the wrong body. 1 of 38 sink changes in 1.2a.3c is this artifact.
-**Approach:** Key `_index_functions` on `(name, line_start)` or `(name, line_start, end)`, and resolve a sink/tool node to the function definition that contains its `line_start`. Touches all three analyzers (flow, sink, tool).
-**References:** 1.2a.3c report, finding 2.
+**Status:** **Done** (2026-10-20)
+**Result:** `_index_functions` / `_index_classes` keyed by `(name, line_start)`, every definition kept. `_body_attributes` resolves to the definition containing the node's `line_start` (exact, then containing, then closest preceding, then name fallback). Detector nodes (`line_start = None`) take the name fallback, preserving old behaviour. Edge loop uses the same resolver; verified edge-neutral.
+**Results:** FinBot 101/2/11 → 100/2/12. One sink changed: `toggle_enabled` @ `:1426` was reading the `:664` body (`parameter_match` artifact), now reads its own parameterless commit-only body (`unknown`, per 1.2a.3c). NMB/dvmcp/mcploitable unchanged.
+**Not taken:** "closest following" rule — never fires on the four corpora; defensive only.
 
 ### 1.2a.3g — Attribute, f-string, and composite argument classification
 
