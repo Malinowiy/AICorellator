@@ -169,7 +169,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3e — Leading-underscore qualifier normalization
 
 **Priority:** Medium
-**Status:** Not started
+**Status:** **Done** (2026-10-20)
 **Rationale:** `_conn.commit()`, `_db.commit()`, `_session.commit()`, `_repo.get()` — leading underscore defeats exact-qualifier matching. mcploitable uses `_conn.commit()` throughout and shows no delta on 1.2a.3c because of it. Also `cur.execute(...)` vs `cursor.execute(...)` (abbreviated qualifier).
 **Approach:** Normalize a leading `_` off the qualifier segment inside `_matches_prefix` / `_matches_any`. Touches capability extraction, so it must be verified against all four corpora for over-match. Optionally add `cur.execute` / `cur.executemany` / `cur.fetchone` / `cur.fetchall` to the DB statement call patterns.
 **References:** 1.2a.3c report, finding 1.
@@ -189,6 +189,14 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Rationale:** 10 of FinBot's remaining 31 unknown sinks call dangerous operations via attribute chains (`self.adapter.run(...)`, `self.client.post(...)`) or have no argument-level evidence at all. The capability patterns cover the well-known module-level functions (`subprocess.run`, `os.remove`, `cursor.execute`) but not class-attribute chains.
 **Approach:** Deferred — needs a decision on how deep to chase attribute chains without turning the classifier into a type-inference engine. ADR-0001 (no full dataflow) suggests a conservative approach: only well-known adapter shapes (`self.<known-adapter>.<method>`), not arbitrary attribute chains.
 **References:** 1.2a.3c report, finding 3.
+
+### 1.2a.3h — Cursor fetch reads
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `cur.fetchone` / `cur.fetchall` / `cur.fetchmany` are inert in `CAPABILITY_DB_STATEMENT_CALLS` — that list only fires through `CAPABILITY_READS_DB` / `WRITES_DB`, which need a SQL string literal. Counting cursor fetches as reads belongs in `CAPABILITY_ORM_READS_DB` (the method name is the evidence).
+**Approach:** Add `cur.fetchone`, `cur.fetchall`, `cur.fetchmany` to `CAPABILITY_ORM_READS_DB`. Verify over-match on all four corpora.
+**References:** 1.2a.3e report, cursor abbreviation decision.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
