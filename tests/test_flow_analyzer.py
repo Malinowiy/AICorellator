@@ -413,6 +413,38 @@ def test_sink_list_argument_falls_back_to_unknown() -> None:
     assert _sink_body(src) == "unknown"
 
 
+def test_sink_orm_delete_with_parameter() -> None:
+    """The FinBot `delete_file` shape: the sink parameter reaches the
+    ORM delete call (1.2a.3)."""
+    src = """
+    def delete_file(self, f):
+        self.db.delete(f)
+        self.db.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_orm_delete_with_local_var() -> None:
+    """A local variable derived from the sink parameter is still data."""
+    src = """
+    def delete_file(self, file_id):
+        record = self.db.query(file_id).first()
+        self.db.delete(record)
+        self.db.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_orm_delete_with_literal() -> None:
+    """Only a constant reaches the ORM delete call → literal_only."""
+    src = """
+    def purge(self):
+        self.db.delete("literal-id")
+        self.db.commit()
+    """
+    assert _sink_body(src) == "literal_only"
+
+
 # ============================================================
 # Tool return analyzer (1.2a.1)
 # ============================================================

@@ -34,6 +34,8 @@ from ..patterns import (
     CAPABILITY_EXECUTES_SHELL,
     CAPABILITY_HTTP_EGRESS,
     CAPABILITY_INVOKES_MCP_TOOL,
+    CAPABILITY_ORM_READS_DB,
+    CAPABILITY_ORM_WRITES_DB,
     CAPABILITY_READS_DB,
     CAPABILITY_READS_ENV,
     CAPABILITY_READS_FILESYSTEM,
@@ -219,9 +221,17 @@ def _classify_call(call: ast.Call) -> set[str]:
         caps.add("writes_filesystem")
 
     # database
-    if _matches_any(target, CAPABILITY_READS_DB):
+    if _matches_any(target, CAPABILITY_ORM_WRITES_DB):
+        # ORM session / repository write (1.2a.3): there is no SQL
+        # text to inspect — the method name itself is the evidence.
+        # Checked first: `db.delete("id")` is a write, not a read.
+        caps.add("writes_db")
+    elif _matches_any(target, CAPABILITY_READS_DB) or _matches_any(
+        target, CAPABILITY_WRITES_DB
+    ):
         sql = _first_string_arg(call)
         if sql is not None:
+            # Statement call site — the SQL keyword decides.
             upper = sql.upper()
             if any(kw in upper for kw in SQL_WRITE_KEYWORDS):
                 caps.add("writes_db")
@@ -230,6 +240,9 @@ def _classify_call(call: ast.Call) -> set[str]:
             else:
                 # Unknown SQL — assume read (safer default)
                 caps.add("reads_db")
+        elif _matches_any(target, CAPABILITY_ORM_READS_DB):
+            # ORM read: no SQL text, the method name is the evidence.
+            caps.add("reads_db")
 
     # network
     if _matches_any(target, CAPABILITY_HTTP_EGRESS):

@@ -343,22 +343,88 @@ CAPABILITY_WRITES_FILESYSTEM: tuple[str, ...] = (
     "os.makedirs",
 )
 
-CAPABILITY_READS_DB: tuple[str, ...] = (
-    "cursor.execute",       # requires SQL prefix check
+# --- Database call sites ---
+# Two families, with different evidence for read vs write:
+#
+#   1. Statement call sites — the SQL text is the first string
+#      argument, so the SQL keyword (SELECT / INSERT / UPDATE /
+#      DELETE / ...) decides. See SQL_READ_KEYWORDS and
+#      SQL_WRITE_KEYWORDS.
+#   2. ORM session and repository methods — there is no SQL text
+#      at all; the method name itself decides (`db.delete` is a
+#      write, `db.query` is a read). Added by 1.2a.3.
+#
+# Every pattern is matched with trailing-segment logic
+# (capability_extractor._matches_any), so `db.delete` matches
+# `self.db.delete` and `session.db.delete`, but not `self.delete`.
+# The two-segment shape is deliberate: a bare `delete`, `add`,
+# `save`, `get`, or `query` is far too common in unrelated code
+# (ADR-0009 — keep the false-positive rate controlled).
+
+CAPABILITY_DB_STATEMENT_CALLS: tuple[str, ...] = (
+    "cursor.execute",       # requires SQL keyword check
     "connection.execute",
     "session.execute",
-    "session.query",
     "engine.execute",
     "text",                 # SQLAlchemy
 )
 
+CAPABILITY_ORM_READS_DB: tuple[str, ...] = (
+    "db.query",
+    "db.get",
+    "session.query",
+    "session.get",
+    "repository.get",
+    "repository.find",
+    "repository.list",
+    "repository.filter",
+    "repository.all",
+    "repo.get",
+    "repo.find",
+    "repo.list",
+    "repo.filter",
+    "repo.all",
+)
+
+CAPABILITY_ORM_WRITES_DB: tuple[str, ...] = (
+    "db.add",
+    "db.add_all",
+    "db.delete",
+    "db.commit",
+    "db.flush",
+    "db.merge",
+    "db.bulk_save_objects",
+    "db.bulk_insert_mappings",
+    "session.add",
+    "session.add_all",
+    "session.delete",
+    "session.commit",
+    "session.flush",
+    "session.merge",
+    "session.bulk_save_objects",
+    "session.bulk_insert_mappings",
+    "repository.add",
+    "repository.delete",
+    "repository.save",
+    "repository.create",
+    "repository.update",
+    "repo.add",
+    "repo.delete",
+    "repo.save",
+    "repo.create",
+    "repo.update",
+)
+
+# Every database call site, by direction. The extractor consults
+# the tuples above (the statement sites need the SQL-keyword
+# check, the ORM sites do not); these unions are the "any read" /
+# "any write" view for callers that do not need the split.
+CAPABILITY_READS_DB: tuple[str, ...] = (
+    CAPABILITY_DB_STATEMENT_CALLS + CAPABILITY_ORM_READS_DB
+)
+
 CAPABILITY_WRITES_DB: tuple[str, ...] = (
-    # Same call sites as reads_db; the distinction is the SQL
-    # keyword (INSERT / UPDATE / DELETE / DROP). The extractor
-    # inspects the first string argument.
-    "cursor.execute",
-    "connection.execute",
-    "session.execute",
+    CAPABILITY_DB_STATEMENT_CALLS + CAPABILITY_ORM_WRITES_DB
 )
 
 CAPABILITY_HTTP_EGRESS: tuple[str, ...] = (

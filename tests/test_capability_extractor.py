@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aicorellator.parsing.capability_extractor import extract
+from aicorellator.patterns import CAPABILITY_READS_DB, CAPABILITY_WRITES_DB
 
 
 def _write(tmp_path: Path, name: str, code: str) -> Path:
@@ -142,6 +143,96 @@ def store(cursor):
     assert "writes_db" in caps
 
 
+# --- ORM call sites (1.2a.3) ---
+# Session and repository methods carry no SQL text, so the method
+# name itself is the evidence. Patterns are two-segment
+# (`db.delete`), which matches `self.db.delete` but not `self.delete`.
+
+def test_orm_db_delete_is_write(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def delete_file(self, f):
+    self.db.delete(f)
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "writes_db" in caps
+
+
+def test_orm_db_commit_is_write(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def save(self):
+    self.db.commit()
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "writes_db" in caps
+
+
+def test_orm_session_add_is_write(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def store(obj):
+    session.add(obj)
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "writes_db" in caps
+
+
+def test_orm_db_query_is_read(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def find(self, name):
+    return self.db.query(name)
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "reads_db" in caps
+    assert "writes_db" not in caps
+
+
+def test_orm_session_query_is_read(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def all_users():
+    return session.query(User).all()
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "reads_db" in caps
+
+
+def test_orm_repository_get_is_read(tmp_path: Path) -> None:
+    path = _write(tmp_path, "a.py", """
+def load(self, id):
+    return self.repository.get(id)
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "reads_db" in caps
+
+
+def test_bare_delete_is_not_a_write(tmp_path: Path) -> None:
+    """`self.delete` has no `db`/`session` qualifier — not a DB write."""
+    path = _write(tmp_path, "a.py", """
+def purge(self, f):
+    self.delete(f)
+""")
+    result = extract(path, "a.py")
+    # A symbol with no capabilities is not recorded at all.
+    assert all(
+        "writes_db" not in s.capabilities for s in result.symbols
+    )
+
+
+def test_module_level_db_delete_is_write(tmp_path: Path) -> None:
+    """The matcher is not tied to `self.` — a module-level `db` works."""
+    path = _write(tmp_path, "a.py", """
+def purge(f):
+    db.delete(f)
+""")
+    result = extract(path, "a.py")
+    caps = result.symbols[0].capabilities
+    assert "writes_db" in caps
+
+
 def test_calls_llm(tmp_path: Path) -> None:
     path = _write(tmp_path, "a.py", """
 import openai
@@ -212,3 +303,11 @@ class MyAgent:
     names = [s.symbol_name for s in result.symbols]
     assert names[0] == "MyAgent"
     assert names[1] == "run_shell"
+
+
+def test_orm_patterns_are_registered() -> None:
+    """The ORM names are wired into both direction registries."""
+    assert "db.delete" in CAPABILITY_WRITES_DB
+    assert "repo.update" in CAPABILITY_WRITES_DB
+    assert "db.query" in CAPABILITY_READS_DB
+    assert "session.query" in CAPABILITY_READS_DB
