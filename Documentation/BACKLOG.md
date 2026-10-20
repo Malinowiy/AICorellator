@@ -202,10 +202,9 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3i — Adapter attribute capability patterns
 
 **Priority:** Low
-**Status:** Not started
-**Rationale:** The original 1.2a.3g description mentioned capability patterns for known adapter attributes (`self.adapter.run(...)`, `self.client.post(...)`). That is a **capability extraction** change (dangerous call recognition), distinct from the argument classification delivered by 1.2a.3g. The two are complementary.
-**Approach:** Extend `CAPABILITY_*` lists with well-known adapter shapes (`*.adapter.run`, `*.client.post`, `*.session.execute` already covered). Keep narrow — only well-known adapter method names. Verify over-match on all four corpora.
-**References:** 1.2a.3g report, finding 2.
+**Status:** **Done** (2026-10-20)
+**Result:** Two-segment adapter patterns added: `CAPABILITY_EXECUTES_CODE` (`shell.run`, `adapter.execute`, `adapter.spawn`, ...), `CAPABILITY_HTTP_EGRESS` (`client.post`, `client.put`, `client.patch`, `client.delete`, `adapter.post`, `session.post`, `session.request`, ...), `CAPABILITY_CALLS_LLM` (`llm.invoke`, `llm.chat`, `llm.complete`, `llm.generate`, `model.invoke`, `model.chat`, `model.complete`). Bare verbs, `self.run` / `self.post` not added. `client.get` deliberately not added (GET is a read; `requests.get` / `httpx.get` cover the idiom; pinned in 3 tests). Shell adapters not put in `CAPABILITY_EXECUTES_SHELL_EXPLICIT` (shell semantics unknowable; `executes_code` already sink).
+**Results:** FinBot 379/151/646 → 381/152/647, `sink_data_flow` 101/2/11 → 104/2/11 (`GuardrailHookService`, `invoke`, `push_event`). NMB / dvmcp / mcploitable unchanged. Over-match 0 (2 `client.post` call sites, both true positives). Kind flip `GuardrailHookService`: `guardrail → sink` (ADR-0009 capability override; body POSTs to webhook; `guards` edge emission is 1.2a.5x).
 
 ### 1.2a.3j — Parameter attribute arguments
 
@@ -214,6 +213,14 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Result:** `param.X` and `local.X` (attribute on a parameter or body-local) → `parameter_match`, any depth as long as the base name is a parameter or local. Module-level base (`obj.X`) stays `unknown`. `local.X` is `parameter_match` (consistent with `self.q = <local>` from 1.2a.3g; value-blind over-approximation for literal-derived locals, ADR-0001). Opt-in gate `parameter_attributes=False` by default; only `analyze_sink_body` opts in — `_classify_argument` is shared with the edge analyzer, and the ungated variant would change edge values. Measured ungated: byte-identical on all four corpora today, so the gate costs nothing empirically.
 **Results:** FinBot 100/2/12 → 101/2/11 (`create_vendor_file` 5 args → `parameter_match`). mcploitable 6/1/1 → 7/1/0 (`main`: `open(args.log, 'w')` with `args` from `ap.parse_args()`). NMB, dvmcp unchanged. Over-match 0 (12 args newly classified, 0 module-level base).
 **Not taken:** `self.q.name` (base is `self`, not the derived attribute — third-level indirection); `fetch().path` (base is a Call — no call tracking, ADR-0001).
+
+### 1.2a.3k — Dev script discovery
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `scripts/test_websocket.py` (FinBot) contributes a sink `push_event` and a chain edge. This is not a false positive — the script really does POST — but it is low-value noise from a non-production directory. 1.2a.3d covers `tests/` via a prompt note; `scripts/` is not test, but dev tooling.
+**Approach:** Either an `is_dev_code: true` node attribute (mirroring the test-file note) or a discovery exclusion for `scripts/`. The attribute is the softer option; the exclusion is cleaner if scripts are never production. Decide on the corpus evidence.
+**References:** 1.2a.3i report, review item 3.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
