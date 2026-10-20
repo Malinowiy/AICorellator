@@ -1805,3 +1805,47 @@ def test_sink_body_with_an_attribute_of_a_global_is_unknown() -> None:
     """
     assert _sink_body(src) == "unknown"
 
+
+# ============================================================
+# Adapter wrapper calls (1.2a.3i)
+# ============================================================
+# `self.adapter.execute(...)` and `self.client.post(...)` are dangerous
+# calls in their own right (patterns.CAPABILITY_EXECUTES_CODE and
+# CAPABILITY_HTTP_EGRESS), so a body whose only dangerous call is a
+# wrapper call now has an argument value at all. Before this item the
+# call matched nothing, `_dangerous_calls` was empty and the body was
+# read as `unknown` — even though the wrapper is exactly the shape that
+# carries the caller's data. The argument classification is unchanged:
+# these tests pin what the newly visible call contributes, not a new
+# rule for arguments.
+
+def test_sink_body_with_an_adapter_execute_is_data() -> None:
+    """The 1.2a.3g example: `self.adapter.execute(cmd)`, `cmd` a param."""
+    src = """
+    def run_command(self, cmd):
+        self.adapter.execute(cmd)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_body_with_a_client_post_of_a_literal_is_literal_only() -> None:
+    """`self.client.post(url)` with a literal URL — egress, no data."""
+    src = """
+    def notify(self):
+        self.client.post("https://api.example.com/notify")
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_body_with_a_client_get_has_no_evidence() -> None:
+    """`client.get` is not a dangerous call (1.2a.3i decision).
+
+    Such a body is not a sink node at all; the test pins the analyzer's
+    logic, not a corpus shape.
+    """
+    src = """
+    def fetch(self, url):
+        return self.client.get(url)
+    """
+    assert _sink_body(src) == "unknown"
+

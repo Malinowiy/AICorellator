@@ -693,3 +693,200 @@ def test_matches_any_cursor_fetch_patterns() -> None:
     assert not _matches_any("mycur.fetchall", CAPABILITY_ORM_READS_DB)
     assert not _matches_any("cursor.description", CAPABILITY_ORM_READS_DB)
     assert not _matches_any("cursor.rowcount", CAPABILITY_ORM_READS_DB)
+
+
+# --- Adapter attribute patterns (1.2a.3i) ---
+# A call through a wrapper object has no module name to match:
+# `self.adapter.execute(...)`, `self.client.post(...)`,
+# `self.llm.invoke(...)` are methods on a variable. The pattern therefore
+# names a qualifier *plus* verb (`adapter.execute`) and the
+# trailing-segment rule does the rest, so `self.adapter.execute` and
+# `self.vendor.adapter.execute` both match. The qualifier is required:
+# a bare `execute()`, a bare `post()`, and a `self.<verb>()` call match
+# nothing. The patterns live in CAPABILITY_EXECUTES_CODE,
+# CAPABILITY_HTTP_EGRESS and CAPABILITY_CALLS_LLM; the database lists
+# already cover their adapter shapes (1.2a.3b) and were not touched.
+
+def test_shell_adapter_run_is_executes_code(tmp_path: Path) -> None:
+    """`self.shell.run("ls")` is a shell wrapper, not a module call."""
+    path = _write(tmp_path, "a.py", """
+def run_command(self):
+    self.shell.run("ls")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"executes_code"}
+
+
+def test_adapter_execute_is_executes_code(tmp_path: Path) -> None:
+    """`self.adapter.execute("cmd")` — the 1.2a.3g shape, recognized."""
+    path = _write(tmp_path, "a.py", """
+def run_command(self):
+    self.adapter.execute("cmd")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"executes_code"}
+
+
+def test_client_post_is_http_egress(tmp_path: Path) -> None:
+    """`self.client.post(url, data=d)` sends a body to a remote host."""
+    path = _write(tmp_path, "a.py", """
+def notify(self, url, d):
+    self.client.post(url, data=d)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"http_egress"}
+
+
+def test_session_post_is_http_egress(tmp_path: Path) -> None:
+    """`self.session.post(url)` — a session is a client too."""
+    path = _write(tmp_path, "a.py", """
+def notify(self, url):
+    self.session.post(url)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"http_egress"}
+
+
+def test_llm_invoke_is_calls_llm(tmp_path: Path) -> None:
+    """`self.llm.invoke(prompt)` — a self-held LLM handle."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self.llm.invoke(prompt)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"calls_llm"}
+
+
+def test_model_chat_is_calls_llm(tmp_path: Path) -> None:
+    """`self.model.chat(prompt)` — the same handle, framework-neutral."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self.model.chat(prompt)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"calls_llm"}
+
+
+def test_bare_run_is_not_executes_code(tmp_path: Path) -> None:
+    """A bare verb is matched on the final segment alone — too broad.
+
+    `open("/tmp/x")` is the anchor: it keeps the symbol in the result
+    so the assertion is not an empty-set pass.
+    """
+    path = _write(tmp_path, "a.py", """
+def run_job(self, job):
+    run()
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_self_run_is_not_executes_code(tmp_path: Path) -> None:
+    """The receiver is the class itself, not an adapter."""
+    path = _write(tmp_path, "a.py", """
+def run_job(self):
+    self.run()
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_bare_post_is_not_http_egress(tmp_path: Path) -> None:
+    """A bare `post(body)` is blog code as often as it is a request."""
+    path = _write(tmp_path, "a.py", """
+def publish(self, body):
+    post(body)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_unknown_client_method_adds_no_capability(tmp_path: Path) -> None:
+    """`client.foo` is not a known adapter verb — the qualifier is not
+    a licence for every method on it."""
+    path = _write(tmp_path, "a.py", """
+def tune(self, x):
+    self.client.foo(x)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_client_get_is_not_http_egress(tmp_path: Path) -> None:
+    """`client.get` was deliberately not added (1.2a.3i decision).
+
+    A GET reads a remote resource; the module forms (`requests.get`,
+    `httpx.get`) already cover the fetch idiom. See the adapter note in
+    patterns.py.
+    """
+    path = _write(tmp_path, "a.py", """
+def fetch(self, url):
+    self.client.get(url)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_adapter_patterns_are_registered() -> None:
+    """Every adapter shape matches, at any receiver depth."""
+    for pattern in (
+        "shell.run", "shell.execute", "shell.exec",
+        "adapter.run", "adapter.execute", "adapter.exec", "adapter.spawn",
+    ):
+        assert _matches_any(
+            f"self.{pattern}", patterns.CAPABILITY_EXECUTES_CODE
+        ), pattern
+        assert _matches_any(
+            f"self.vendor.{pattern}", patterns.CAPABILITY_EXECUTES_CODE
+        ), pattern
+    for pattern in (
+        "client.post", "client.put", "client.patch", "client.delete",
+        "adapter.post", "adapter.put", "adapter.patch",
+        "session.post", "session.put", "session.patch", "session.request",
+    ):
+        assert _matches_any(
+            f"self.{pattern}", patterns.CAPABILITY_HTTP_EGRESS
+        ), pattern
+    for pattern in (
+        "llm.invoke", "llm.chat", "llm.complete", "llm.generate",
+        "model.invoke", "model.chat", "model.complete",
+    ):
+        assert _matches_any(
+            f"self.{pattern}", patterns.CAPABILITY_CALLS_LLM
+        ), pattern
+
+
+def test_adapter_patterns_are_qualified_and_not_self_calls() -> None:
+    """No bare adapter verb and no `self.<verb>` was added (1.2a.3i).
+
+    `run`, `execute`, `post`, `put`, `patch`, `delete`, `request`,
+    `invoke`, `chat`, `complete`, `generate` and `spawn` are far too
+    common on their own, and `self.<verb>` is a plain method call on
+    the class itself. The three one-segment patterns already in
+    CAPABILITY_EXECUTES_CODE (`eval`, `exec`, `compile`) predate this
+    item and name builtins, not adapter verbs.
+    """
+    bare = {
+        "run", "execute", "post", "put", "patch", "delete", "request",
+        "invoke", "chat", "complete", "generate", "spawn",
+    }
+    for name, value in vars(patterns).items():
+        if not name.startswith("CAPABILITY_") or not isinstance(
+            value, (tuple, frozenset)
+        ):
+            continue
+        for pattern in value:
+            assert pattern not in bare, f"{name}: {pattern}"
+            assert not pattern.startswith("self."), f"{name}: {pattern}"
+
+
+def test_client_get_is_not_registered() -> None:
+    """The GET decision is pinned: a future item has to change it here."""
+    for pattern in ("client.get", "session.get", "adapter.get"):
+        assert pattern not in patterns.CAPABILITY_HTTP_EGRESS
+

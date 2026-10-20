@@ -281,6 +281,36 @@ PROVIDER_HINTS: tuple[tuple[str, str], ...] = (
 # Matching is intentionally simple — false positives are accepted
 # (see ADR-0009). The LLM in Phase 3 filters noise.
 
+# --- Adapter attribute patterns (1.2a.3i) ---
+# Some calls go through a wrapper object instead of a module: an
+# adapter, an HTTP client, a shell handle, an LLM handle. There is no
+# module name to match — `self.adapter.execute(...)` is a method on a
+# variable — so these patterns name a *qualifier plus verb* and lean on
+# the trailing-segment rule (capability_extractor._matches_any):
+# `adapter.execute` matches `self.adapter.execute` and
+# `self.vendor.adapter.execute`, but neither `self.execute` nor a bare
+# `execute()`. The 1.2a.3e underscore rule applies unchanged, so
+# `self._adapter.execute` matches too.
+#
+# Two segments, never one. A bare `run`, `execute`, `exec`, `post`,
+# `put`, `patch`, `delete`, `request`, `invoke`, `chat`, `complete`,
+# `generate` or `spawn` is far too common in unrelated code — test
+# runners, blog code, arbitrary objects — and a one-segment pattern is
+# matched on the final segment alone (ADR-0009 keeps the
+# false-positive rate controlled).
+#
+# `self.<verb>` is deliberately not covered: the receiver is the class
+# itself, not an adapter, and `self.execute()` is a plain method call.
+# The qualifier is a hint, not a licence — `adapter.<verb>` and
+# `client.<verb>` are matched only for the verbs listed below.
+#
+# `client.get` / `session.get` are *not* listed (1.2a.3i decision): a
+# GET is overwhelmingly a read of a remote resource, and the module
+# forms (`requests.get`, `httpx.get`) already cover the fetch idiom.
+# Crediting every `self.client.get(...)` with `http_egress` would make
+# each such call a dangerous call and each containing symbol a sink,
+# which is a much larger claim than the wrapper patterns above make.
+
 # --- Node capabilities ---
 
 CAPABILITY_EXECUTES_CODE: tuple[str, ...] = (
@@ -300,6 +330,18 @@ CAPABILITY_EXECUTES_CODE: tuple[str, ...] = (
     "pickle.loads",
     "marshal.loads",
     "yaml.unsafe_load",
+    # Adapter wrappers around a shell / process (1.2a.3i). See the
+    # adapter note above. `shell.execute` and `adapter.execute` are
+    # distinct from the cursor `*.execute` statement sites, which are
+    # matched by CAPABILITY_DB_STATEMENT_CALLS under their own
+    # qualifiers (`cur`, `cursor`).
+    "shell.run",
+    "shell.execute",
+    "shell.exec",
+    "adapter.run",
+    "adapter.execute",
+    "adapter.exec",
+    "adapter.spawn",
 )
 
 # Calls that ALWAYS execute a shell — no keyword required.
@@ -529,6 +571,21 @@ CAPABILITY_HTTP_EGRESS: tuple[str, ...] = (
     "aiohttp.ClientSession",
     "urllib.request.urlopen",
     "urllib.request.Request",
+    # Adapter / client wrappers (1.2a.3i). See the adapter note above.
+    # Write verbs only: these are the calls that send a body or a
+    # command to a remote endpoint. `client.get` / `session.get` /
+    # `adapter.get` are deliberately absent.
+    "client.post",
+    "client.put",
+    "client.patch",
+    "client.delete",
+    "adapter.post",
+    "adapter.put",
+    "adapter.patch",
+    "session.post",
+    "session.put",
+    "session.patch",
+    "session.request",
 )
 
 CAPABILITY_HTTP_INGRESS: tuple[str, ...] = (
@@ -556,6 +613,17 @@ CAPABILITY_CALLS_LLM: tuple[str, ...] = (
     "langchain.llms.Ollama",
     "llama_cpp.Llama",
     "vllm.LLM",
+    # Adapter / handle wrappers (1.2a.3i). See the adapter note above.
+    # `chat` and `generate` are already in the list under `ollama.*`;
+    # these are the same verbs on a self-held handle, plus the
+    # framework-neutral `invoke` / `complete`.
+    "llm.invoke",
+    "llm.chat",
+    "llm.complete",
+    "llm.generate",
+    "model.invoke",
+    "model.chat",
+    "model.complete",
 )
 
 CAPABILITY_INVOKES_MCP_TOOL: tuple[str, ...] = (
