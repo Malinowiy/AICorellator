@@ -15,6 +15,7 @@ from aicorellator.ingestion.target import Target
 from aicorellator.parsing.ast_normalizer import (
     GraphDelta,
     _edge_id,
+    _flow_for_tool_node,
     _index_functions,
     _mcp_server_id,
     _node_from_class,
@@ -1787,4 +1788,195 @@ def test_resolve_definition_exact_missing_and_gap() -> None:
     ]
     # Both definitions are kept: a name is not collapsed (1.2a.3f).
     assert len(index) == 2
+
+
+# ============================================================
+# 1.2a.2 — data_flow_confirmed enrichment on MCP edges
+# ============================================================
+
+def _tool_node(tool_id: str, name: str, **attrs) -> Node:
+    return Node(
+        id=tool_id,
+        kind="tool",
+        name=name,
+        host_id="localhost",
+        attributes={"source_file": "server.py", "framework": "fastmcp", **attrs},
+    )
+
+
+def test_flow_for_tool_node_parameter_match() -> None:
+    """A tool with parameters makes the exposing edge a data edge."""
+    flow = _flow_for_tool_node(
+        _tool_node("tool:1", "search", tool_data_flow="parameter_match")
+    )
+    assert flow == {
+        "flow_kind": "data",
+        "data_flow_confirmed": "parameter_match",
+    }
+
+
+def test_flow_for_tool_node_no_args() -> None:
+    """A parameterless tool stays control, but records `no_args`."""
+    flow = _flow_for_tool_node(
+        _tool_node("tool:1", "health", tool_data_flow="no_args")
+    )
+    assert flow == {
+        "flow_kind": "control",
+        "data_flow_confirmed": "no_args",
+    }
+
+
+def test_flow_for_tool_node_absent() -> None:
+    """A node the detector did not enrich keeps the control default."""
+    flow = _flow_for_tool_node(_tool_node("tool:1", "search"))
+    assert flow == {
+        "flow_kind": "control",
+        "data_flow_confirmed": "unknown",
+    }
+
+
+def test_mcp_entry_edge_inherits_tool_data_flow(target: Target) -> None:
+    """The virtual MCP entry → tool edge carries the detector's value."""
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+
+    manifest = FileManifest(target=target)
+    detection = DetectionResult(framework="fastmcp")
+    detection.nodes = [
+        Node(
+            id="mcp_server:1", kind="mcp_server", name="srv",
+            host_id="localhost",
+            attributes={
+                "source_file": "server.py",
+                "framework": "fastmcp",
+                "server_variable": "mcp",
+            },
+        ),
+        _tool_node(
+            "tool:1", "search",
+            parent_server="srv", tool_data_flow="parameter_match",
+        ),
+        _tool_node(
+            "tool:2", "health",
+            parent_server="srv", tool_data_flow="no_args",
+        ),
+    ]
+
+    delta = normalize(
+        manifest, TSAOutput(symbols=[]), framework_detection=detection
+    )
+
+    by_target = {
+        e.target_id: e for e in delta.edges if e.kind == "delegates_to"
+    }
+    assert by_target["tool:1"].flow_kind == "data"
+    assert by_target["tool:1"].data_flow_confirmed == "parameter_match"
+    assert by_target["tool:2"].flow_kind == "control"
+    assert by_target["tool:2"].data_flow_confirmed == "no_args"
+
+
+def test_enriched_uses_tool_edge_not_downgraded(target: Target) -> None:
+    """A detector-enriched uses_tool edge survives cross-file resolution.
+
+    The detector emits the edge first; `resolve_agent_tool_edges` would
+    emit the same id for the same (agent, tool) pair. The normalizer's
+    dedup keeps the detector's edge — the enriched one — so the
+    cross-file default never overwrites it (1.2a.2).
+    """
+    from aicorellator.graph.models import Edge
+    from aicorellator.parsing.framework_detectors.base import DetectionResult
+
+    manifest = FileManifest(target=target)
+    manifest.files = [
+        FileEntry(
+            path="agent.py",
+            abs_path=target.root / "agent.py",
+            language="python", content_hash="a", size=100,
+        ),
+        FileEntry(
+            path="tools.py",
+            abs_path=target.root / "tools.py",
+            language="python", content_hash="b", size=100,
+        ),
+    ]
+    (target.root / "agent.py").write_text(
+        "from tools import USER_TOOLS\n", encoding="utf-8",
+    )
+    (target.root / "tools.py").write_text(
+        "@tool\ndef x(q): ...\n", encoding="utf-8",
+    )
+
+    detection = DetectionResult(framework="langchain")
+    detection.nodes = [
+        Node(
+            id="agent:1", kind="agent", name="create_agent",
+            host_id="localhost",
+            attributes={"source_file": "agent.py", "framework": "langchain"},
+        ),
+        Node(
+            id="tool:1", kind="tool", name="x",
+            host_id="localhost",
+            attributes={
+                "source_file": "tools.py",
+                "framework": "langchain",
+                "tool_data_flow": "parameter_match",
+            },
+        ),
+    ]
+    detection.edges = [
+        Edge(
+            id=_edge_id("agent:1", "tool:1", "uses_tool"),
+            source_id="agent:1",
+            target_id="tool:1",
+            kind="uses_tool",
+            host_id="localhost",
+            flow_kind="data",
+            data_flow_confirmed="parameter_match",
+            attributes={"framework": "langchain"},
+        ),
+    ]
+
+    delta = normalize(
+        manifest, TSAOutput(symbols=[]), framework_detection=detection
+    )
+
+    uses_tool = [e for e in delta.edges if e.kind == "uses_tool"]
+    assert len(uses_tool) == 1
+    assert uses_tool[0].flow_kind == "data"
+    assert uses_tool[0].data_flow_confirmed == "parameter_match"
+
+
+def test_provides_tool_edge_stays_control_for_tsa_tools(
+    target: Target,
+) -> None:
+    """A normalizer-created tool node has no `tool_data_flow`.
+
+    The `provides_tool` loop builds its tool nodes from TSA symbols, so
+    no detector enrichment reaches it today. The edge must stay the
+    control default — enrichment never invents a value (1.2a.2).
+    """
+    manifest = FileManifest(target=target)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="get_file",
+            kind="method",
+            file_path="mcp/servers/findrive/server.py",
+            line_start=10,
+            line_end=15,
+            class_name="FinDriveServer",
+        ),
+    ])
+    manifest.files = [
+        FileEntry(
+            path="mcp/servers/findrive/server.py",
+            abs_path=target.root / "mcp/servers/findrive/server.py",
+            language="python",
+            content_hash="aaa",
+            size=100,
+        ),
+    ]
+    delta = normalize(manifest, tsa)
+    provides = [e for e in delta.edges if e.kind == "provides_tool"]
+    assert len(provides) == 1
+    assert provides[0].flow_kind == "control"
+    assert provides[0].data_flow_confirmed == "unknown"
 

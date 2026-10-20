@@ -105,9 +105,10 @@ def get_agent(role):
 """)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
-    # ADR-0015: control flow, data flow unconfirmed.
+    # 1.2a.2: the model was configured with a literal name, so the
+    # edge confirms a configuration value, not a data flow.
     assert uses_model[0].flow_kind == "control"
-    assert uses_model[0].data_flow_confirmed == "unknown"
+    assert uses_model[0].data_flow_confirmed == "literal_only"
 
 
 def test_uses_tool_from_local_assignment() -> None:
@@ -169,3 +170,139 @@ agent = create_agent(model=A, tools=[])
 """)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert uses_model == []
+
+
+# ------------------------------------------------------------
+# 1.2a.2 — data_flow_confirmed enrichment
+# ------------------------------------------------------------
+
+def _tool_edges(result):
+    """Map the uses_tool edges by target tool name."""
+    names = {n.id: n.name for n in result.nodes}
+    return {
+        names[e.target_id]: e
+        for e in result.edges
+        if e.kind == "uses_tool"
+    }
+
+
+def test_uses_tool_named_in_system_prompt_is_data() -> None:
+    """The prompt names `a`, so the agent was given `a`."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain.tools import tool
+
+@tool
+def a(x: str) -> str:
+    return x
+
+@tool
+def b(x: str) -> str:
+    return x
+
+agent = create_agent(tools=[a, b], system_prompt="Use a for X")
+""")
+    edges = _tool_edges(result)
+    assert edges["a"].flow_kind == "data"
+    assert edges["a"].data_flow_confirmed == "parameter_match"
+    assert edges["b"].flow_kind == "control"
+    assert edges["b"].data_flow_confirmed == "unknown"
+
+
+def test_uses_tool_without_system_prompt_stays_control() -> None:
+    """No prompt is no evidence."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain.tools import tool
+
+@tool
+def a(x: str) -> str:
+    return x
+
+agent = create_agent(tools=[a])
+""")
+    edges = _tool_edges(result)
+    assert edges["a"].flow_kind == "control"
+    assert edges["a"].data_flow_confirmed == "unknown"
+
+
+def test_uses_tool_unrelated_system_prompt_stays_control() -> None:
+    """A prompt that does not name the tool stays control."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain.tools import tool
+
+@tool
+def a(x: str) -> str:
+    return x
+
+agent = create_agent(tools=[a], system_prompt="Do something unrelated")
+""")
+    edges = _tool_edges(result)
+    assert edges["a"].flow_kind == "control"
+    assert edges["a"].data_flow_confirmed == "unknown"
+
+
+def test_uses_model_literal_is_literal_only() -> None:
+    """`ChatOpenAI(model="gpt-4")` is a constant configuration."""
+    result = _detect("""
+from langchain.agents import AgentExecutor
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4")
+agent = AgentExecutor(agent=..., tools=[], llm=llm)
+""")
+    uses_model = [e for e in result.edges if e.kind == "uses_model"]
+    assert len(uses_model) == 1
+    assert uses_model[0].flow_kind == "control"
+    assert uses_model[0].data_flow_confirmed == "literal_only"
+
+
+def test_uses_model_resolved_module_assignment_is_literal_only() -> None:
+    """`model=model_var` where `model_var = "gpt-4"` resolves to a literal."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain_openai import ChatOpenAI
+
+model_var = "gpt-4"
+llm = ChatOpenAI(model=model_var)
+agent = create_agent(model=llm, tools=[])
+""")
+    uses_model = [e for e in result.edges if e.kind == "uses_model"]
+    assert len(uses_model) == 1
+    assert uses_model[0].flow_kind == "control"
+    assert uses_model[0].data_flow_confirmed == "literal_only"
+
+
+def test_uses_model_from_function_parameter_is_data() -> None:
+    """A model name that is a caller-supplied parameter is data."""
+    result = _detect("""
+from langchain.agents import create_agent
+from langchain_ollama import ChatOllama
+
+def get_agent(model_name):
+    llm = ChatOllama(model=model_name)
+    return create_agent(model=llm, tools=[])
+""")
+    uses_model = [e for e in result.edges if e.kind == "uses_model"]
+    assert len(uses_model) == 1
+    assert uses_model[0].flow_kind == "data"
+    assert uses_model[0].data_flow_confirmed == "parameter_match"
+
+
+def test_tool_node_records_signature_data_flow() -> None:
+    """Tool nodes carry the signature result for the normalizer."""
+    result = _detect("""
+from langchain.tools import tool
+
+@tool
+def with_args(x: str) -> str:
+    return x
+
+@tool
+def without_args() -> str:
+    return "x"
+""")
+    tools = {n.name: n for n in result.nodes if n.kind == "tool"}
+    assert tools["with_args"].attributes["tool_data_flow"] == "parameter_match"
+    assert tools["without_args"].attributes["tool_data_flow"] == "no_args"

@@ -14,12 +14,14 @@ Extracted nodes:
 
   - mcp_server — one per `Server(...)` call, carrying the server name.
   - tool       — one per `@<server>.call_tool()` decorator, with the
-                 parent server recorded in `parent_server` and
-                 capabilities extracted from the decorated function.
+                 parent server recorded in `parent_server`,
+                 capabilities extracted from the decorated function, and
+                 `tool_data_flow` from its signature (1.2a.2).
 
 Edges: none from this detector. Cross-file resolution and the virtual
 MCP entry point (MCP client → tool) are produced by the normalizer
-(ADR-0013, A3).
+(ADR-0013, A3). The normalizer copies `tool_data_flow` onto the edges
+it builds, which is where the enrichment becomes an edge attribute.
 
 Per-file contract (ADR-0011).
 """
@@ -32,6 +34,7 @@ import logging
 
 from ...graph.models import Node
 from .base import DetectionResult, FrameworkDetector
+from .enrichment import enrich_provides_tool
 
 
 log = logging.getLogger(__name__)
@@ -101,6 +104,10 @@ class MCPPythonDetector(FrameworkDetector):
                 extra_attrs={
                     "framework": self.name,
                     "parent_server": server_name,
+                    # 1.2a.2: the tool's signature answers "does the MCP
+                    # client hand this tool data?". The normalizer copies
+                    # this onto the server → tool edge it builds.
+                    "tool_data_flow": enrich_provides_tool(func_node),
                 },
             )
             node.capabilities = caps

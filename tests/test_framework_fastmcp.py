@@ -154,3 +154,56 @@ def t() -> str:
 """)
     for node in result.nodes:
         assert node.attributes.get("framework") == "fastmcp"
+
+
+# ------------------------------------------------------------
+# 1.2a.2 — tool_data_flow for the normalizer's server → tool edge
+# ------------------------------------------------------------
+
+def test_tool_with_parameters_records_parameter_match() -> None:
+    """A tool with a parameter receives the client's data (MCP channel)."""
+    result = _detect("""
+from mcp.server.fastmcp import FastMCP
+mcp = FastMCP("srv")
+
+@mcp.tool()
+def search(query: str) -> str:
+    return "ok"
+""")
+    tools = [n for n in result.nodes if n.kind == "tool"]
+    assert len(tools) == 1
+    assert tools[0].attributes["tool_data_flow"] == "parameter_match"
+    # The detector emits no edges; the normalizer copies the attribute
+    # onto the edge it builds.
+    assert result.edges == []
+
+
+def test_tool_without_parameters_records_no_args() -> None:
+    """A parameterless tool has nothing to receive."""
+    result = _detect("""
+from mcp.server.fastmcp import FastMCP
+mcp = FastMCP("srv")
+
+@mcp.tool()
+def health() -> str:
+    return "ok"
+""")
+    tools = [n for n in result.nodes if n.kind == "tool"]
+    assert len(tools) == 1
+    assert tools[0].attributes["tool_data_flow"] == "no_args"
+
+
+def test_tool_method_ignores_self() -> None:
+    """`self` is not a client-supplied argument."""
+    result = _detect("""
+from mcp.server.fastmcp import FastMCP
+mcp = FastMCP("srv")
+
+class Tools:
+    @mcp.tool()
+    def ping(self) -> str:
+        return "ok"
+""")
+    tools = [n for n in result.nodes if n.kind == "tool"]
+    assert len(tools) == 1
+    assert tools[0].attributes["tool_data_flow"] == "no_args"

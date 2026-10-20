@@ -17,7 +17,7 @@ read. They share one per-scan module cache, so a file is parsed at most
 once.
 
 Edges derived here:
-  - provides_tool  (mcp_server → tool)              flow_kind=control
+  - provides_tool  (mcp_server → tool)              flow_kind=data|control
   - has_access_to  (tool → sink)                    flow_kind=data|control
   - delegates_to   (entry_point → agent)            flow_kind=control
   - delegates_to   (agent → agent, orchestrator)    flow_kind=control
@@ -65,6 +65,7 @@ from .flow_analyzer import (
     analyze_tool_returns,
 )
 from .framework_detectors import DetectionResult
+from .framework_detectors.enrichment import flow_kind_for
 from .llm_extractor import LLMExtractorOutput
 from .models import TSAOutput, TSASymbol
 from .framework_detectors.cross_file import resolve_agent_tool_edges
@@ -97,6 +98,28 @@ CONTROL_FLOW: dict[str, str] = {
     "flow_kind": "control",
     "data_flow_confirmed": "unknown",
 }
+
+
+def _flow_for_tool_node(tool_node: Node) -> dict[str, str]:
+    """Flow attributes for a server → tool edge (1.2a.2).
+
+    A framework detector records the tool's signature result on the tool
+    node as `tool_data_flow` (`parameter_match` / `no_args`). The edge
+    that exposes the tool inherits it: the MCP protocol is the channel,
+    so a tool with parameters is handed the client's data by the
+    framework itself.
+
+    A tool node without the attribute — every node the normalizer
+    creates from TSA symbols — keeps the control default. Enrichment
+    never invents a value the detector did not record.
+    """
+    data_flow = tool_node.attributes.get("tool_data_flow")
+    if not data_flow:
+        return CONTROL_FLOW
+    return {
+        "flow_kind": flow_kind_for(data_flow),
+        "data_flow_confirmed": data_flow,
+    }
 
 
 @dataclass
@@ -309,7 +332,10 @@ def normalize(
                 # Access path, not a declaration (ADR-0015, decision 5):
                 # "the agent can call the tool" is the candidate attack
                 # path until runtime monitoring separates the two.
-                **CONTROL_FLOW,
+                # A framework detector may have enriched the tool node
+                # with its signature result (1.2a.2); the edge inherits
+                # it and nothing else changes.
+                **_flow_for_tool_node(tool_node),
             ))
 
     # --- Edges: has_access_to (tool -> sink) ---
@@ -1166,7 +1192,11 @@ def _link_mcp_entries_to_tools(delta: GraphDelta) -> list[Edge]:
                 kind="delegates_to",
                 host_id=HOST_ID,
                 attributes={"resolved_via": "mcp_entry"},
-                **CONTROL_FLOW,
+                # The MCP client → tool path is the protocol channel:
+                # the detector recorded whether the tool takes arguments
+                # (1.2a.2). Without that attribute the edge stays the
+                # control default (ADR-0015, decisions 4 and 5).
+                **_flow_for_tool_node(tool_node),
             ))
 
     return edges
