@@ -147,10 +147,9 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3b — repo.<verb>_<noun> handling
 
 **Priority:** Medium
-**Status:** Not started
-**Rationale:** FinBot's `findrive/server.py` calls `repo.get_file(file_id)` / `repo.delete_file(f)`. Whole-segment suffix matching means `repo.get_file` does not match `repo.get` / `repo.delete`. Those tool-level sinks stay `unknown`.
-**Approach:** Either add the specific verb-noun patterns to the ORM lists (bounded list), or add a repository-interface inference pass. The bounded-list option is simpler and narrower; the inference pass is more general but broader in scope and false-positive risk.
-**References:** Step 8 report, limitation 1.
+**Status:** **Done** (2026-10-20)
+**Result:** Option B (trailing-* verb families). `_matches_any` recognises patterns ending in `*`; `_matches_prefix` requires the qualifier segment to match exactly and the trailing segment to start with the verb. FinBot: 10 new sink nodes, 41 new chains (all pre-existing 605 preserved), sink_data_flow 35/65/2 → 43/69/2. NMB/dvmcp/mcploitable unchanged. Over-match measured as 0 in all four corpora.
+**Deferred:** a word-boundary variant of `_matches_prefix` (rejects `repo.getter` while accepting `repo.get_file`) is a one-line change if a real over-match appears. Mid-pattern stars (`repo.*_file`) are not supported.
 
 ### 1.2a.3c — db.commit()-only sinks
 
