@@ -144,6 +144,31 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Approach:** `analyze_sink_class(cls: ast.ClassDef) -> str`. Reuse `analyze_sink_body` for `__init__` and `__call__`; merge results with the same non-linear ranking. Wire when the sink node's source resolves to a class, not a function.
 **References:** Step 7 report, limitation 4.
 
+### 1.2a.3b — repo.<verb>_<noun> handling
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** FinBot's `findrive/server.py` calls `repo.get_file(file_id)` / `repo.delete_file(f)`. Whole-segment suffix matching means `repo.get_file` does not match `repo.get` / `repo.delete`. Those tool-level sinks stay `unknown`.
+**Approach:** Either add the specific verb-noun patterns to the ORM lists (bounded list), or add a repository-interface inference pass. The bounded-list option is simpler and narrower; the inference pass is more general but broader in scope and false-positive risk.
+**References:** Step 8 report, limitation 1.
+
+### 1.2a.3c — db.commit()-only sinks
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** 67 of FinBot's 102 sinks are `unknown`, dominated by bodies that call only `db.commit()`. The no-argument rule from 1.2a.1 (a dangerous call with no arguments is skipped) is correct for `subprocess.run()` with no args, but `db.commit()` *is* the dangerous operation — it persists whatever the ORM session holds, which is the result of prior state changes. The rule needs refinement for the commit case.
+**Approach:** Treat a bare `db.commit()` / `session.commit()` (no arguments) as a dangerous operation with `parameter_match` semantics — the sink's own state (set by prior calls) is what flows. This is a deliberate loosening of the no-argument rule for commit specifically. Do not change the rule for `subprocess.run()` with no args (which is genuinely safe).
+**References:** Step 8 report, limitation 2.
+
+### 1.2a.3d — Test-file sinks
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** FinBot's test suite produces sinks (`clean_db`, `vendor_pair_setup`, `test_*`) because test fixtures call `db.commit()`. Scan scope includes test files. These are not production paths, but excluding `tests/` from discovery would hide real test-file vulnerabilities (some frameworks test the exact production code).
+**Decision (current):** do not exclude `tests/`. Instead, add a note to the prompt: test scripts and test fixtures are not production entry points, and chains that reach a sink only through test code should be treated as low-confidence unless the test exercises a production path.
+**Approach (when picked up):** add the prompt note. Optionally add an attribute `is_test_code: true` on nodes whose source file matches `tests/`, `test_*.py`, `*_test.py`. Do not change discovery.
+**References:** Step 8 report, limitation 3.
+
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
 **Priority:** High
