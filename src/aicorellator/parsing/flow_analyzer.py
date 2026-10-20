@@ -711,8 +711,8 @@ def _methods(cls: ast.ClassDef) -> list[FunctionNode]:
 
     Only direct members count: a function nested inside a method, and a
     nested class's methods, belong to another scope. When a name is
-    defined twice the first definition wins, matching `_index_functions`
-    in the normalizer. A class with no methods returns an empty list, and
+    defined twice the first definition wins, matching the name fallback 
+    in _index_functions. A class with no methods returns an empty list, and
     then only its class-level statements are analyzed.
     """
     found: dict[str, FunctionNode] = {}

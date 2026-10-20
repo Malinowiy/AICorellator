@@ -15,9 +15,11 @@ from aicorellator.ingestion.target import Target
 from aicorellator.parsing.ast_normalizer import (
     GraphDelta,
     _edge_id,
+    _index_functions,
     _mcp_server_id,
     _node_from_class,
     _node_from_method,
+    _resolve_definition,
     _server_name_for_file,
     _sha256,
     normalize,
@@ -1532,4 +1534,229 @@ def test_class_sink_detector_node_resolves_the_class_body(
     sink = _node(delta, "FileRepository")
     assert sink.id == "sink:detector"
     assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+# ============================================================
+# 1.2a.3f — function resolution by (name, line_start)
+# ============================================================
+
+# Two classes define `delete_file`: the first forwards its parameter to
+# the dangerous call, the second passes a constant. Keying the function
+# index by name alone made the second node read the first body — the
+# shape of FinBot's `toggle_enabled` at repositories.py:664 / :1426.
+DUPLICATE_SINK_METHODS = """\
+class FirstRepository:
+    def delete_file(self, path):
+        os.remove(path)
+
+
+class SecondRepository:
+    def delete_file(self):
+        os.remove("/tmp/scratch")
+"""
+
+# Three definitions of one name, so the middle one is identifiable by
+# its value: literal, parameter, literal. A node whose line_start lands
+# in the gap before the third definition must resolve to the second.
+THREE_SAME_NAMED_SINKS = """\
+class FirstRepository:
+    def delete_file(self, path):
+        os.remove("/tmp/first")
+
+
+class SecondRepository:
+    def delete_file(self, path):
+        os.remove(path)
+
+
+class ThirdRepository:
+    def delete_file(self, path):
+        os.remove("/tmp/third")
+"""
+
+# Two tools of one name; only the first hands data back to its caller.
+DUPLICATE_TOOL_NAMES = """\
+class FirstServer:
+    def read_file(self, path):
+        return open(path).read()
+
+
+class SecondServer:
+    def read_file(self, path):
+        self.log(path)
+"""
+
+
+def _tsa_from_source(source: str, file_path: str) -> TSAOutput:
+    """TSA output for a one-file module, with the **real** `line_start`
+    of every method and the class that encloses it.
+
+    What TSA reports, and what 1.2a.3f resolves against. The other
+    helpers in this file use placeholder line numbers (`line_start=1`),
+    which is the approximate path, not this one.
+    """
+    symbols: list[TSASymbol] = []
+    for cls in ast.parse(source).body:
+        if not isinstance(cls, ast.ClassDef):
+            continue
+        for statement in cls.body:
+            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                symbols.append(TSASymbol(
+                    name=statement.name,
+                    kind="method",
+                    file_path=file_path,
+                    line_start=statement.lineno,
+                    line_end=statement.end_lineno or statement.lineno,
+                    class_name=cls.name,
+                ))
+    return TSAOutput(symbols=symbols)
+
+
+def _definition_lines(source: str, name: str) -> list[int]:
+    """Line numbers of every `def name` in `source`, in source order."""
+    return [
+        node.lineno
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == name
+    ]
+
+
+def _node_at_line(delta: GraphDelta, name: str, line_start: int) -> Node:
+    """The node named `name` whose `line_start` is `line_start`.
+
+    A name defined twice yields two nodes, so `_node` cannot be used.
+    """
+    matches = [
+        n for n in delta.nodes
+        if n.name == name and n.attributes.get("line_start") == line_start
+    ]
+    assert len(matches) == 1, (name, line_start)
+    return matches[0]
+
+
+def test_duplicate_method_names_resolve_by_line_start(target: Target) -> None:
+    """Each node reads the definition that contains its `line_start`.
+
+    Before 1.2a.3f both nodes read the first `delete_file` body, so the
+    second recorded `parameter_match` for a body that passes a constant.
+    """
+    manifest = _server_manifest(target, DUPLICATE_SINK_METHODS)
+    tsa = _tsa_from_source(DUPLICATE_SINK_METHODS, SYSTEMUTILS_PATH)
+    delta = normalize(manifest, tsa)
+
+    lines = _definition_lines(DUPLICATE_SINK_METHODS, "delete_file")
+    assert len(lines) == 2
+
+    first = _node_at_line(delta, "delete_file", lines[0])
+    second = _node_at_line(delta, "delete_file", lines[1])
+    assert first.attributes["sink_data_flow"] == "parameter_match"
+    assert second.attributes["sink_data_flow"] == "literal_only"
+
+
+def test_duplicate_method_names_without_line_start_use_the_first(
+    target: Target,
+) -> None:
+    """A node with no `line_start` keeps the name-keyed behaviour.
+
+    Detector-created nodes carry no `line_start` (`langchain.py`,
+    `fastmcp.py`, `mcp_python.py` never set it), so the fallback — the
+    first definition of that name — must be preserved.
+    """
+    from aicorellator.parsing.framework_detectors import DetectionResult
+
+    manifest = _server_manifest(target, DUPLICATE_SINK_METHODS)
+    detector_sink = Node(
+        id="sink:detector",
+        kind="sink",
+        name="delete_file",
+        host_id="localhost",
+        attributes={"source_file": SYSTEMUTILS_PATH, "framework": "fastmcp"},
+    )
+    detection = DetectionResult(nodes=[detector_sink], framework="fastmcp")
+
+    delta = normalize(manifest, TSAOutput(), framework_detection=detection)
+
+    sink = _node(delta, "delete_file")
+    assert "line_start" not in sink.attributes
+    # The first `delete_file` forwards its parameter.
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+def test_approximate_line_start_uses_the_closest_preceding_definition(
+    target: Target,
+) -> None:
+    """A line_start in the gap between definitions resolves backwards.
+
+    Three definitions whose bodies are literal / parameter / literal. The
+    node's `line_start` sits before the third definition, so the closest
+    preceding one (the second) wins: `parameter_match`. The first
+    definition — the name-keyed answer — would be `literal_only`, and so
+    would the following definition, so the value identifies which
+    definition was read.
+    """
+    manifest = _server_manifest(target, THREE_SAME_NAMED_SINKS)
+    lines = _definition_lines(THREE_SAME_NAMED_SINKS, "delete_file")
+    assert len(lines) == 3
+    approximate = lines[2] - 2
+    assert lines[1] < approximate < lines[2]
+
+    tsa = TSAOutput(symbols=[TSASymbol(
+        name="delete_file",
+        kind="method",
+        file_path=SYSTEMUTILS_PATH,
+        line_start=approximate,
+        line_end=approximate + 1,
+        class_name="SecondRepository",
+    )])
+    delta = normalize(manifest, tsa)
+
+    sink = _node(delta, "delete_file")
+    assert sink.attributes["line_start"] == approximate
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+def test_duplicate_tool_names_resolve_by_line_start(target: Target) -> None:
+    """The tool path resolves the same way (1.2a.3f).
+
+    Only the first `read_file` returns a value; before 1.2a.3f both nodes
+    recorded `returns_data = True`.
+    """
+    manifest = _server_manifest(target, DUPLICATE_TOOL_NAMES)
+    tsa = _tsa_from_source(DUPLICATE_TOOL_NAMES, SYSTEMUTILS_PATH)
+    delta = normalize(manifest, tsa)
+
+    lines = _definition_lines(DUPLICATE_TOOL_NAMES, "read_file")
+    assert len(lines) == 2
+
+    first = _node_at_line(delta, "read_file", lines[0])
+    second = _node_at_line(delta, "read_file", lines[1])
+    assert first.kind == "tool"
+    assert first.attributes["returns_data"] is True
+    assert second.attributes["returns_data"] is False
+
+
+def test_resolve_definition_exact_missing_and_gap() -> None:
+    """`_resolve_definition` step by step, on a parsed module."""
+    module = ast.parse(DUPLICATE_SINK_METHODS)
+    index = _index_functions(module)
+    lines = _definition_lines(DUPLICATE_SINK_METHODS, "delete_file")
+
+    # Exact: the definition that starts at that line.
+    assert _resolve_definition(index, "delete_file", lines[1]) is index[
+        ("delete_file", lines[1])
+    ]
+    # Contained: a line inside the first body.
+    assert _resolve_definition(index, "delete_file", lines[0] + 1) is index[
+        ("delete_file", lines[0])
+    ]
+    # No such name at all → None (the `unknown` / `False` path).
+    assert _resolve_definition(index, "no_such_name", 1) is None
+    assert _resolve_definition(index, "no_such_name", None) is None
+    # No `line_start` → the first definition of the name.
+    assert _resolve_definition(index, "delete_file", None) is index[
+        ("delete_file", lines[0])
+    ]
+    # Both definitions are kept: a name is not collapsed (1.2a.3f).
+    assert len(index) == 2
 

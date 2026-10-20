@@ -43,6 +43,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 from ..graph.models import Edge, Node
 from ..ingestion.discovery import FileManifest
@@ -147,8 +148,8 @@ def normalize(
     # path, not an error path.
     abs_path_by_path = {entry.path: entry.abs_path for entry in manifest.files}
     module_cache: dict[str, ast.Module | None] = {}
-    functions_cache: dict[str, dict[str, FunctionNode]] = {}
-    classes_cache: dict[str, dict[str, ast.ClassDef]] = {}
+    functions_cache: dict[str, dict[tuple[str, int], FunctionNode]] = {}
+    classes_cache: dict[str, dict[tuple[str, int], ast.ClassDef]] = {}
 
     def _module_for(file_path: str) -> ast.Module | None:
         """Parsed module for a manifest file, cached per scan."""
@@ -158,8 +159,14 @@ def normalize(
         module_cache[file_path] = module
         return module
 
-    def _functions_for(file_path: str) -> dict[str, FunctionNode]:
-        """Function index for a manifest file, cached per scan."""
+    def _functions_for(
+        file_path: str,
+    ) -> dict[tuple[str, int], FunctionNode]:
+        """Function index for a manifest file, cached per scan.
+
+        Keyed by `(name, line_start)` (1.2a.3f) — see
+        `_index_functions`.
+        """
         if file_path in functions_cache:
             return functions_cache[file_path]
         module = _module_for(file_path)
@@ -167,8 +174,13 @@ def normalize(
         functions_cache[file_path] = functions
         return functions
 
-    def _classes_for(file_path: str) -> dict[str, ast.ClassDef]:
-        """Class index for a manifest file, cached per scan."""
+    def _classes_for(
+        file_path: str,
+    ) -> dict[tuple[str, int], ast.ClassDef]:
+        """Class index for a manifest file, cached per scan.
+
+        Keyed by `(name, line_start)` (1.2a.3f) — see `_index_classes`.
+        """
         if file_path in classes_cache:
             return classes_cache[file_path]
         module = _module_for(file_path)
@@ -181,8 +193,12 @@ def normalize(
 
         A tool records whether it returns data to its caller; a sink
         records how its own body passes data to a dangerous call. The
-        body is resolved by name in the file's function index. A sink
-        whose name is a **class** — a capability-based sink such as
+        body is resolved in the file's function index by name **and**
+        `line_start` (1.2a.3f), so when a file defines the same name
+        twice — `toggle_enabled` at
+        `finbot/core/data/repositories.py:664` and `:1426` — each node
+        reads its own definition instead of the first one. A sink whose
+        name is a **class** — a capability-based sink such as
         `UserProfileRepository` — falls back to the class index and is
         analyzed by `analyze_sink_class` (1.2a.5); a tool is always a
         function, so it never consults the class index.
@@ -193,7 +209,10 @@ def normalize(
         `sink_data_flow = "unknown"`.
         """
         source_file = str(node.attributes.get("source_file", ""))
-        func = _functions_for(source_file).get(node.name)
+        line_start = _node_line_start(node)
+        func = _resolve_definition(
+            _functions_for(source_file), node.name, line_start
+        )
         if node.kind == "tool":
             return {
                 "returns_data": (
@@ -202,7 +221,9 @@ def normalize(
             }
         if func is not None:
             return {"sink_data_flow": analyze_sink_body(func)}
-        cls = _classes_for(source_file).get(node.name)
+        cls = _resolve_definition(
+            _classes_for(source_file), node.name, line_start
+        )
         if cls is not None:
             return {"sink_data_flow": analyze_sink_class(cls)}
         return {"sink_data_flow": "unknown"}
@@ -307,7 +328,9 @@ def normalize(
             continue
         functions = _functions_for(file_path)
         for tool_node in tools:
-            tool_func = functions.get(tool_node.name)
+            tool_func = _resolve_definition(
+                functions, tool_node.name, _node_line_start(tool_node)
+            )
             for sink_node in sinks:
                 sink_call = (
                     _find_sink_call(tool_func, sink_node.name)
@@ -775,33 +798,133 @@ def _parse_python_file(abs_path: Path | None) -> ast.Module | None:
         return None
 
 
-def _index_functions(module: ast.Module) -> dict[str, FunctionNode]:
-    """Map function/method name → node for a parsed module.
+def _index_functions(
+    module: ast.Module,
+) -> dict[tuple[str, int], FunctionNode]:
+    """Map `(name, line_start)` → node for a parsed module.
 
-    Built once per file. When a name is defined more than once the
-    first definition wins; either body is an acceptable stand-in for
-    the name-based analysis (ADR-0001), and redefinitions are rare.
+    Built once per file. Keyed by position, not by name alone: a module
+    may define the same name twice — `toggle_enabled` at
+    `finbot/core/data/repositories.py:664` and `:1426`, in two different
+    repository classes — and the two bodies are different code. Keying
+    by name made the second node read the first body (1.2a.3f); keying
+    by position lets `_resolve_definition` pick the definition the node
+    came from.
+
+    Every definition is kept, nested functions included, so a node
+    inside one resolves to it. Insertion order is `ast.walk` order
+    (breadth-first, so module-level definitions first) — the order the
+    name fallback in `_resolve_definition` returns, which is the
+    pre-1.2a.3f behaviour for a node with no usable `line_start`.
     """
-    index: dict[str, FunctionNode] = {}
+    index: dict[tuple[str, int], FunctionNode] = {}
     for node in ast.walk(module):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            index.setdefault(node.name, node)
+            index.setdefault((node.name, node.lineno), node)
     return index
 
 
-def _index_classes(module: ast.Module) -> dict[str, ast.ClassDef]:
-    """Map class name → node for a parsed module (1.2a.5).
+def _index_classes(module: ast.Module) -> dict[tuple[str, int], ast.ClassDef]:
+    """Map `(name, line_start)` → node for a parsed module (1.2a.5).
 
     Built once per file from the module's own top level: TSA reports
     symbols for top-level classes, and a nested class is not a node of
-    its own. When a name is defined more than once the first definition
-    wins, matching `_index_functions`.
+    its own. Keyed by position for the same reason as
+    `_index_functions` (1.2a.3f); a name defined twice keeps both
+    definitions.
     """
-    index: dict[str, ast.ClassDef] = {}
+    index: dict[tuple[str, int], ast.ClassDef] = {}
     for node in module.body:
         if isinstance(node, ast.ClassDef):
-            index.setdefault(node.name, node)
+            index.setdefault((node.name, node.lineno), node)
     return index
+
+
+# A function or class definition — the values of the two indexes above.
+_Definition = TypeVar("_Definition", bound=ast.AST)
+
+
+def _node_line_start(node: Node) -> int | None:
+    """The node's `line_start` when it is a usable integer (1.2a.3f).
+
+    TSA nodes always carry one. Detector-created nodes carry none, and a
+    hand-built node may carry a placeholder; both resolve by name.
+    """
+    line_start = node.attributes.get("line_start")
+    if isinstance(line_start, int):
+        return line_start
+    return None
+
+
+def _resolve_definition(
+    index: dict[tuple[str, int], _Definition],
+    name: str,
+    line_start: int | None,
+) -> _Definition | None:
+    """The definition of `name` that a node at `line_start` belongs to.
+
+    Four steps, most precise first (1.2a.3f):
+
+    1. **exact** — a definition starting at `line_start`. This is the
+       normal path: TSA reports the definition's own line.
+    2. **containing** — a definition whose body spans `line_start`
+       (`lineno <= line_start <= end_lineno`). Several can contain it
+       when a function is nested in a same-named one; the closest
+       preceding `lineno` wins.
+    3. **closest preceding** — nothing contains `line_start`, but a
+       definition starts before it: an approximate line number resolves
+       to the definition the node has already passed, never to a
+       following one. A node that lands in the gap between two
+       same-named definitions is not evidence about the definition that
+       starts after it.
+    4. **name fallback** — the first definition of that name in the
+       file, which is exactly what the name-keyed index returned before
+       this change. Every node without a `line_start` takes this path —
+       detector-created nodes carry none — so their resolution is
+       unchanged.
+
+    Returns None when the file defines no such name at all, which is the
+    `sink_data_flow = "unknown"` / `returns_data = False` path.
+    """
+    if line_start is None:
+        return _first_definition(index, name)
+    exact = index.get((name, line_start))
+    if exact is not None:
+        return exact
+
+    containing: _Definition | None = None
+    preceding: _Definition | None = None
+    containing_start = -1
+    preceding_start = -1
+    for (candidate, start), definition in index.items():
+        if candidate != name or start > line_start:
+            continue
+        if start > preceding_start:
+            preceding, preceding_start = definition, start
+        end = definition.end_lineno or start
+        if line_start <= end and start > containing_start:
+            containing, containing_start = definition, start
+
+    if containing is not None:
+        return containing
+    if preceding is not None:
+        return preceding
+    return _first_definition(index, name)
+
+
+def _first_definition(
+    index: dict[tuple[str, int], _Definition],
+    name: str,
+) -> _Definition | None:
+    """The first definition of `name`, in index (source) order.
+
+    The name-keyed behaviour of the pre-1.2a.3f index: the first
+    definition of a name wins.
+    """
+    for (candidate, _start), definition in index.items():
+        if candidate == name:
+            return definition
+    return None
 
 
 def _find_sink_call(
