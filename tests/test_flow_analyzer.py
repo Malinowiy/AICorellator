@@ -18,6 +18,7 @@ from aicorellator.parsing.flow_analyzer import (
     _is_commit_call,
     analyze_has_access_to,
     analyze_sink_body,
+    analyze_sink_class,
     analyze_tool_returns,
 )
 
@@ -891,3 +892,310 @@ def test_tool_async_return_is_true() -> None:
     """
     assert _returns(src) is True
 
+
+# ============================================================
+# Class-body sink analyzer (1.2a.5)
+# ============================================================
+
+def _class(source: str) -> ast.ClassDef:
+    """Parse `source` and return its first class definition."""
+    tree = ast.parse(textwrap.dedent(source))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            return node
+    raise AssertionError("no class found in source")
+
+
+def _class_sink(source: str) -> str:
+    """Analyze the first class in `source` as a sink body."""
+    return analyze_sink_class(_class(source))
+
+
+def test_class_sink_init_parameter_reaches_dangerous_call() -> None:
+    """A constructor parameter reaches the dangerous call (1.2a.5).
+
+    The 1.2a.5 sketch spells the same case as `self.db.delete(self.q)`
+    — a stored attribute. Attribute chains are not resolved (ADR-0001),
+    so that spelling stays `unknown`; see
+    `test_class_sink_self_attribute_argument_is_unknown`.
+    """
+    src = """
+    class X:
+        def __init__(self, q):
+            self.db.delete(q)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_call_parameter_reaches_dangerous_call() -> None:
+    """`__call__`'s parameter reaches `os.remove`: the class is invoked."""
+    src = """
+    class X:
+        def __call__(self, q):
+            os.remove(q)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_async_call_is_analyzed() -> None:
+    """`async def __call__` is the same scope (AsyncFunctionDef)."""
+    src = """
+    class X:
+        async def __call__(self, q):
+            os.remove(q)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_literal_only_init() -> None:
+    """A constructor whose dangerous call takes a constant only."""
+    src = """
+    class X:
+        def __init__(self):
+            self.db.delete("literal")
+    """
+    assert _class_sink(src) == "literal_only"
+
+
+def test_class_sink_without_dangerous_call_is_unknown() -> None:
+    """`self.q = q` alone is no flow evidence."""
+    src = """
+    class X:
+        def __init__(self, q):
+            self.q = q
+    """
+    assert _class_sink(src) == "unknown"
+
+
+def test_class_sink_commit_only_init_with_parameter_is_data() -> None:
+    """The commit exception applies at class level too (1.2a.3c).
+
+    The constructor declares a parameter, so `self.db.commit()`
+    persists the class's data and the class is `parameter_match`. The
+    preceding `self.q` argument is an unresolved attribute chain and
+    contributes nothing on its own.
+    """
+    src = """
+    class X:
+        def __init__(self, q):
+            self.q = q
+            self.db.delete(self.q)
+            self.db.commit()
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_commit_only_init_without_parameter_is_unknown() -> None:
+    """The parameterless rule holds for class bodies as well.
+
+    A constructor with no parameters has no parameter-derived state to
+    persist, so a bare commit contributes nothing.
+    """
+    src = """
+    class X:
+        def __init__(self):
+            self.db.commit()
+    """
+    assert _class_sink(src) == "unknown"
+
+
+def test_class_sink_self_attribute_argument_is_unknown() -> None:
+    """`self.db.delete(self.q)` → unknown: attribute chains are not
+    resolved (ADR-0001). Stored-attribute data flow is backlog 1.2a.3g;
+    `_classify_argument` is untouched by this item."""
+    src = """
+    class X:
+        def __init__(self, q):
+            self.q = q
+            self.db.delete(self.q)
+    """
+    assert _class_sink(src) == "unknown"
+
+
+
+
+
+def test_class_sink_strongest_scope_wins() -> None:
+    """Any `parameter_match` beats a `literal_only`, in either order."""
+    literal_then_parameter = """
+    class X:
+        def __init__(self):
+            self.db.delete("literal")
+        def __call__(self, q):
+            os.remove(q)
+    """
+    parameter_then_literal = """
+    class X:
+        def __init__(self, q):
+            self.db.delete(q)
+        def __call__(self):
+            self.db.delete("literal")
+    """
+    assert _class_sink(literal_then_parameter) == "parameter_match"
+    assert _class_sink(parameter_then_literal) == "parameter_match"
+
+
+def test_class_sink_plain_method_is_analyzed() -> None:
+    """Every method counts, not only `__init__`/`__call__` (1.2a.5).
+
+    A class-kind sink is a container of callable entry points; the
+    caller invokes `delete(q)` and `q` reaches the dangerous call there.
+    """
+    src = """
+    class X:
+        def delete(self, q):
+            os.remove(q)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_repository_style_add_and_commit_is_data() -> None:
+    """`claim_username`-style method: the parameter is written and
+    committed through the session (FinBot `UserProfileRepository`).
+    """
+    src = """
+    class X:
+        def claim_username(self, user_id, username):
+            profile = self.db.query(Profile).filter_by(username=username)
+            profile.user_id = user_id
+            profile.username = username
+            self.db.add(profile)
+            self.db.commit()
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_execute_method_parameter_reaches_subprocess() -> None:
+    """`execute_mcp_tool`-style method: the parameter is the command
+    (dvmcp `DVMCPClient`).
+    """
+    src = """
+    class X:
+        def execute(self, tool_name, params):
+            subprocess.run(params, shell=True)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_method_literal_only() -> None:
+    """A method whose dangerous call takes a constant only
+    (mcploitable `Handler.do_GET`-style, literal URL).
+    """
+    src = """
+    class X:
+        def do_GET(self):
+            urllib.request.urlopen("http://example.com/")
+    """
+    assert _class_sink(src) == "literal_only"
+
+
+def test_class_sink_methods_without_dangerous_call_is_unknown() -> None:
+    """Methods that never call anything dangerous → unknown."""
+    src = """
+    class X:
+        def get(self, q):
+            return q
+        def put(self, q):
+            self.q = q
+    """
+    assert _class_sink(src) == "unknown"
+
+
+def test_class_sink_async_method_is_analyzed() -> None:
+    """`async def handle` is a method like any other (AsyncFunctionDef)."""
+    src = """
+    class X:
+        async def handle(self, q):
+            os.remove(q)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_strongest_method_wins() -> None:
+    """Any method's `parameter_match` beats another's `literal_only`."""
+    src = """
+    class X:
+        def ping(self):
+            self.db.delete("literal")
+        def purge(self, q):
+            os.remove(q)
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_methods_only_literal_only_is_literal_only() -> None:
+    """All methods literal → `literal_only`, not `unknown`."""
+    src = """
+    class X:
+        def ping(self):
+            self.db.delete("literal")
+        def pong(self):
+            self.db.delete("other")
+    """
+    assert _class_sink(src) == "literal_only"
+
+
+def test_class_sink_class_level_dangerous_call_counts() -> None:
+    """A class with no methods: `class X: db = SomeClient();
+    db.delete("scratch")` runs at definition time, so the class-level
+    scope still contributes its argument.
+    """
+    src = """
+    class X:
+        db = SomeClient()
+        db.delete("scratch")
+    """
+    assert _class_sink(src) == "literal_only"
+
+
+def test_class_sink_class_level_name_argument_is_unknown() -> None:
+    """A class with no methods whose only dangerous call is class level
+    and takes no parameter → unknown. There are no parameters at class
+    level, so a bare name is a global and contributes no evidence
+    (ADR-0001)."""
+    src = """
+    class X:
+        db = SomeClient()
+        db.delete(CONFIG_PATH)
+    """
+    assert _class_sink(src) == "unknown"
+
+
+def test_class_sink_nested_class_is_not_analyzed() -> None:
+    """A nested class is a scope of its own — its `__call__` body is not
+    this class's data flow. Counting it here would double-count the call
+    when the nested class is itself a sink node."""
+    src = """
+    class X:
+        class Inner:
+            def __call__(self, q):
+                os.remove(q)
+    """
+    assert _class_sink(src) == "unknown"
+
+
+def test_class_sink_nested_class_method_is_not_analyzed() -> None:
+    """A nested class's ordinary method is excluded the same way: the
+    dangerous call belongs to `Inner`, not to `X`."""
+    src = """
+    class X:
+        def ping(self):
+            self.db.delete("literal")
+        class Inner:
+            def delete(self, q):
+                os.remove(q)
+    """
+    assert _class_sink(src) == "literal_only"
+
+
+def test_class_sink_nested_function_inside_method_counts() -> None:
+    """A function nested inside a method is not separated: the method
+    body is walked whole, as everywhere else in this module."""
+    src = """
+    class X:
+        def handle(self, q):
+            def inner():
+                os.remove(q)
+            inner()
+    """
+    assert _class_sink(src) == "parameter_match"

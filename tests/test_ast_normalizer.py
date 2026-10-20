@@ -22,6 +22,10 @@ from aicorellator.parsing.ast_normalizer import (
     _sha256,
     normalize,
 )
+from aicorellator.parsing.capability_extractor import (
+    FileCapabilities,
+    SymbolCapabilities,
+)
 from aicorellator.parsing.classification import Classification
 from aicorellator.parsing.flow_analyzer import DATA_FLOW_DATA_VALUES
 from aicorellator.parsing.entry_points import (
@@ -1347,4 +1351,160 @@ def test_body_attributes_survive_detector_node_replacement(
     assert tool.id == "tool:detector"
     assert tool.attributes["returns_data"] is True
 
+
+# ============================================================
+# Class-kind sinks (1.2a.5)
+# ============================================================
+
+CLASS_SINK_PATH = "finbot/core/data/repositories.py"
+
+CLASS_SINK_FORWARDS_PARAMETER = """
+class FileRepository:
+    def __init__(self, p):
+        self.db.delete(p)
+"""
+
+CLASS_SINK_DELETES_LITERAL = """
+class FileRepository:
+    def __init__(self):
+        self.db.delete("scratch")
+"""
+
+CLASS_SINK_METHOD_ONLY = """
+class FileRepository:
+    def delete(self, p):
+        return self.db.delete(p)
+"""
+
+CLASS_SINK_NO_DANGEROUS_CALL = """
+class FileRepository:
+    def delete(self, p):
+        return p
+"""
+
+
+def _class_sink_manifest(target: Target, source: str) -> FileManifest:
+    """A one-file project whose only file defines the repository class."""
+    manifest = FileManifest(target=target)
+    manifest.files = [_write_python_file(target, CLASS_SINK_PATH, source)]
+    return manifest
+
+
+def _class_sink_tsa() -> TSAOutput:
+    """TSA output with one *class* symbol — the capability-based sink."""
+    return TSAOutput(symbols=[
+        TSASymbol(
+            name="FileRepository",
+            kind="class",
+            file_path=CLASS_SINK_PATH,
+            line_start=1,
+            line_end=20,
+        ),
+    ])
+
+
+def _class_sink_caps() -> dict[str, FileCapabilities]:
+    """Capabilities crediting `FileRepository` with `writes_db`.
+
+    `classify_class` turns a sink capability into `kind = "sink"` with no
+    name heuristic involved — the same route that makes FinBot's
+    `UserProfileRepository` and dvmcp's `DVMCPClient` sink nodes.
+    """
+    return {
+        CLASS_SINK_PATH: FileCapabilities(
+            file_path=CLASS_SINK_PATH,
+            symbols=[
+                SymbolCapabilities(
+                    symbol_name="FileRepository",
+                    file_path=CLASS_SINK_PATH,
+                    capabilities={"writes_db"},
+                ),
+            ],
+        ),
+    }
+
+
+def test_class_sink_node_records_parameter_match(target: Target) -> None:
+    """A class-kind sink resolves through the class index (1.2a.5).
+
+    The node name is not a function, so the function index misses it and
+    `analyze_sink_class` reads the class's methods instead.
+    """
+    manifest = _class_sink_manifest(target, CLASS_SINK_FORWARDS_PARAMETER)
+    delta = normalize(
+        manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
+    )
+
+    sink = _node(delta, "FileRepository")
+    assert sink.kind == "sink"
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+def test_class_sink_node_records_literal_only(target: Target) -> None:
+    """A class-kind sink whose `__init__` passes a constant only."""
+    manifest = _class_sink_manifest(target, CLASS_SINK_DELETES_LITERAL)
+    delta = normalize(
+        manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
+    )
+
+    sink = _node(delta, "FileRepository")
+    assert sink.attributes["sink_data_flow"] == "literal_only"
+
+
+def test_class_sink_node_with_method_only_is_parameter_match(
+    target: Target,
+) -> None:
+    """A class with no `__init__` still resolves through the class index.
+
+    `analyze_sink_class` reads every method (1.2a.5 rework), so the
+    ordinary `delete(self, p)` method — the entry point a caller drives
+    — is what makes the node `parameter_match`.
+    """
+    manifest = _class_sink_manifest(target, CLASS_SINK_METHOD_ONLY)
+    delta = normalize(
+        manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
+    )
+
+    sink = _node(delta, "FileRepository")
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+def test_class_sink_node_without_dangerous_call_is_unknown(
+    target: Target,
+) -> None:
+    """Methods that call nothing dangerous → unknown, and no crash."""
+    manifest = _class_sink_manifest(target, CLASS_SINK_NO_DANGEROUS_CALL)
+    delta = normalize(
+        manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
+    )
+
+    sink = _node(delta, "FileRepository")
+    assert sink.attributes["sink_data_flow"] == "unknown"
+
+
+def test_class_sink_detector_node_resolves_the_class_body(
+    target: Target,
+) -> None:
+    """A detector-created sink node gets the class body analyzed too.
+
+    The backfill in `normalize` resolves bodies through the same
+    `_body_attributes`, so the class fallback is not TSA-only (1.2a.5).
+    """
+    from aicorellator.parsing.framework_detectors import DetectionResult
+
+    manifest = _class_sink_manifest(target, CLASS_SINK_FORWARDS_PARAMETER)
+    detector_sink = Node(
+        id="sink:detector",
+        kind="sink",
+        name="FileRepository",
+        host_id="localhost",
+        attributes={"source_file": CLASS_SINK_PATH, "framework": "fastmcp"},
+    )
+    detection = DetectionResult(nodes=[detector_sink], framework="fastmcp")
+
+    delta = normalize(manifest, TSAOutput(), framework_detection=detection)
+
+    sink = _node(delta, "FileRepository")
+    assert sink.id == "sink:detector"
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
 

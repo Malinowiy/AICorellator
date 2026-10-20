@@ -13,7 +13,15 @@ a file without the tool calling the sink by name. Then the useful
 questions are asked of each body separately:
 
     analyze_sink_body(sink_func)    -> str   ("sink_data_flow")
+    analyze_sink_class(sink_cls)    -> str   ("sink_data_flow")
     analyze_tool_returns(tool_func) -> bool  ("returns_data")
+
+A capability-based sink can be a class rather than a function (1.2a.5):
+`UserProfileRepository` writes to a database, `DVMCPClient` reaches the
+network — the class is the sink. Such a class is a container of
+callable entry points, so `analyze_sink_class` asks the sink question of
+every method it defines, plus its class-level statements. A class node
+has no body of its own, so the function variant cannot see it.
 
 A tool that returns data and a sink that accepts data make a data flow
 *through the agent* plausible even when the `has_access_to` edge is
@@ -185,6 +193,72 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
             saw_literal_only = True
 
     return "literal_only" if saw_literal_only else "unknown"
+
+
+def analyze_sink_class(cls: ast.ClassDef) -> str:
+    """Classify how a class-kind sink passes its own data to a dangerous call.
+
+    Args:
+        cls: the `ast.ClassDef` of a node classified as `sink`.
+
+    Returns:
+        `"parameter_match"`, `"literal_only"`, or `"unknown"`.
+
+    A capability-based sink can be a class. `UserProfileRepository`,
+    `DVMCPClient` and `VulnerableChatAssistant` are sinks because their
+    bodies write to a database, execute a shell or reach the network —
+    not because of a function named like the node. Such a node has no
+    function body, so `analyze_sink_body` cannot see it and
+    `sink_data_flow` was `unknown` by construction (1.2a.5).
+
+    The class variant analyzes the scopes a caller can drive:
+
+        every method  the class's callable entry points — a caller
+                      invokes `claim_username`, `execute_mcp_tool`,
+                      `do_GET`, ... and *that* is where the caller's
+                      data meets the dangerous call
+        class level   statements executed at definition time
+
+    A class is a container of entry points, so the value means "at least
+    one method of this class can pass data to a dangerous call" — which
+    is the sink question the prompt asks of a class node. `__init__` and
+    `__call__` are methods like any other; the earlier
+    `__init__`/`__call__`-only rule missed `UserProfileRepository`,
+    `DVMCPClient` and `Handler` entirely, because their constructors
+    only assign `self.db` (1.2a.5 rework).
+
+    Each scope goes through `analyze_sink_body`, so the argument ranking
+    and the commit exception (1.2a.3c) apply to method bodies exactly as
+    they do to functions. The results merge with the same non-linear
+    ranking used everywhere else: any `parameter_match` wins, else any
+    `literal_only`, else `unknown`.
+
+    Nested classes are not analyzed: their methods belong to the nested
+    class, which is a sink node of its own. A function nested inside a
+    method is not separated — `analyze_sink_body` walks the whole method
+    body, matching the rest of this module.
+
+    A class with no methods and no class-level dangerous call is
+    `unknown` — the same fallback as a sink whose body cannot be
+    resolved.
+
+    This stays name-based (ADR-0001): a stored attribute (`self.q`) is
+    still an attribute chain and classifies as `unknown`, so a
+    repository that forwards only `self.<attr>` to a dangerous call
+    remains `unknown` (attribute-based data flow is backlog 1.2a.3g).
+    """
+    results: list[str] = [
+        analyze_sink_body(method) for method in _methods(cls)
+    ]
+    scope = _class_level_scope(cls)
+    if scope is not None:
+        results.append(analyze_sink_body(scope))
+
+    if "parameter_match" in results:
+        return "parameter_match"
+    if "literal_only" in results:
+        return "literal_only"
+    return "unknown"
 
 
 def analyze_tool_returns(tool_func: FunctionNode) -> bool:
@@ -426,3 +500,83 @@ def _local_variable_names(func: FunctionNode) -> set[str]:
     names.discard("self")
     names.discard("cls")
     return names
+
+
+# ============================================================
+# Class bodies (1.2a.5)
+# ============================================================
+
+# Name of the synthetic function that stands in for a class's
+# class-level statements. It is never compiled, unparsed, or matched
+# against a call-site pattern — it exists only so those statements can
+# be handed to `analyze_sink_body` as one function-like scope.
+_CLASS_LEVEL_SCOPE_NAME = "<class-level>"
+
+
+def _methods(cls: ast.ClassDef) -> list[FunctionNode]:
+    """The class's own method definitions, in class-body order.
+
+    Every method counts, whatever its name (1.2a.5 rework). A
+    capability-based sink is a container of callable entry points, and
+    the dangerous call receives the caller's data in the method the
+    caller invokes — `UserProfileRepository.claim_username`,
+    `DVMCPClient.execute_mcp_tool`, `Handler.do_GET` — while the
+    constructor usually only assigns `self.db`.
+
+    Only direct members count: a function nested inside a method, and a
+    nested class's methods, belong to another scope. When a name is
+    defined twice the first definition wins, matching `_index_functions`
+    in the normalizer. A class with no methods returns an empty list, and
+    then only its class-level statements are analyzed.
+    """
+    found: dict[str, FunctionNode] = {}
+    for statement in cls.body:
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        found.setdefault(statement.name, statement)
+    return list(found.values())
+
+
+def _class_level_scope(cls: ast.ClassDef) -> FunctionNode | None:
+    """The class-level statements of `cls` as a parameterless scope.
+
+    `class X: db = SomeClient(); db.delete("t")` runs at class
+    definition time, outside any method, so no method body can see it.
+    Wrapping those statements in a synthetic
+    `FunctionDef` with no parameters lets `analyze_sink_body` — and with
+    it the argument ranking and the commit exception — apply to
+    class-level calls unchanged. The node is only ever walked.
+
+    Method definitions and nested classes are excluded: a method body is
+    analyzed as itself, and a nested class is a scope of its own, so
+    counting its dangerous calls here would double-count a call when
+    both classes are sinks.
+
+    Returns None when the class has no class-level statements, in which
+    case the class-level scope contributes nothing.
+    """
+    statements = [
+        statement
+        for statement in cls.body
+        if not isinstance(
+            statement,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        )
+    ]
+    if not statements:
+        return None
+    return ast.FunctionDef(
+        name=_CLASS_LEVEL_SCOPE_NAME,
+        args=ast.arguments(
+            posonlyargs=[],
+            args=[],
+            vararg=None,
+            kwonlyargs=[],
+            kw_defaults=[],
+            kwarg=None,
+            defaults=[],
+        ),
+        body=statements,
+        decorator_list=[],
+    )
+

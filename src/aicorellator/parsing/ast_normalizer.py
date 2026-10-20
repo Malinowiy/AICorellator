@@ -7,9 +7,10 @@ Responsibilities:
   4. Merge framework detector nodes and edges (ADR-0011).
   5. Classify every edge's flow_kind (ADR-0015). For has_access_to
      (tool → sink) a Flow Analyzer inspects the tool body.
-  6. Attach flow attributes to tool and sink nodes (1.2a.1):
-     `returns_data` on a tool, `sink_data_flow` on a sink. Both are
-     prompt signals, not chain filters.
+  6. Attach flow attributes to tool and sink nodes (1.2a.1): a tool
+     records `returns_data`, a sink records `sink_data_flow`. A sink
+     named after a class is analyzed by the class-body variant
+     (1.2a.5). Both are prompt signals, not chain filters.
 
 Steps 5 and 6 are the only places where source beyond the TSA index is
 read. They share one per-scan module cache, so a file is parsed at most
@@ -59,6 +60,7 @@ from .flow_analyzer import (
     FunctionNode,
     analyze_has_access_to,
     analyze_sink_body,
+    analyze_sink_class,
     analyze_tool_returns,
 )
 from .framework_detectors import DetectionResult
@@ -146,6 +148,7 @@ def normalize(
     abs_path_by_path = {entry.path: entry.abs_path for entry in manifest.files}
     module_cache: dict[str, ast.Module | None] = {}
     functions_cache: dict[str, dict[str, FunctionNode]] = {}
+    classes_cache: dict[str, dict[str, ast.ClassDef]] = {}
 
     def _module_for(file_path: str) -> ast.Module | None:
         """Parsed module for a manifest file, cached per scan."""
@@ -164,27 +167,45 @@ def normalize(
         functions_cache[file_path] = functions
         return functions
 
+    def _classes_for(file_path: str) -> dict[str, ast.ClassDef]:
+        """Class index for a manifest file, cached per scan."""
+        if file_path in classes_cache:
+            return classes_cache[file_path]
+        module = _module_for(file_path)
+        classes = _index_classes(module) if module is not None else {}
+        classes_cache[file_path] = classes
+        return classes
+
     def _body_attributes(node: Node) -> dict[str, object]:
-        """Flow attributes for a tool or sink node (1.2a.1).
+        """Flow attributes for a tool or sink node (1.2a.1, 1.2a.5).
 
         A tool records whether it returns data to its caller; a sink
-        records how its own body passes data to a dangerous call. When
-        the body cannot be resolved — a heuristic node with no function
-        of that name, or a file that could not be parsed — the fallback
-        is `returns_data = False` / `sink_data_flow = "unknown"`.
+        records how its own body passes data to a dangerous call. The
+        body is resolved by name in the file's function index. A sink
+        whose name is a **class** — a capability-based sink such as
+        `UserProfileRepository` — falls back to the class index and is
+        analyzed by `analyze_sink_class` (1.2a.5); a tool is always a
+        function, so it never consults the class index.
+
+        When the body cannot be resolved — a heuristic node with no
+        function or class of that name, or a file that could not be
+        parsed — the fallback is `returns_data = False` /
+        `sink_data_flow = "unknown"`.
         """
-        func = _functions_for(
-            str(node.attributes.get("source_file", ""))
-        ).get(node.name)
+        source_file = str(node.attributes.get("source_file", ""))
+        func = _functions_for(source_file).get(node.name)
         if node.kind == "tool":
             return {
                 "returns_data": (
                     func is not None and analyze_tool_returns(func)
                 ),
             }
-        if func is None:
-            return {"sink_data_flow": "unknown"}
-        return {"sink_data_flow": analyze_sink_body(func)}
+        if func is not None:
+            return {"sink_data_flow": analyze_sink_body(func)}
+        cls = _classes_for(source_file).get(node.name)
+        if cls is not None:
+            return {"sink_data_flow": analyze_sink_class(cls)}
+        return {"sink_data_flow": "unknown"}
 
     # --- MCP servers from files ---
     mcp_servers: dict[str, str] = {}
@@ -216,8 +237,9 @@ def normalize(
             continue
         node = _node_from_class(symbol, c, capabilities)
         if node.kind == "sink":
-            # A class can be a sink (capability-based). Its body is not a
-            # function, so the analyzer usually falls back to "unknown".
+            # A class can be a sink (capability-based). The body is a
+            # class, not a function, so `_body_attributes` resolves it
+            # through the class index and `analyze_sink_class` (1.2a.5).
             node.attributes.update(_body_attributes(node))
         delta.nodes.append(node)
 
@@ -501,7 +523,9 @@ def normalize(
     # replace the TSA node of the same (name, source_file) — which drops
     # the attributes set above — and detectors also create tool nodes of
     # their own. Both are resolved through the same module cache, so this
-    # costs no extra file reads.
+    # costs no extra file reads. A detector-created sink node named after
+    # a class gets its class body analyzed here too (1.2a.5): the class
+    # fallback lives in `_body_attributes`, not in the caller.
     for node in delta.nodes:
         if node.kind == "tool" and "returns_data" not in node.attributes:
             node.attributes.update(_body_attributes(node))
@@ -761,6 +785,21 @@ def _index_functions(module: ast.Module) -> dict[str, FunctionNode]:
     index: dict[str, FunctionNode] = {}
     for node in ast.walk(module):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            index.setdefault(node.name, node)
+    return index
+
+
+def _index_classes(module: ast.Module) -> dict[str, ast.ClassDef]:
+    """Map class name → node for a parsed module (1.2a.5).
+
+    Built once per file from the module's own top level: TSA reports
+    symbols for top-level classes, and a nested class is not a node of
+    its own. When a name is defined more than once the first definition
+    wins, matching `_index_functions`.
+    """
+    index: dict[str, ast.ClassDef] = {}
+    for node in module.body:
+        if isinstance(node, ast.ClassDef):
             index.setdefault(node.name, node)
     return index
 
