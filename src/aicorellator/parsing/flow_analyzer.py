@@ -38,6 +38,10 @@ parameter. It does not resolve dictionary lookups, f-strings, or
 attribute chains — those fall back to `unknown`. False negatives are
 accepted; the LLM calibrates confidence from the result (ADR-0015).
 
+A literal is a constant or a collection of constants: the command list
+of `subprocess.run(["docker", "info"])` is constant data, so it is
+`literal_only`, not `unknown` (1.2a.4).
+
 The function is pure: it takes AST nodes and returns a string, with no
 filesystem or global state. The normalizer supplies the nodes.
 """
@@ -198,9 +202,10 @@ def analyze_has_access_to(
         otherwise                        -> unknown
 
     `literal_only` is a universal, not an existential: it requires
-    *every* argument to be a literal. A single unresolved argument
-    means data may flow through it, so the result is `unknown` even
-    when another argument is a literal.
+    *every* argument to be a literal (a constant collection counts as a
+    literal — 1.2a.4). A single unresolved argument means data may flow
+    through it, so the result is `unknown` even when another argument
+    is a literal.
 
     The call is assumed to be inside `tool_func`; the function does not
     verify this. It reads nothing outside the two AST nodes.
@@ -254,6 +259,28 @@ def _dangerous_calls(func: FunctionNode) -> list[ast.Call]:
 # Argument classification
 # ============================================================
 
+def _is_literal(node: ast.expr | None) -> bool:
+    """True if `node` is a literal or a constant collection (1.2a.4).
+
+    A collection is a literal when all of its elements are literals, so
+    `["docker", "info"]` is as constant as `"docker"`. Collections
+    recurse: `[["a"], ["b"]]` is constant, `[["a"], param]` is not. An
+    empty collection is constant (`all()` over nothing).
+
+    `None` is not constant: it is how `ast.Dict.keys` represents the
+    `{**mapping}` unpacking form, which is not a constant.
+    """
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_is_literal(element) for element in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(
+            _is_literal(element) for element in (*node.keys, *node.values)
+        )
+    return False
+
+
 def _classify_argument(
     node: ast.expr,
     params: set[str],
@@ -277,6 +304,17 @@ def _classify_argument(
 
     if isinstance(node, ast.Constant):
         return "literal_only"
+
+    # Constant collections are literals for our purposes (1.2a.4).
+    # A collection that mixes a parameter and a literal is deliberately
+    # `unknown`, not the element's kind: the collection as a whole is
+    # not a constant, and we do not know whether the sink consumes the
+    # parameter element or the literal one, so claiming
+    # `parameter_match` would overstate the evidence (ADR-0001,
+    # ADR-0015 — false negatives are accepted, overstated evidence is
+    # not).
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+        return "literal_only" if _is_literal(node) else "unknown"
 
     # Attribute access, subscript, f-string, binop, starred, ... —
     # name-based analysis cannot follow these (ADR-0001, ADR-0015).

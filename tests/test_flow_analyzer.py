@@ -211,6 +211,116 @@ def test_all_literals_is_literal_only() -> None:
     assert _analyze(src) == "literal_only"
 
 
+# ============================================================
+# Constant collections (1.2a.4)
+# ============================================================
+
+def test_list_argument_is_literal_only() -> None:
+    """A list of constants is constant data, not an unresolved
+    expression: `subprocess.run(["docker", "info"])`."""
+    src = """
+    def check_docker():
+        subprocess.run(["docker", "info"])
+    """
+    assert _analyze(src, "subprocess.run") == "literal_only"
+
+
+def test_tuple_argument_is_literal_only() -> None:
+    """Tuples follow the same rule as lists."""
+    src = """
+    def check_redis():
+        subprocess.run(("redis-cli", "ping"))
+    """
+    assert _analyze(src, "subprocess.run") == "literal_only"
+
+
+def test_dict_argument_is_literal_only() -> None:
+    """A dict whose keys and values are all constants is constant data."""
+    src = """
+    def check_config():
+        subprocess.run({"a": 1, "b": 2})
+    """
+    assert _analyze(src, "subprocess.run") == "literal_only"
+
+
+def test_set_argument_is_literal_only() -> None:
+    """Sets follow the same rule."""
+    src = """
+    def check_flags():
+        subprocess.run({"a", "b"})
+    """
+    assert _analyze(src, "subprocess.run") == "literal_only"
+
+
+def test_empty_collection_argument_is_literal_only() -> None:
+    """An empty collection has no element that could carry data."""
+    src = """
+    def check_nothing():
+        subprocess.run([])
+    """
+    assert _analyze(src, "subprocess.run") == "literal_only"
+
+
+def test_mixed_collection_argument_is_unknown() -> None:
+    """A collection holding a parameter is not `literal_only` — and not
+    `parameter_match` either. The collection as a whole is not a
+    constant, but we do not know whether the sink consumes the
+    parameter element or the literal one, so the honest answer is
+    `unknown` (ADR-0001, ADR-0015)."""
+    src = """
+    def check_tool(param):
+        subprocess.run(["a", param])
+    """
+    assert _analyze(src, "subprocess.run") == "unknown"
+
+
+def test_nested_collection_argument_is_literal_only() -> None:
+    """Collections recurse: all elements constants all the way down."""
+    src = """
+    def check_nested():
+        subprocess.run([["a"], ["b"]])
+    """
+    assert _analyze(src, "subprocess.run") == "literal_only"
+
+
+def test_nested_mixed_collection_argument_is_unknown() -> None:
+    """A non-constant element one level down defeats the whole
+    collection."""
+    src = """
+    def check_nested(param):
+        subprocess.run([["a"], param])
+    """
+    assert _analyze(src, "subprocess.run") == "unknown"
+
+
+def test_dict_with_parameter_value_is_unknown() -> None:
+    """One non-constant value is enough to make the dict non-constant."""
+    src = """
+    def check_config(param):
+        subprocess.run({"a": param})
+    """
+    assert _analyze(src, "subprocess.run") == "unknown"
+
+
+def test_dict_unpacking_is_unknown() -> None:
+    """`{**mapping}` is not a constant collection: the mapping is not
+    literal, and `ast.Dict.keys` marks the unpacking with `None`."""
+    src = """
+    def check_config(param):
+        subprocess.run({**param})
+    """
+    assert _analyze(src, "subprocess.run") == "unknown"
+
+
+def test_starred_element_is_unknown() -> None:
+    """`[*param, "a"]` mixes a non-constant element in."""
+    src = """
+    def check_args(param):
+        subprocess.run([*param, "a"])
+    """
+    assert _analyze(src, "subprocess.run") == "unknown"
+
+
 def test_literal_with_call_result_is_call_result() -> None:
     """A call result outranks a coexisting literal."""
     src = """
@@ -402,13 +512,90 @@ def test_sink_shell_call_with_constant_is_literal_only() -> None:
     assert _sink_body(src) == "literal_only"
 
 
-def test_sink_list_argument_falls_back_to_unknown() -> None:
-    """A list literal is not `ast.Constant` — name-based analysis cannot
-    classify it, so the result is `unknown` (ADR-0001, false negatives
-    accepted)."""
+def test_sink_list_argument_is_literal_only() -> None:
+    """A list of constants is constant data → `literal_only`.
+
+    Changed by 1.2a.4: this test previously asserted `unknown` on the
+    grounds that a list is not `ast.Constant`. A list whose elements
+    are all constants is equivalent to a literal for the sink analyzer.
+    """
     src = """
     def run_script(self):
         subprocess.run(["ls", "-la"])
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_tuple_argument_is_literal_only() -> None:
+    """Tuples follow the same rule at the sink call site."""
+    src = """
+    def check_redis(self):
+        subprocess.run(("redis-cli", "ping"))
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_dict_argument_is_literal_only() -> None:
+    """A constant dict reaches the dangerous call → `literal_only`."""
+    src = """
+    def check_config(self):
+        subprocess.run({"a": 1, "b": 2})
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_set_argument_is_literal_only() -> None:
+    """Sets follow the same rule at the sink call site."""
+    src = """
+    def check_flags(self):
+        subprocess.run({"a", "b"})
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_empty_collection_is_literal_only() -> None:
+    """An empty collection carries no data → `literal_only`."""
+    src = """
+    def check_nothing(self):
+        subprocess.run([])
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_mixed_collection_is_unknown() -> None:
+    """A collection with a non-literal element is `unknown` — not
+    `parameter_match`: the sink's parameter is inside the collection,
+    but which element reaches the operation is not known (1.2a.4)."""
+    src = """
+    def check_tool(self, param):
+        subprocess.run([param, "a"])
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_nested_collection_is_literal_only() -> None:
+    """Nested collections of constants are still constant data."""
+    src = """
+    def check_nested(self):
+        subprocess.run([["a"], ["b"]])
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_nested_mixed_collection_is_unknown() -> None:
+    """A non-literal element one level down defeats the collection."""
+    src = """
+    def check_nested(self, param):
+        subprocess.run([["a"], param])
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_dict_unpacking_is_unknown() -> None:
+    """`{**mapping}` is not a constant collection."""
+    src = """
+    def check_config(self, param):
+        subprocess.run({**param})
     """
     assert _sink_body(src) == "unknown"
 
