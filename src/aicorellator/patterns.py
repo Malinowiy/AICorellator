@@ -448,6 +448,33 @@ CAPABILITY_ORM_WRITES_DB: tuple[str, ...] = (
     "repo.add*", "repo.delete*", "repo.save*", "repo.create*", "repo.update*",
 )
 
+# Commit calls (1.2a.3c). A commit is the persistence step of an ORM
+# session: `db.commit()` writes whatever the session accumulated, so
+# the data arrives through the session's state rather than through the
+# call's own arguments. The Flow Analyzer consults this list to make
+# the single deliberate exception to its no-argument rule — a bare
+# `db.commit()` contributes `parameter_match` — and for nothing else.
+#
+# It is deliberately *not* merged into the capability lists above.
+# Which calls make a symbol a sink is a capability question (ADR-0009),
+# and `repo.commit` / `conn.commit` are not evidence of a write on
+# their own; which sink bodies can carry data is an evidence question.
+# `db.commit` and `session.commit` are in both lists: the first because
+# they are ORM writes, the second because they persist a session.
+#
+# Matched with the same trailing-segment rule as every other call-site
+# pattern (capability_extractor._matches_any), so `self.db.commit`
+# matches `db.commit` but a bare `commit()` matches nothing.
+ORM_COMMIT_CALLS: tuple[str, ...] = (
+    "db.commit",
+    "session.commit",
+    "repository.commit",
+    "repo.commit",
+    "transaction.commit",
+    "connection.commit",
+    "conn.commit",
+)
+
 # Every database call site, by direction. The extractor consults
 # the tuples above (the statement sites need the SQL-keyword
 # check, the ORM sites do not); these unions are the "any read" /

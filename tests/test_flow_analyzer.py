@@ -15,6 +15,7 @@ from aicorellator.parsing.flow_analyzer import (
     DATA_FLOW_DATA_VALUES,
     FunctionNode,
     SINK_DATA_FLOW_VALUES,
+    _is_commit_call,
     analyze_has_access_to,
     analyze_sink_body,
     analyze_tool_returns,
@@ -628,6 +629,137 @@ def test_sink_orm_delete_with_literal() -> None:
     def purge(self):
         self.db.delete("literal-id")
         self.db.commit()
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+# ============================================================
+# Commit exception (1.2a.3c)
+# ============================================================
+
+def test_commit_call_is_recognized_by_qualifier() -> None:
+    """Every documented qualifier is a commit call (1.2a.3c)."""
+    for qualifier in (
+        "db", "session", "repository", "repo",
+        "transaction", "connection", "conn",
+    ):
+        src = f"""
+        def flush(self, oid):
+            {qualifier}.commit()
+        """
+        call = _sink_call(_func(src), "commit")
+        assert _is_commit_call(call), qualifier
+
+
+def test_commit_call_requires_a_qualifier() -> None:
+    """A bare `commit()` is not a commit call: no qualifier, no match."""
+    for body in ("commit()", "commit_all()", "flush()", "commit_now()"):
+        src = f"""
+        def flush(self, oid):
+            self.{body}
+        """
+        call = _sink_call(_func(src), body.split("(")[0])
+        assert not _is_commit_call(call), body
+
+
+def test_commit_only_body_with_parameter_is_parameter_match() -> None:
+    """The FinBot `toggle_admin` shape: the body's only dangerous call is
+    a bare `db.commit()`, which persists the session (1.2a.3c)."""
+    src = """
+    def toggle_admin(self, user_id):
+        self.db.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_commit_only_body_on_session_is_parameter_match() -> None:
+    """`session.commit()` gets the same treatment as `db.commit()`."""
+    src = """
+    def update_status(self, order_id):
+        session.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_commit_after_a_write_is_parameter_match() -> None:
+    """The write already supplied `parameter_match`; the commit adds the
+    same value — the strongest result is unchanged."""
+    src = """
+    def mark_as_read(self, email_id):
+        self.db.add(email_id)
+        self.db.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_commit_exception_does_not_apply_to_subprocess() -> None:
+    """`subprocess.run()` with no arguments is not a commit → unknown."""
+    src = """
+    def run_task(self, cmd):
+        subprocess.run()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_commit_exception_does_not_apply_to_os_system() -> None:
+    """`os.system()` with no arguments is not a commit → unknown."""
+    src = """
+    def shell_out(self, cmd):
+        os.system()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_commit_contributes_while_subprocess_run_does_not() -> None:
+    """The commit carries the result even when a bare shell call sits in
+    the same body."""
+    src = """
+    def toggle(self, user_id):
+        self.db.commit()
+        subprocess.run()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_commit_only_body_without_parameters_is_unknown() -> None:
+    """Edge case (1.2a.3c): a sink with no parameters has nothing
+    parameter-derived to persist, so `parameter_match` would claim
+    evidence that does not exist — the commit contributes nothing."""
+    src = """
+    def flush(self):
+        self.db.commit()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_commit_without_a_write_promotes_a_literal_only_body() -> None:
+    """Accepted consequence of the rule: the commit is treated as a
+    parameter-derived persistence step, so a body whose only write is a
+    constant still reports `parameter_match`."""
+    src = """
+    def update_status(self, order_id):
+        cursor.execute("UPDATE orders SET status = 'done'")
+        self.conn.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_commit_of_a_qualifier_outside_the_capabilities_counts() -> None:
+    """`conn.commit` is not a sink capability, but the commit exception
+    still recognizes it (the sink comes from the `execute` call)."""
+    src = """
+    def set_flag(self, flag):
+        self.session.execute("UPDATE configs SET flag = 1")
+        self.conn.commit()
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_subprocess_run_with_empty_string_stays_literal_only() -> None:
+    """A commit-shaped exception must not widen literal calls (1.2a.3c)."""
+    src = """
+    def run_task(self):
+        subprocess.run("")
     """
     assert _sink_body(src) == "literal_only"
 

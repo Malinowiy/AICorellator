@@ -42,6 +42,13 @@ A literal is a constant or a collection of constants: the command list
 of `subprocess.run(["docker", "info"])` is constant data, so it is
 `literal_only`, not `unknown` (1.2a.4).
 
+A commit call is the one exception to the no-argument rule (1.2a.3c).
+`db.commit()` takes no arguments and is still the dangerous operation:
+it persists the session's state, which is the result of the writes
+earlier in the body, so the sink's data does reach the database through
+it. `subprocess.run()` with no arguments stays `no_args` — a bare
+`subprocess.run()` is genuinely safe.
+
 The function is pure: it takes AST nodes and returns a string, with no
 filesystem or global state. The normalizer supplies the nodes.
 """
@@ -50,13 +57,15 @@ from __future__ import annotations
 
 import ast
 
-from ..patterns import SINK_CAPABILITIES
+from ..patterns import ORM_COMMIT_CALLS, SINK_CAPABILITIES
 # The Capability Extractor owns the call-site patterns (ADR-0009). The
 # sink analyzer reuses its classifier so "dangerous call" means exactly
-# the same thing as "the call that gave the node a sink capability".
-# Importing the private helper follows the convention the framework
+# the same thing as "the call that gave the node a sink capability", and
+# reuses its pattern matcher so a commit call is recognized by the same
+# trailing-segment rule as every other call-site pattern (1.2a.3c).
+# Importing the private helpers follows the convention the framework
 # detectors already use (`from ..capability_extractor import _scan_function`).
-from .capability_extractor import _classify_call
+from .capability_extractor import _classify_call, _dotted_name, _matches_any
 
 
 # Tool functions may be sync or async (MCP tools are often `async def`).
@@ -122,6 +131,19 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
     `unknown` therefore means "no argument-level evidence", not "the
     body was not read".
 
+    Exception (1.2a.3c): a commit. `db.commit()` persists the session's
+    accumulated state, and that state is the result of the writes
+    earlier in the body — the sink's data arrives at the database
+    through the session, not through the call's arguments. A bare
+    commit therefore counts as data reaching the dangerous call and
+    returns `parameter_match`, provided the sink declares at least one
+    parameter. A sink with no parameters (`def flush(self):`) has no
+    parameter-derived state to persist, so its commit contributes
+    nothing and the body stays `unknown` — `parameter_match` would
+    claim evidence that does not exist. The exception is confined to
+    `patterns.ORM_COMMIT_CALLS`; `subprocess.run()` with no arguments
+    is still skipped.
+
     A `literal_only` sink cannot receive attacker data through its own
     arguments — only constants reach the dangerous call. Like
     `analyze_has_access_to` this is name-based (ADR-0001): attribute
@@ -129,6 +151,13 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
     negatives are accepted (ADR-0015).
     """
     dangerous = _dangerous_calls(sink_func)
+    # 1.2a.3c: a commit the capability extractor does not already treat
+    # as dangerous (`repo.commit`, `conn.commit`, ...) still carries the
+    # commit exception, so it joins the evidence set. `call not in
+    # dangerous` is an identity check — AST nodes do not compare equal.
+    dangerous.extend(
+        call for call in _commit_calls(sink_func) if call not in dangerous
+    )
     if not dangerous:
         return "unknown"
 
@@ -140,6 +169,13 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
         arguments: list[ast.expr] = list(call.args)
         arguments.extend(kw.value for kw in call.keywords)
         if not arguments:
+            # The commit exception (1.2a.3c). A bare commit persists the
+            # session, so a sink that takes parameters has data reaching
+            # the dangerous call through the session's state. A
+            # parameterless sink has no such data, and every other
+            # no-argument dangerous call is skipped as before.
+            if params and _is_commit_call(call):
+                return "parameter_match"
             continue
 
         kinds = [_classify_argument(arg, params, locals_) for arg in arguments]
@@ -253,6 +289,38 @@ def _dangerous_calls(func: FunctionNode) -> list[ast.Call]:
         if _classify_call(node) & SINK_CAPABILITIES:
             calls.append(node)
     return calls
+
+
+def _is_commit_call(call: ast.Call) -> bool:
+    """True if `call` is a commit on a database session (1.2a.3c).
+
+    `self.db.commit()` and `conn.commit()` are the same operation under
+    different qualifiers. The names are data (`patterns.ORM_COMMIT_CALLS`)
+    and are matched with the Capability Extractor's trailing-segment rule,
+    so `self.db.commit` matches `db.commit` while a bare `commit()`
+    matches nothing.
+    """
+    dotted = _dotted_name(call.func)
+    if dotted is None:
+        return False
+    return _matches_any(dotted, ORM_COMMIT_CALLS)
+
+
+def _commit_calls(func: FunctionNode) -> list[ast.Call]:
+    """Calls in `func` to a recognized commit method (1.2a.3c).
+
+    Deliberately separate from `_dangerous_calls`, which answers a
+    capability question: "does this call exercise a sink capability?".
+    `db.commit` and `session.commit` are answers to both, because they
+    are ORM writes; `repo.commit`, `conn.commit` and the other
+    qualifiers are answers only to this one, because a commit is not by
+    itself evidence of a write. `analyze_sink_body` unions the two.
+    """
+    return [
+        node
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call) and _is_commit_call(node)
+    ]
 
 
 # ============================================================
