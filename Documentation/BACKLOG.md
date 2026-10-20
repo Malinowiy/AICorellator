@@ -182,13 +182,14 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Approach:** Key `_index_functions` on `(name, line_start)` or `(name, line_start, end)`, and resolve a sink/tool node to the function definition that contains its `line_start`. Touches all three analyzers (flow, sink, tool).
 **References:** 1.2a.3c report, finding 2.
 
-### 1.2a.3g — Attribute-based dangerous calls
+### 1.2a.3g — Attribute, f-string, and composite argument classification
 
-**Priority:** Low
-**Status:** Not started
-**Rationale:** 10 of FinBot's remaining 31 unknown sinks call dangerous operations via attribute chains (`self.adapter.run(...)`, `self.client.post(...)`) or have no argument-level evidence at all. The capability patterns cover the well-known module-level functions (`subprocess.run`, `os.remove`, `cursor.execute`) but not class-attribute chains.
-**Approach:** Deferred — needs a decision on how deep to chase attribute chains without turning the classifier into a type-inference engine. ADR-0001 (no full dataflow) suggests a conservative approach: only well-known adapter shapes (`self.<known-adapter>.<method>`), not arbitrary attribute chains.
-**References:** 1.2a.3c report, finding 3.
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Result:** `_classify_argument` now recognises: `self.X` assigned from a parameter or local in the same body (fixpoint), f-strings with a parameter-derived component, and Dict/List/Tuple/Set with a parameter-derived element. Composite returns the component's own kind (`local_var_match`, `parameter_match`, ...); the sink analyzer collapses to `parameter_match`. Mixed collections are now `parameter_match` (was `unknown`) — a deliberate loosening of ADR-0015, documented in-code: the body under analysis built the collection and the parameter is inside the value. Unresolved parts still block promotion.
+**Results:** dvmcp 6/4/2 → 8/4/0; mcploitable 5/1/2 → 6/1/1; FinBot, NMB unchanged (FinBot has zero `self.X` attribute hits in sink bodies, measured). Shape unchanged on all four.
+**Decision 8 (not flipped):** an f-string with only a local (literal-derived) interpolation returns `local_var_match`, consistent with `os.remove(local)`. Parameter-only would be an arbitrary cutoff.
+**Deferred:** `param.attr` (`file_data.filename`, `session_context.current_user.id`) is still `unknown`. The 5 arguments in FinBot `create_vendor_file` are the visible false-negative family. New item 1.2a.3j.
 
 ### 1.2a.3h — Cursor fetch reads
 
@@ -197,6 +198,22 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Rationale:** `cur.fetchone` / `cur.fetchall` / `cur.fetchmany` are inert in `CAPABILITY_DB_STATEMENT_CALLS` — that list only fires through `CAPABILITY_READS_DB` / `WRITES_DB`, which need a SQL string literal. Counting cursor fetches as reads belongs in `CAPABILITY_ORM_READS_DB` (the method name is the evidence).
 **Approach:** Add `cur.fetchone`, `cur.fetchall`, `cur.fetchmany` to `CAPABILITY_ORM_READS_DB`. Verify over-match on all four corpora.
 **References:** 1.2a.3e report, cursor abbreviation decision.
+
+### 1.2a.3i — Adapter attribute capability patterns
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** The original 1.2a.3g description mentioned capability patterns for known adapter attributes (`self.adapter.run(...)`, `self.client.post(...)`). That is a **capability extraction** change (dangerous call recognition), distinct from the argument classification delivered by 1.2a.3g. The two are complementary.
+**Approach:** Extend `CAPABILITY_*` lists with well-known adapter shapes (`*.adapter.run`, `*.client.post`, `*.session.execute` already covered). Keep narrow — only well-known adapter method names. Verify over-match on all four corpora.
+**References:** 1.2a.3g report, finding 2.
+
+### 1.2a.3j — Parameter attribute arguments
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** `param.attr` (e.g. `file_data.filename`, `session_context.current_user.id`) is still `unknown`. FinBot `create_vendor_file` has 5 such arguments — the visible remaining false-negative family. `self.X` is covered; `param.X` is not.
+**Approach:** In `_classify_argument`, treat `ast.Attribute` whose `.value` is a parameter (Name in `params`) as `parameter_match`. Nested (`param.a.b`) — decide whether to follow one level or any; the `self.X` fixpoint suggests any depth of `param.*` is fine because it is still parameter-derived by construction. Keep name-based.
+**References:** 1.2a.3g report, finding 4.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
