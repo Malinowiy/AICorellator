@@ -194,10 +194,10 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3h — Cursor fetch reads
 
 **Priority:** Low
-**Status:** Not started
-**Rationale:** `cur.fetchone` / `cur.fetchall` / `cur.fetchmany` are inert in `CAPABILITY_DB_STATEMENT_CALLS` — that list only fires through `CAPABILITY_READS_DB` / `WRITES_DB`, which need a SQL string literal. Counting cursor fetches as reads belongs in `CAPABILITY_ORM_READS_DB` (the method name is the evidence).
-**Approach:** Add `cur.fetchone`, `cur.fetchall`, `cur.fetchmany` to `CAPABILITY_ORM_READS_DB`. Verify over-match on all four corpora.
-**References:** 1.2a.3e report, cursor abbreviation decision.
+**Status:** **Done** (2026-10-20)
+**Result:** `cur.fetchone` / `fetchall` / `fetchmany` and `cursor.*` added to `CAPABILITY_ORM_READS_DB`. Fetch-only bodies are not sinks (`reads_db` is not in `SINK_CAPABILITIES`); a sink with `execute('INSERT ...')` + `fetchall()` now carries both capabilities.
+**Results:** dvmcp 7 → 11 `reads_db` nodes; mcploitable 3 → 4. FinBot, NMB unchanged. Over-match 0 (19 genuine call sites, 0 false positives).
+**Not taken:** `c.fetchall()` (NMB single-letter qualifier — too broad); chained calls (`connection.execute(...).fetchone()`, receiver is a Call — out of scope).
 
 ### 1.2a.3i — Adapter attribute capability patterns
 
