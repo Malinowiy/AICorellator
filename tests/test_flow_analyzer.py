@@ -14,7 +14,10 @@ from aicorellator.parsing.flow_analyzer import (
     DATA_FLOW_CONFIRMED_VALUES,
     DATA_FLOW_DATA_VALUES,
     FunctionNode,
+    SINK_DATA_FLOW_VALUES,
     analyze_has_access_to,
+    analyze_sink_body,
+    analyze_tool_returns,
 )
 
 
@@ -270,3 +273,221 @@ def test_data_values_are_the_three_data_kinds() -> None:
         "parameter_match", "local_var_match", "call_result_match",
     }
     assert DATA_FLOW_DATA_VALUES <= DATA_FLOW_CONFIRMED_VALUES
+
+
+def test_sink_data_flow_values_are_the_three() -> None:
+    """`sink_data_flow` collapses the data kinds into one value (1.2a.1)."""
+    assert SINK_DATA_FLOW_VALUES == {
+        "parameter_match", "literal_only", "unknown",
+    }
+
+
+# ============================================================
+# Sink body analyzer (1.2a.1)
+# ============================================================
+
+def _sink_body(source: str) -> str:
+    """Analyze the first function in `source` as a sink body."""
+    return analyze_sink_body(_func(source))
+
+
+def test_sink_parameter_reaches_dangerous_call() -> None:
+    """`delete_file(file_id)` → the parameter reaches `os.remove`."""
+    src = """
+    def delete_file(self, file_id):
+        os.remove(file_id)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_local_var_derived_from_parameter() -> None:
+    """A local variable built in the body is still the sink's own data."""
+    src = """
+    def delete_file(self, file_id):
+        path = self._resolve(file_id)
+        os.remove(path)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_call_result_counts_as_data() -> None:
+    """A call result is derived from the sink's parameters or state."""
+    src = """
+    def write_report(self, name):
+        open(self._path(name), "w")
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_loop_target_is_data() -> None:
+    """`for` targets are locals; a non-literal argument is data."""
+    src = """
+    def purge(self, files):
+        for f in files:
+            os.remove(f)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_literals_only() -> None:
+    """Only constants reach the dangerous call → literal_only."""
+    src = """
+    def purge(self):
+        os.remove("/tmp/scratch")
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_no_dangerous_call_is_unknown() -> None:
+    """A body with no dangerous call has no sink evidence."""
+    src = """
+    def get_file(self, file_id):
+        return self.db.query(file_id)
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_empty_body_is_unknown() -> None:
+    """An empty body cannot be analyzed."""
+    src = """
+    def nothing(self):
+        pass
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_no_argument_dangerous_call_is_unknown() -> None:
+    """A dangerous call with no arguments carries no data either way."""
+    src = """
+    def create_tables(self):
+        setup_database()
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_literal_with_unresolved_attribute_is_unknown() -> None:
+    """One unresolved argument defeats `literal_only` (same rule as edges)."""
+    src = """
+    def purge(self, config):
+        os.remove(config.path, "/tmp/scratch")
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_strongest_result_wins() -> None:
+    """A literal call does not hide a data call elsewhere in the body."""
+    src = """
+    def purge(self, query):
+        os.remove("/tmp/scratch")
+        os.remove(query)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_async_def_supported() -> None:
+    """`async def` sink bodies are analyzed like sync ones."""
+    src = """
+    async def wipe(self, target):
+        subprocess.run(target, shell=True)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_shell_call_with_constant_is_literal_only() -> None:
+    """A constant command reaches the shell → literal_only."""
+    src = """
+    def run_script(self):
+        subprocess.run("ls -la", shell=True)
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_list_argument_falls_back_to_unknown() -> None:
+    """A list literal is not `ast.Constant` — name-based analysis cannot
+    classify it, so the result is `unknown` (ADR-0001, false negatives
+    accepted)."""
+    src = """
+    def run_script(self):
+        subprocess.run(["ls", "-la"])
+    """
+    assert _sink_body(src) == "unknown"
+
+
+# ============================================================
+# Tool return analyzer (1.2a.1)
+# ============================================================
+
+def _returns(source: str) -> bool:
+    """Analyze the first function in `source` as a tool body."""
+    return analyze_tool_returns(_func(source))
+
+
+def test_tool_returns_data() -> None:
+    src = """
+    def read_file(query):
+        return search(query)
+    """
+    assert _returns(src) is True
+
+
+def test_tool_returns_none_is_false() -> None:
+    src = """
+    def read_file(query):
+        log(query)
+        return None
+    """
+    assert _returns(src) is False
+
+
+def test_tool_bare_return_is_false() -> None:
+    src = """
+    def read_file(query):
+        log(query)
+        return
+    """
+    assert _returns(src) is False
+
+
+def test_tool_without_return_is_false() -> None:
+    src = """
+    def read_file(query):
+        log(query)
+    """
+    assert _returns(src) is False
+
+
+def test_tool_yield_is_true() -> None:
+    """A generator hands data to its caller."""
+    src = """
+    def read_file(query):
+        yield query
+    """
+    assert _returns(src) is True
+
+
+def test_tool_yield_from_is_true() -> None:
+    src = """
+    def read_file(query):
+        yield from query
+    """
+    assert _returns(src) is True
+
+
+def test_tool_conditional_return_with_data_is_true() -> None:
+    """One data return is enough, even when another branch returns None."""
+    src = """
+    def read_file(query):
+        if query:
+            return search(query)
+        return None
+    """
+    assert _returns(src) is True
+
+
+def test_tool_async_return_is_true() -> None:
+    src = """
+    async def read_file(query):
+        return await search(query)
+    """
+    assert _returns(src) is True
+

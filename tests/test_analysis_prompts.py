@@ -1,9 +1,10 @@
-"""Prompt templates — flow semantics reach the model (ADR-0015, v1.3.0).
+"""Prompt templates — flow semantics reach the model (ADR-0015, v1.4.0).
 
 The evaluator puts ``flow_kind`` (and ``data_flow_confirmed``) into the
-edge payload; these tests pin the other half of the contract: the prompt
-text tells the model what those fields mean, and the prompt version is
-bumped so stored chains can be traced back to this wording.
+edge payload and the 1.2a.1 node signals into the node payload; these
+tests pin the other half of the contract: the prompt text tells the
+model what those fields mean, and the prompt version is bumped so stored
+chains can be traced back to this wording.
 """
 
 from __future__ import annotations
@@ -43,9 +44,16 @@ EDGES = [
 ]
 
 
-def test_prompt_version_is_v1_3_0() -> None:
-    """v1.3.0 is the flow_kind payload version — stored per chain row."""
-    assert PROMPT_VERSION == "v1.3.0"
+def test_prompt_version_is_v1_4_0() -> None:
+    """v1.4.0 adds the node signals — stored per chain row (1.2a.1)."""
+    assert PROMPT_VERSION == "v1.4.0"
+
+
+def test_system_prompts_define_node_flow_attributes() -> None:
+    """Every system prompt explains sink_data_flow and returns_data."""
+    for prompt in (SYSTEM_PROMPT, SOLO_SYSTEM_PROMPT, JUDGE_SYSTEM_PROMPT):
+        assert "sink_data_flow" in prompt
+        assert "returns_data" in prompt
 
 
 def test_system_prompts_define_flow_kind() -> None:
@@ -59,6 +67,27 @@ def test_system_prompts_define_flow_kind() -> None:
         assert "parameter_match" in prompt
         assert "provides_tool" in prompt
         assert "guards" in prompt
+
+
+def test_voter_prompt_calibration_covers_node_attributes() -> None:
+    """The voter's calibration rules mention the node-level signal."""
+    prompt = build_voter_prompt("chain:test", NODES, EDGES)
+    assert "sink_data_flow" in prompt
+    assert "returns_data" in prompt
+    assert "potential data flow" in prompt
+
+
+def test_node_attributes_reach_the_solo_prompt_payload() -> None:
+    """A tool/sink node payload carries the 1.2a.1 attributes verbatim."""
+    nodes = [
+        {"id": "tool:1", "kind": "tool", "name": "search_files",
+         "attributes": {"returns_data": True}},
+        {"id": "sink:1", "kind": "sink", "name": "delete_file",
+         "attributes": {"sink_data_flow": "parameter_match"}},
+    ]
+    prompt = build_solo_prompt("chain:test", nodes, EDGES)
+    assert '"returns_data": true' in prompt
+    assert '"sink_data_flow": "parameter_match"' in prompt
 
 
 def test_voter_prompt_serializes_flow_fields() -> None:

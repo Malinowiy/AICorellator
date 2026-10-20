@@ -6,8 +6,14 @@ Responsibilities:
   3. Attach capabilities (ADR-0009) to nodes.
   4. Merge framework detector nodes and edges (ADR-0011).
   5. Classify every edge's flow_kind (ADR-0015). For has_access_to
-     (tool → sink) a Flow Analyzer inspects the tool body — the one
-     place where source beyond the TSA index is read.
+     (tool → sink) a Flow Analyzer inspects the tool body.
+  6. Attach flow attributes to tool and sink nodes (1.2a.1):
+     `returns_data` on a tool, `sink_data_flow` on a sink. Both are
+     prompt signals, not chain filters.
+
+Steps 5 and 6 are the only places where source beyond the TSA index is
+read. They share one per-scan module cache, so a file is parsed at most
+once.
 
 Edges derived here:
   - provides_tool  (mcp_server → tool)              flow_kind=control
@@ -52,6 +58,8 @@ from .flow_analyzer import (
     DATA_FLOW_DATA_VALUES,
     FunctionNode,
     analyze_has_access_to,
+    analyze_sink_body,
+    analyze_tool_returns,
 )
 from .framework_detectors import DetectionResult
 from .llm_extractor import LLMExtractorOutput
@@ -127,6 +135,57 @@ def normalize(
     capabilities = capabilities or {}
     framework_detection = framework_detection or DetectionResult()
 
+    # --- Per-scan module cache ---
+    # Two consumers read source beyond the TSA index: the inline Flow
+    # Analyzer for `has_access_to` (ADR-0015) and the tool/sink body
+    # analyzers (1.2a.1). Both go through this cache, so a file is read
+    # and parsed at most once per scan. A missing file, an unreadable
+    # file or a syntax error yields None — unit tests build manifests
+    # whose abs_path does not exist on disk, so the fallback is a normal
+    # path, not an error path.
+    abs_path_by_path = {entry.path: entry.abs_path for entry in manifest.files}
+    module_cache: dict[str, ast.Module | None] = {}
+    functions_cache: dict[str, dict[str, FunctionNode]] = {}
+
+    def _module_for(file_path: str) -> ast.Module | None:
+        """Parsed module for a manifest file, cached per scan."""
+        if file_path in module_cache:
+            return module_cache[file_path]
+        module = _parse_python_file(abs_path_by_path.get(file_path))
+        module_cache[file_path] = module
+        return module
+
+    def _functions_for(file_path: str) -> dict[str, FunctionNode]:
+        """Function index for a manifest file, cached per scan."""
+        if file_path in functions_cache:
+            return functions_cache[file_path]
+        module = _module_for(file_path)
+        functions = _index_functions(module) if module is not None else {}
+        functions_cache[file_path] = functions
+        return functions
+
+    def _body_attributes(node: Node) -> dict[str, object]:
+        """Flow attributes for a tool or sink node (1.2a.1).
+
+        A tool records whether it returns data to its caller; a sink
+        records how its own body passes data to a dangerous call. When
+        the body cannot be resolved — a heuristic node with no function
+        of that name, or a file that could not be parsed — the fallback
+        is `returns_data = False` / `sink_data_flow = "unknown"`.
+        """
+        func = _functions_for(
+            str(node.attributes.get("source_file", ""))
+        ).get(node.name)
+        if node.kind == "tool":
+            return {
+                "returns_data": (
+                    func is not None and analyze_tool_returns(func)
+                ),
+            }
+        if func is None:
+            return {"sink_data_flow": "unknown"}
+        return {"sink_data_flow": analyze_sink_body(func)}
+
     # --- MCP servers from files ---
     mcp_servers: dict[str, str] = {}
     for file_entry in manifest.files:
@@ -156,6 +215,10 @@ def normalize(
         if c is None:
             continue
         node = _node_from_class(symbol, c, capabilities)
+        if node.kind == "sink":
+            # A class can be a sink (capability-based). Its body is not a
+            # function, so the analyzer usually falls back to "unknown".
+            node.attributes.update(_body_attributes(node))
         delta.nodes.append(node)
 
     # --- Methods (tools and sinks) ---
@@ -173,6 +236,11 @@ def normalize(
         if c is None:
             continue
         node = _node_from_method(symbol, c, capabilities)
+        if node.kind in ("tool", "sink"):
+            # Enrichment for the prompt (1.2a.1): a tool records whether
+            # it hands data back, a sink how its own body feeds a
+            # dangerous call. Neither changes flow_kind.
+            node.attributes.update(_body_attributes(node))
         delta.nodes.append(node)
 
         if c.kind == "tool":
@@ -209,31 +277,13 @@ def normalize(
     # (ADR-0015) inspects the sink call inside the tool body and
     # records how data reaches it; that result drives `flow_kind`.
     #
-    # Files are read and parsed at most once per scan. If a file cannot
-    # be read or parsed, or the tool body or the sink call cannot be
-    # resolved, the edge falls back to `control` / `unknown`. Unit tests
-    # build manifests whose abs_path does not exist on disk, so the
-    # fallback is a normal path, not an error path.
-    abs_path_by_path = {entry.path: entry.abs_path for entry in manifest.files}
-    module_cache: dict[str, ast.Module | None] = {}
-
-    def _module_for(file_path: str) -> ast.Module | None:
-        """Parsed module for a manifest file, cached per scan.
-
-        A file is read and parsed at most once per `normalize()` call.
-        """
-        if file_path in module_cache:
-            return module_cache[file_path]
-        module = _parse_python_file(abs_path_by_path.get(file_path))
-        module_cache[file_path] = module
-        return module
-
+    # If the tool body or the sink call cannot be resolved, the edge
+    # falls back to `control` / `unknown`.
     for file_path, tools in tools_by_file.items():
         sinks = sinks_by_file.get(file_path, [])
         if not sinks:
             continue
-        module = _module_for(file_path)
-        functions = _index_functions(module) if module is not None else {}
+        functions = _functions_for(file_path)
         for tool_node in tools:
             tool_func = functions.get(tool_node.name)
             for sink_node in sinks:
@@ -445,6 +495,18 @@ def normalize(
 
         delta.nodes.append(detector_node)
         existing_by_name_file[key] = detector_node
+
+    # Backfill flow attributes for tool and sink nodes that do not carry
+    # them yet (1.2a.1). Detector nodes are authoritative for kind and
+    # replace the TSA node of the same (name, source_file) — which drops
+    # the attributes set above — and detectors also create tool nodes of
+    # their own. Both are resolved through the same module cache, so this
+    # costs no extra file reads.
+    for node in delta.nodes:
+        if node.kind == "tool" and "returns_data" not in node.attributes:
+            node.attributes.update(_body_attributes(node))
+        elif node.kind == "sink" and "sink_data_flow" not in node.attributes:
+            node.attributes.update(_body_attributes(node))
 
     # Re-point edges from removed nodes to their replacements.
     # Without this, edges to a TSA node that got replaced by a

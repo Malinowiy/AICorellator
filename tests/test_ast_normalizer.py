@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from aicorellator.graph.models import VALID_FLOW_KINDS
+from aicorellator.graph.models import VALID_FLOW_KINDS, Node
 from aicorellator.ingestion.discovery import FileEntry, FileManifest
 from aicorellator.ingestion.target import Target
 from aicorellator.parsing.ast_normalizer import (
@@ -1175,3 +1175,176 @@ def test_provides_tool_is_control(target: Target) -> None:
     assert len(provides) == 2
     assert all(e.flow_kind == "control" for e in provides)
     assert all(e.data_flow_confirmed == "unknown" for e in provides)
+
+
+# ============================================================
+# 1.2a.1 — sink_data_flow / returns_data node attributes
+# ============================================================
+
+# The tool returns data to its caller; the sink forwards its own
+# parameter to a dangerous call.
+SINK_FORWARDS_PARAMETER = """\
+class SystemUtilsServer:
+    def read_file(self, query):
+        return self.search(query)
+
+    def delete_file(self, path):
+        os.remove(path)
+"""
+
+# Same shape, but the dangerous call receives a constant only and the
+# tool hands nothing back to its caller.
+SINK_FORWARDS_LITERAL = """\
+class SystemUtilsServer:
+    def read_file(self, query):
+        self.log(query)
+
+    def delete_file(self):
+        os.remove("/tmp/scratch")
+"""
+
+# No `delete_file` function in the file: the sink node is heuristic
+# (name-only), so its body cannot be analyzed.
+SINK_WITHOUT_BODY = """\
+class SystemUtilsServer:
+    def read_file(self, query):
+        return query
+"""
+
+
+def _node(delta: GraphDelta, name: str) -> Node:
+    """The single node with `name`."""
+    matches = [n for n in delta.nodes if n.name == name]
+    assert len(matches) == 1, name
+    return matches[0]
+
+
+def test_sink_node_records_parameter_match(target: Target) -> None:
+    """A sink that forwards its parameter to `os.remove` (1.2a.1)."""
+    manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    sink = _node(delta, "delete_file")
+    assert sink.kind == "sink"
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+def test_tool_node_records_returns_data(target: Target) -> None:
+    """A tool whose body returns a value to its caller (1.2a.1)."""
+    manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    tool = _node(delta, "read_file")
+    assert tool.kind == "tool"
+    assert tool.attributes["returns_data"] is True
+
+
+def test_tool_node_without_return_records_false(target: Target) -> None:
+    """A tool that never returns a value is not a data source."""
+    manifest = _server_manifest(target, SINK_FORWARDS_LITERAL)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    assert _node(delta, "read_file").attributes["returns_data"] is False
+
+
+def test_sink_node_records_literal_only(target: Target) -> None:
+    """A sink whose dangerous call takes a constant only (1.2a.1)."""
+    manifest = _server_manifest(target, SINK_FORWARDS_LITERAL)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    assert _node(delta, "delete_file").attributes["sink_data_flow"] == "literal_only"
+
+
+def test_sink_node_without_body_is_unknown(target: Target) -> None:
+    """A heuristic sink node with no function of that name (1.2a.1)."""
+    manifest = _server_manifest(target, SINK_WITHOUT_BODY)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    assert _node(delta, "delete_file").attributes["sink_data_flow"] == "unknown"
+
+
+def test_sink_node_missing_file_is_unknown(target: Target) -> None:
+    """abs_path does not exist on disk → unknown, no crash."""
+    manifest = _server_manifest(target, None)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    assert _node(delta, "delete_file").attributes["sink_data_flow"] == "unknown"
+    assert _node(delta, "read_file").attributes["returns_data"] is False
+
+
+def test_only_tools_and_sinks_carry_flow_attributes(target: Target) -> None:
+    """The attributes are node-kind specific (1.2a.1)."""
+    manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
+    tsa = TSAOutput(symbols=[
+        TSASymbol(
+            name="SystemUtilsServer", kind="class",
+            file_path=SYSTEMUTILS_PATH, line_start=1, line_end=2,
+        ),
+        *_systemutils_tsa(["read_file", "delete_file"]).symbols,
+    ])
+    delta = normalize(manifest, tsa)
+
+    for node in delta.nodes:
+        if node.kind == "tool":
+            assert "returns_data" in node.attributes
+            assert "sink_data_flow" not in node.attributes
+        elif node.kind == "sink":
+            assert "sink_data_flow" in node.attributes
+            assert "returns_data" not in node.attributes
+        else:
+            assert "returns_data" not in node.attributes
+            assert "sink_data_flow" not in node.attributes
+
+
+def test_body_attributes_do_not_change_flow_kind(target: Target) -> None:
+    """The node signals are prompt data, not chain filters (1.2a.1).
+
+    The tool does not call the sink by name, so the `has_access_to`
+    edge stays `control` / `unknown` even though the sink forwards a
+    parameter to a dangerous call.
+    """
+    manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    sink = _node(delta, "delete_file")
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+    edges = _has_access_edges(delta, "read_file")
+    assert len(edges) == 1
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed == "unknown"
+
+
+def test_body_attributes_survive_detector_node_replacement(
+    target: Target,
+) -> None:
+    """A detector node that replaces a TSA tool node still gets the
+    attribute (the backfill in `normalize`)."""
+    from aicorellator.parsing.framework_detectors import DetectionResult
+
+    manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+
+    detector_tool = Node(
+        id="tool:detector",
+        kind="tool",
+        name="read_file",
+        host_id="localhost",
+        attributes={"source_file": SYSTEMUTILS_PATH, "framework": "fastmcp"},
+    )
+    detection = DetectionResult(nodes=[detector_tool], framework="fastmcp")
+
+    delta = normalize(manifest, tsa, framework_detection=detection)
+
+    tool = _node(delta, "read_file")
+    assert tool.id == "tool:detector"
+    assert tool.attributes["returns_data"] is True
+
+

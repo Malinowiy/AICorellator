@@ -19,7 +19,8 @@ import json
 
 # Increment when prompt structure changes. Stored per chain row.
 # v1.3.0: edges carry flow_kind (and data_flow_confirmed) — ADR-0015.
-PROMPT_VERSION = "v1.3.0"
+# v1.4.0: nodes carry sink_data_flow and returns_data — 1.2a.1.
+PROMPT_VERSION = "v1.4.0"
 
 
 SYSTEM_PROMPT = """You are a security analyst evaluating the exploitability of attack chains in AI infrastructure.
@@ -54,6 +55,16 @@ Flow semantics (ADR-0015):
 - "guards" is "structural" and does not appear on a chain path. A structural
   edge on a chain path is a construction error; say so rather than reasoning
   around it.
+- Node attributes carry a second, weaker signal (1.2a.1). A sink node has
+  "sink_data_flow": how the sink passes its own arguments to a dangerous call —
+  "parameter_match" (data derived from the sink's parameters reaches the
+  dangerous call), "literal_only" (only constants reach it), or "unknown" (no
+  argument-level evidence). A tool node has "returns_data": whether the tool
+  hands data back to its caller. A tool that returns data plus a sink that
+  accepts data is a *potential* data flow through the agent, even when the
+  "has_access_to" edge is "control" — weaker than a confirmed "data" edge,
+  stronger than reachability alone. It is a node property, not an edge: it
+  never changes an edge's "flow_kind".
 - The confidence you assign is your judgement; these definitions constrain
   what an edge means, not how exploitable you must find the chain.
 """
@@ -80,6 +91,12 @@ Flow semantics:
 - All else equal, weigh a chain whose edges are "data" more heavily than a
   chain built only from "control" edges: confirmed data flow is stronger
   evidence than plain call reachability.
+- Nodes carry attributes as well (1.2a.1): a sink node's "sink_data_flow"
+  ("parameter_match", "literal_only" or "unknown") and a tool node's
+  "returns_data". A tool that returns data plus a sink that accepts data is a
+  potential data flow through the agent — weaker than a confirmed "data" edge,
+  stronger than reachability alone. It is a node property and does not change
+  an edge's "flow_kind".
 """
 
 
@@ -138,6 +155,12 @@ Calibration rules:
   confirmed data flow, lower confidence substantially.
 - "provides_tool" is "control": an MCP server exposes a tool and the agent can
   invoke it — for security analysis, "can call" is treated as "will call".
+- Node attributes carry a weaker, node-level signal (1.2a.1): a sink node's
+  "sink_data_flow" ("parameter_match", "literal_only", "unknown") and a tool
+  node's "returns_data". A tool that returns data plus a sink that accepts data
+  is a potential data flow through the agent even when the "has_access_to" edge
+  is "control" — stronger than reachability alone, weaker than a confirmed
+  "data" edge. Treat it as a hypothesis to argue for or against, not as proof.
 - Distinguish production entry points from test/dev scripts; a test or CLI
   helper is not reachable by an external attacker.
 - If reachability is plausible but exploitability cannot be confirmed from the
@@ -243,6 +266,16 @@ Flow semantics (ADR-0015):
   invoke it — for security analysis, "can call" is treated as "will call".
 - "guards" is "structural" and does not appear on a chain path; a structural
   edge on a path is a construction error.
+- Node attributes carry a second, weaker signal (1.2a.1). A sink node has
+  "sink_data_flow": how the sink passes its own arguments to a dangerous call —
+  "parameter_match" (data derived from the sink's parameters reaches the
+  dangerous call), "literal_only" (only constants reach it), or "unknown" (no
+  argument-level evidence). A tool node has "returns_data": whether the tool
+  hands data back to its caller. A tool that returns data plus a sink that
+  accepts data is a *potential* data flow through the agent, even when the
+  "has_access_to" edge is "control" — weaker than a confirmed "data" edge,
+  stronger than reachability alone. It is a node property, not an edge: it
+  never changes an edge's "flow_kind".
 - The confidence you assign is your judgement; these definitions constrain what
   an edge means, not how exploitable you must find the chain.
 """
@@ -284,6 +317,8 @@ Step by step:
    - What tools does the chain reach?
    - Do their declared capabilities indicate a dangerous action?
    - Do they accept attacker-controlled arguments?
+   - Do the node attributes show a potential flow: the tool's "returns_data"
+     and the sink's "sink_data_flow"?
 
 4. GUARDRAILS
    - Are there any guardrails in the path? (kind == "guardrail")

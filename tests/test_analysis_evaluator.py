@@ -132,6 +132,31 @@ def test_node_to_dict_includes_capabilities(store) -> None:
     assert "confidence" in d
 
 
+def test_node_to_dict_includes_flow_attributes(store) -> None:
+    """The 1.2a.1 node signals reach the prompt payload.
+
+    `_node_to_dict` serializes `attributes` wholesale, so a tool's
+    `returns_data` and a sink's `sink_data_flow` travel with the node.
+    """
+    store.nodes.upsert(Node(
+        id="tool:1", kind="tool", name="search_files", host_id="localhost",
+        attributes={"source_file": "mcp/servers/findrive/server.py",
+                    "returns_data": True},
+    ))
+    store.nodes.upsert(Node(
+        id="sink:1", kind="sink", name="delete_file", host_id="localhost",
+        attributes={"source_file": "mcp/servers/findrive/server.py",
+                    "sink_data_flow": "parameter_match"},
+    ))
+
+    tool = _node_to_dict(store, "tool:1")
+    assert tool["attributes"]["returns_data"] is True
+
+    sink = _node_to_dict(store, "sink:1")
+    assert sink["attributes"]["sink_data_flow"] == "parameter_match"
+
+
+
 def test_edge_to_dict_includes_capabilities_and_precision(store) -> None:
     """Edge capabilities and precision reach the prompt payload."""
     store.nodes.upsert(Node(id="n:1", kind="tool", name="t", host_id="localhost"))
