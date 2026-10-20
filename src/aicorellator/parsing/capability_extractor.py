@@ -303,16 +303,57 @@ def _matches_any(dotted: str, patterns: tuple[str, ...]) -> bool:
 
     To avoid matching too broadly, patterns longer than one segment
     are matched on the trailing segments.
+
+    A pattern ending in `*` is a verb family (1.2a.3b): the qualifier
+    segments still have to match exactly, and the final segment only
+    has to start with the verb. Used by the ORM read/write lists
+    only — `repo.get*` covers `repo.get_file`, `repo.get_file_by_id`,
+    and `repo.get_all_files`, and `db.get*` covers
+    `self.db.get_user`. The pattern text without the `*` is passed to
+    `_matches_prefix`; a bare `get_file` never matches, because the
+    qualifier segment is required.
     """
     if dotted in patterns:
         return True
     for p in patterns:
+        if p.endswith("*"):
+            if _matches_prefix(dotted, p[:-1]):
+                return True
+            continue
         if dotted.endswith("." + p):
             return True
         # Single-segment pattern: match the last segment only.
         if "." not in p and dotted.endswith("." + p):
             return True
     return False
+
+
+def _matches_prefix(dotted: str, prefix: str) -> bool:
+    """True if `dotted` ends with `prefix` as a whole dotted prefix.
+
+    `prefix` is a `<qualifier>.<verb>` pattern (no `*`). The qualifier
+    segments must match exactly; the final segment must start with the
+    verb (1.2a.3b):
+
+        repo.get_file     vs repo.get → True
+        repo.get          vs repo.get → True
+        self.db.get_user  vs db.get   → True
+        repo.get_file     vs repo.create → False
+        notrepo.get_file  vs repo.get → False  (qualifier differs)
+        self.get_file     vs repo.get → False  (no qualifier segment)
+        get_file          vs repo.get → False  (too short)
+    """
+    qualifier, verb = prefix.rsplit(".", 1)
+    segments = dotted.split(".")
+    if len(segments) < 2:
+        return False
+    if not segments[-1].startswith(verb):
+        return False
+    head = segments[:-1]
+    qualifier_segments = qualifier.split(".")
+    if len(head) < len(qualifier_segments):
+        return False
+    return head[-len(qualifier_segments):] == qualifier_segments
 
 
 def _has_shell_keyword(call: ast.Call) -> bool:

@@ -360,6 +360,25 @@ CAPABILITY_WRITES_FILESYSTEM: tuple[str, ...] = (
 # The two-segment shape is deliberate: a bare `delete`, `add`,
 # `save`, `get`, or `query` is far too common in unrelated code
 # (ADR-0009 — keep the false-positive rate controlled).
+#
+# Verb families (1.2a.3b). Repository APIs name methods
+# `<verb>_<noun>` — `repo.get_file`, `repo.delete_transactions` —
+# so the exact two-segment patterns above miss every one of them
+# and the call sites stayed `unknown`. A pattern may therefore end
+# in `*`: the qualifier segments still have to match exactly, and
+# the final segment only has to *start with* the verb. `repo.get*`
+# matches `repo.get`, `repo.get_file`, `repo.get_all_files`, and
+# `db.get*` matches `self.db.get_user`, but neither matches a bare
+# `get_file` — the qualifier is what makes it a database call.
+#
+# The verb sets are closed (reads: get / find / list / filter / all,
+# writes: add / delete / save / create / update) and the noun is
+# unbounded. The cost is a name like `repo.get_or_create`, which
+# lands in reads rather than writes: a plausible-but-wrong
+# capability is the security analyst's to filter, an `unknown` on
+# every repository access is not (ADR-0009). The `*` form is used
+# here and nowhere else — no other registry in this file mixes in
+# wildcards.
 
 CAPABILITY_DB_STATEMENT_CALLS: tuple[str, ...] = (
     "cursor.execute",       # requires SQL keyword check
@@ -384,6 +403,13 @@ CAPABILITY_ORM_READS_DB: tuple[str, ...] = (
     "repo.list",
     "repo.filter",
     "repo.all",
+    # Verb families (1.2a.3b) — a qualifier plus a read verb, any noun.
+    "db.get*", "db.find*", "db.list*", "db.filter*", "db.all*",
+    "session.get*", "session.find*", "session.list*", "session.filter*",
+    "session.all*",
+    "repository.get*", "repository.find*", "repository.list*",
+    "repository.filter*", "repository.all*",
+    "repo.get*", "repo.find*", "repo.list*", "repo.filter*", "repo.all*",
 )
 
 CAPABILITY_ORM_WRITES_DB: tuple[str, ...] = (
@@ -413,6 +439,13 @@ CAPABILITY_ORM_WRITES_DB: tuple[str, ...] = (
     "repo.save",
     "repo.create",
     "repo.update",
+    # Verb families (1.2a.3b) — a qualifier plus a write verb, any noun.
+    "db.add*", "db.delete*", "db.save*", "db.create*", "db.update*",
+    "session.add*", "session.delete*", "session.save*", "session.create*",
+    "session.update*",
+    "repository.add*", "repository.delete*", "repository.save*",
+    "repository.create*", "repository.update*",
+    "repo.add*", "repo.delete*", "repo.save*", "repo.create*", "repo.update*",
 )
 
 # Every database call site, by direction. The extractor consults
