@@ -15,7 +15,10 @@ from aicorellator.parsing.flow_analyzer import (
     DATA_FLOW_DATA_VALUES,
     FunctionNode,
     SINK_DATA_FLOW_VALUES,
+    _classify_argument,
     _is_commit_call,
+    _local_variable_names,
+    _parameter_names,
     analyze_has_access_to,
     analyze_sink_body,
     analyze_sink_class,
@@ -569,9 +572,15 @@ def test_sink_no_argument_dangerous_call_is_unknown() -> None:
 
 
 def test_sink_literal_with_unresolved_attribute_is_unknown() -> None:
-    """One unresolved argument defeats `literal_only` (same rule as edges)."""
+    """One unresolved argument defeats `literal_only` (same rule as edges).
+
+    Changed by 1.2a.3j: the unresolved argument used to be an attribute
+    of a parameter (`config.path`), which the sink body now resolves to
+    `parameter_match`; it is an attribute of a module-level `config`
+    here, so it stays unresolved and the point of the test survives.
+    """
     src = """
-    def purge(self, config):
+    def purge(self):
         os.remove(config.path, "/tmp/scratch")
     """
     assert _sink_body(src) == "unknown"
@@ -774,13 +783,17 @@ def test_sink_self_attribute_not_assigned_here_is_unknown() -> None:
 
 
 def test_sink_attribute_of_another_object_is_unknown() -> None:
-    """`other.attr` is not `self.attr` — only `self` is followed.
+    """`other.attr` where `other` is a global is not `self.attr`.
 
-    `other.attr` is someone else's state: the body did not store a
-    parameter in it (1.2a.3g).
+    Changed by 1.2a.3j: when `other` is a *parameter* the attribute is
+    parameter-derived and the value is `parameter_match` — 1.2a.3j
+    extended the rule from `self.X` to `param.X`. What this test keeps
+    pinning is the part that did not change: an attribute whose base is
+    neither `self`, nor a parameter, nor a local variable is someone
+    else's state, and the body has no evidence about it.
     """
     src = """
-    def delete(self, other):
+    def delete(self):
         self.db.delete(other.attr)
     """
     assert _sink_body(src) == "unknown"
@@ -1588,3 +1601,207 @@ def test_fetch_does_not_change_a_write_sinks_data_flow() -> None:
         return cursor.fetchall()
     """
     assert _sink_body(src) == "parameter_match"
+
+
+# ============================================================
+# Parameter attributes (1.2a.3j)
+# ============================================================
+# `file_data.filename` is an attribute of a *parameter*, so it is
+# parameter-derived by construction: the base name is the evidence, and
+# depth does not weaken it (`session_context.current_user.id` is the
+# same shape one attribute further out). A base that is a local variable
+# of the body counts the same way, because a local is bound in this body
+# and `_local_variable_names` does not track values (ADR-0001). A base
+# that is neither — a module-level import, a global — stays `unknown`.
+#
+# Like the `self.q` rule (1.2a.3g) it is opt-in: `analyze_sink_body`
+# classifies a body against its own parameters and opts in, while
+# `analyze_has_access_to` does not, so the `data_flow_confirmed` values
+# of edges are untouched. `_classify_argument` is tested directly for
+# the exact value, `analyze_sink_body` for the node value it yields.
+
+def _classify(source: str, sink: str = "os.remove") -> str:
+    """Classify the single argument of the `sink` call, opting in."""
+    func = _func(source)
+    call = _sink_call(func, sink.split(".")[-1])
+    arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
+    assert len(arguments) == 1
+    return _classify_argument(
+        arguments[0],
+        _parameter_names(func),
+        _local_variable_names(func),
+        parameter_attributes=True,
+    )
+
+
+def test_parameter_attribute_is_data() -> None:
+    """`file_data.filename` — FinBot `create_vendor_file`."""
+    src = """
+    def write_file(file_data):
+        os.remove(file_data.filename)
+    """
+    assert _classify(src) == "parameter_match"
+
+
+def test_nested_parameter_attribute_is_data() -> None:
+    """`session_context.current_user.id` — the chain is followed.
+
+    Any depth is accepted: every step is an attribute access on the same
+    parameter, so the base name carries the evidence the whole way.
+    """
+    src = """
+    def write_file(session_context):
+        os.remove(session_context.current_user.id)
+    """
+    assert _classify(src) == "parameter_match"
+
+
+def test_parameter_attribute_in_an_fstring_is_data() -> None:
+    """The f-string branch recurses into the attribute case (1.2a.3j)."""
+    src = """
+    def write_file(file_data):
+        os.remove(f"{file_data.filename}/x")
+    """
+    assert _classify(src) == "parameter_match"
+
+
+def test_attribute_of_a_module_level_name_is_unknown() -> None:
+    """`obj.attr` where `obj` is a global: no parameter evidence."""
+    src = """
+    import obj
+
+    def write_file(file_data):
+        os.remove(obj.attr)
+    """
+    assert _classify(src) == "unknown"
+
+
+def test_attribute_of_a_local_from_a_parameter_is_data() -> None:
+    """`config = load(param)` then `config.path` is a parameter match.
+
+    The local is bound in this body, and the analyzer follows names, not
+    values (ADR-0001) — the same reason `f"{base}"` is classified like
+    `base` itself.
+    """
+    src = """
+    def write_file(param):
+        config = load(param)
+        os.remove(config.path)
+    """
+    assert _classify(src) == "parameter_match"
+
+
+def test_attribute_of_a_literal_local_is_data_too() -> None:
+    """`config = {"path": "/tmp"}` then `config.path` is also a match.
+
+    Deliberate over-approximation, pinned here because it is the price of
+    the rule above: a local is locally-bound data whatever its value, and
+    `_local_variable_names` is value-blind (ADR-0001). The narrower
+    alternative — resolving the assignment — is dataflow, not naming.
+    """
+    src = """
+    def write_file(param):
+        config = {"path": "/tmp"}
+        os.remove(config.path)
+    """
+    assert _classify(src) == "parameter_match"
+
+
+def test_attribute_of_a_call_result_is_unknown() -> None:
+    """`fetch().path` has no base name to judge → `unknown`."""
+    src = """
+    def write_file():
+        os.remove(fetch().path)
+    """
+    assert _classify(src) == "unknown"
+
+
+def test_attribute_of_a_self_attribute_is_unknown() -> None:
+    """`self.q.name` is out of scope: the base is `self`, not `q`.
+
+    `self.q` itself is a match (1.2a.3g, one level); an attribute *of* it
+    would be a statement about the type of `q`, which is not what the
+    parameter rule says.
+    """
+    src = """
+    def write_file(self, q):
+        self.q = q
+        os.remove(self.q.name)
+    """
+    assert _classify(src) == "unknown"
+
+
+def test_plain_parameter_is_still_a_data_match() -> None:
+    """Unchanged: a bare parameter is the strongest evidence."""
+    src = """
+    def write_file(param):
+        os.remove(param)
+    """
+    assert _analyze(src) == "parameter_match"
+
+
+def test_edge_analyzer_does_not_follow_parameter_attributes() -> None:
+    """`has_access_to` is unchanged — the rule is opt-in (1.2a.3j).
+
+    `analyze_has_access_to` publishes `data_flow_confirmed`, and 1.2a.3g
+    drew the same line for `self.q`. The value 1.2a.3j changes is the
+    sink body's, which the tests below pin.
+    """
+    src = """
+    def call_sink(file_data):
+        os.remove(file_data.filename)
+    """
+    assert _analyze(src) == "unknown"
+
+
+def test_self_attribute_is_still_data_in_a_sink_body() -> None:
+    """Unchanged from 1.2a.3g: `self.q = q` then `self.q` is data.
+
+    The `self` case is one level and needs the assignment as evidence
+    (`self_attrs`); 1.2a.3j added the parameter/local case and left this
+    one alone.
+    """
+    src = """
+    def delete(self, q):
+        self.q = q
+        self.db.delete(self.q)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_body_with_a_parameter_attribute_is_data() -> None:
+    """The node value: FinBot `create_vendor_file`, as the sink sees it."""
+    src = """
+    def write_file(self, file_data):
+        open(file_data.filename, "w")
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_body_with_a_nested_parameter_attribute_is_data() -> None:
+    """`session_context.current_user.id` reaches the node too."""
+    src = """
+    def write_file(self, session_context):
+        open(session_context.current_user.id, "w")
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_body_with_a_local_attribute_is_data() -> None:
+    """`cfg = session_context.config` then `cfg.path` is the sink's data."""
+    src = """
+    def write_file(self, session_context):
+        cfg = session_context.config
+        open(cfg.path, "w")
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_body_with_an_attribute_of_a_global_is_unknown() -> None:
+    """The negative case: a global's attribute is not the sink's data."""
+    src = """
+    def write_file(self):
+        open(config.path, "w")
+    """
+    assert _sink_body(src) == "unknown"
+

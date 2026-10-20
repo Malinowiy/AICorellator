@@ -175,8 +175,10 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
     never followed, so subscripts, call results, and attributes of other
     objects fall back to `unknown`. A stored attribute (`self.q = q`),
     an f-string, and a collection are looked one step into (1.2a.3g),
-    because here the body under analysis is the one that built the
-    value. False negatives are accepted (ADR-0015).
+    and since 1.2a.3j so is an attribute of a parameter or of a local
+    variable (`file_data.filename`) — this is the one place that opts in
+    to it, because only here is the body classified against its own
+    parameters. False negatives are accepted (ADR-0015).
     """
     dangerous = _dangerous_calls(sink_func)
     # 1.2a.3c: a commit the capability extractor does not already treat
@@ -208,7 +210,13 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
             continue
 
         kinds = [
-            _classify_argument(arg, params, locals_, self_attrs)
+            _classify_argument(
+                arg,
+                params,
+                locals_,
+                self_attrs,
+                parameter_attributes=True,
+            )
             for arg in arguments
         ]
         if any(kind in DATA_FLOW_DATA_VALUES for kind in kinds):
@@ -460,6 +468,31 @@ def _is_self_attribute(node: ast.expr) -> bool:
     )
 
 
+def _attribute_base_name(node: ast.expr) -> str | None:
+    """The leftmost name of an attribute chain, or None (1.2a.3j).
+
+    The whole chain is followed, so the base is the same for
+    `file_data.filename` and for `session_context.current_user.id`;
+    depth is not limited, because every step is an attribute access on
+    the same base name and the base is what carries the evidence
+    (ADR-0001: names, not values).
+
+    Returns None when the chain does not start at a plain name —
+    `get_config().path` has a call for a base, and a call is a value the
+    analyzer does not follow.
+
+    `self.q.name` therefore has base `self`, which matches neither
+    `params` nor `locals_` (both discard `self`), so it stays `unknown`:
+    1.2a.3j extends the *parameter* case, not the `self` case, and
+    `self.q` itself is still handled by the one-level rule in
+    `_self_attribute_names` (1.2a.3g).
+    """
+    base: ast.expr = node
+    while isinstance(base, ast.Attribute):
+        base = base.value
+    return base.id if isinstance(base, ast.Name) else None
+
+
 def _classify_components(
     elements: list[ast.expr],
     params: set[str],
@@ -467,6 +500,7 @@ def _classify_components(
     self_attrs: frozenset[str],
     *,
     literal_if_all_constant: bool = True,
+    parameter_attributes: bool = False,
 ) -> str:
     """Classify the parts of a composite expression as one value.
 
@@ -493,7 +527,13 @@ def _classify_components(
     ):
         return "literal_only"
     kinds = [
-        _classify_argument(element, params, locals_, self_attrs)
+        _classify_argument(
+            element,
+            params,
+            locals_,
+            self_attrs,
+            parameter_attributes=parameter_attributes,
+        )
         for element in elements
     ]
     if "parameter_match" in kinds:
@@ -508,6 +548,8 @@ def _classify_argument(
     params: set[str],
     locals_: set[str],
     self_attrs: frozenset[str] = frozenset(),
+    *,
+    parameter_attributes: bool = False,
 ) -> str:
     """Classify a single argument expression.
 
@@ -527,6 +569,21 @@ def _classify_argument(
     `self_attrs` defaults to empty, so a caller that does not build the
     set (the edge analyzer, 1.2a.3g scope) still sees `self.q` as
     `unknown`, exactly as before.
+
+    1.2a.3j adds a fourth shape, behind the same kind of opt-in:
+
+        `param.x`    an attribute whose chain starts at a parameter, or
+        `local.x`    at a local variable of this body, is
+                     `parameter_match` (`_attribute_base_name`), at any
+                     depth. `obj.x` for any other base — a module-level
+                     import, a global, `self` — stays `unknown`.
+
+    `parameter_attributes` defaults to False for the same reason
+    `self_attrs` does: the edge analyzer (`analyze_has_access_to`) asks a
+    different question — whether a *tool* passes data into a sink — and
+    its `data_flow_confirmed` values are a published edge attribute
+    (1.2a.1). Only `analyze_sink_body`, which classifies a body against
+    its own parameters, opts in.
     """
     # `await foo()` is still a call result.
     if isinstance(node, ast.Await):
@@ -549,9 +606,26 @@ def _classify_argument(
     # 1.2a.3g: `self.q` where `q` was stored on the instance earlier in
     # the same body. An attribute that is not on `self`, or on `self`
     # but never assigned in this body, stays `unknown`.
+    #
+    # 1.2a.3j: `file_data.filename` — any attribute reached through a
+    # name that is a parameter or a local variable of this body. The
+    # base name decides, at any depth (`session_context.current_user.id`
+    # is the same shape as `file_data.filename`); everything else, in
+    # particular an attribute of a module-level global, stays `unknown`.
+    #
+    # A local's value is deliberately not checked: `config = load(param)`
+    # and `config = {"path": "/tmp"}` classify alike, because a local is
+    # bound in this body and `_local_variable_names` follows names, not
+    # values (ADR-0001). `self.X` stays stricter — it needs an assignment
+    # to `X` from a parameter or a local (1.2a.3g) — because there the
+    # name alone says nothing until the body stores something in it.
     if isinstance(node, ast.Attribute):
         if _is_self_attribute(node) and node.attr in self_attrs:
             return "parameter_match"
+        if parameter_attributes:
+            base = _attribute_base_name(node)
+            if base is not None and (base in params or base in locals_):
+                return "parameter_match"
         return "unknown"
 
     # An f-string is never `literal_only`: formatting is evaluated at
@@ -567,12 +641,19 @@ def _classify_argument(
             locals_,
             self_attrs,
             literal_if_all_constant=False,
+            parameter_attributes=parameter_attributes,
         )
 
     # Constant collections are literals for our purposes (1.2a.4); a
     # collection with a parameter-derived element is a match (1.2a.3g).
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return _classify_components(node.elts, params, locals_, self_attrs)
+        return _classify_components(
+            node.elts,
+            params,
+            locals_,
+            self_attrs,
+            parameter_attributes=parameter_attributes,
+        )
 
     if isinstance(node, ast.Dict):
         # `{**mapping}` is not a value that can be read: `ast.Dict.keys`
@@ -581,7 +662,11 @@ def _classify_argument(
         if any(key is None for key in node.keys):
             return "unknown"
         return _classify_components(
-            list(node.values), params, locals_, self_attrs
+            list(node.values),
+            params,
+            locals_,
+            self_attrs,
+            parameter_attributes=parameter_attributes,
         )
 
     # Subscript, binop, starred, comprehension, ... — name-based

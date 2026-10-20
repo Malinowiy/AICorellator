@@ -1209,6 +1209,17 @@ class SystemUtilsServer:
         os.remove("/tmp/scratch")
 """
 
+# The dangerous call receives an attribute of the sink's own parameter —
+# FinBot `create_vendor_file`'s shape, `unknown` before 1.2a.3j.
+SINK_FORWARDS_PARAMETER_ATTRIBUTE = """\
+class SystemUtilsServer:
+    def read_file(self, query):
+        return self.search(query)
+
+    def delete_file(self, file_data):
+        os.remove(file_data.filename)
+"""
+
 # No `delete_file` function in the file: the sink node is heuristic
 # (name-only), so its body cannot be analyzed.
 SINK_WITHOUT_BODY = """\
@@ -1228,6 +1239,23 @@ def _node(delta: GraphDelta, name: str) -> Node:
 def test_sink_node_records_parameter_match(target: Target) -> None:
     """A sink that forwards its parameter to `os.remove` (1.2a.1)."""
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
+    tsa = _systemutils_tsa(["read_file", "delete_file"])
+    delta = normalize(manifest, tsa)
+
+    sink = _node(delta, "delete_file")
+    assert sink.kind == "sink"
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
+
+
+def test_sink_node_records_parameter_attribute(target: Target) -> None:
+    """`os.remove(file_data.filename)` reaches the node (1.2a.3j).
+
+    An attribute of the sink's own parameter is parameter-derived, so the
+    node records `parameter_match` instead of the `unknown` the
+    attribute spelling produced before 1.2a.3j — the FinBot
+    `create_vendor_file` false negative, at node level.
+    """
+    manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER_ATTRIBUTE)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
     delta = normalize(manifest, tsa)
 
