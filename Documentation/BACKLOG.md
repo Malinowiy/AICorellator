@@ -120,6 +120,30 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 - OpenAI Agents SDK (when the detector lands): same.
 **References:** ADR-0015 decision 7; Step 6 report.
 
+### 1.2a.3 — ORM call sites in capability patterns
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** On FinBot, 7 of 8 sink nodes are `unknown` because they use ORM session calls (`self.db.delete(f)`, `self.db.commit()`, `session.add(...)`, `repo.*`) that are not in `CAPABILITY_WRITES_DB`. Same root cause as the Step 6 `unknown` — one level deeper. Adding these call sites to the capability patterns lets the sink analyzer fire on the common ORM layout.
+**Approach:** Extend `patterns.CAPABILITY_WRITES_DB` (and `CAPABILITY_READS_DB` where relevant) with the ORM patterns: `*.db.delete`, `*.db.add`, `*.db.commit`, `*.session.delete`, `*.session.add`, `*.session.commit`, `*.session.query`. Keep the list narrow (well-known ORM method names) so the false-positive rate stays controlled (ADR-0009).
+**References:** Step 7 report, limitation 1.
+
+### 1.2a.4 — Constant collection rule
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** `subprocess.run(["docker", "info"])` classifies as `unknown`, not `literal_only`, because `_classify_argument` only treats `ast.Constant` as a literal. Constant collections (`ast.List`, `ast.Tuple`, `ast.Dict`, `ast.Set` whose elements are all constants) are equivalent to literals for the sink analyzer. FinBot's `check_docker` and `check_redis` are in this class.
+**Approach:** In `_classify_argument`, treat a collection whose elements are all constants as `literal_only`. Nested collections recurse. Empty collections count as literal.
+**References:** Step 7 report, limitation 2.
+
+### 1.2a.5 — Class-body sink variant
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** dvmcp's `DVMCPClient`, `VulnerableMCPServer`, `VulnerableChatAssistant` are class-kind sinks with no `FunctionNode` body. The analyzer takes a function and cannot see them. A class-body variant would inspect `__init__` and `__call__` (and class-level statements) for dangerous calls.
+**Approach:** `analyze_sink_class(cls: ast.ClassDef) -> str`. Reuse `analyze_sink_body` for `__init__` and `__call__`; merge results with the same non-linear ranking. Wire when the sink node's source resolves to a class, not a function.
+**References:** Step 7 report, limitation 4.
+
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
 **Priority:** High
