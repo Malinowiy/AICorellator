@@ -162,11 +162,9 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3d — Test-file sinks
 
 **Priority:** Low
-**Status:** Not started
-**Rationale:** FinBot's test suite produces sinks (`clean_db`, `vendor_pair_setup`, `test_*`) because test fixtures call `db.commit()`. Scan scope includes test files. These are not production paths, but excluding `tests/` from discovery would hide real test-file vulnerabilities (some frameworks test the exact production code).
-**Decision (current):** do not exclude `tests/`. Instead, add a note to the prompt: test scripts and test fixtures are not production entry points, and chains that reach a sink only through test code should be treated as low-confidence unless the test exercises a production path.
-**Approach (when picked up):** add the prompt note. Optionally add an attribute `is_test_code: true` on nodes whose source file matches `tests/`, `test_*.py`, `*_test.py`. Do not change discovery.
-**References:** Step 8 report, limitation 3.
+**Status:** **Done** (2026-10-20)
+**Result:** Voter, solo, and judge system prompts note that test-file nodes are not production entry points. `PROMPT_VERSION` v1.4.1. No new attributes, no discovery change; the LLM uses `source_file` in node attributes.
+**Rationale:** 22 of FinBot's 114 sinks come from `tests/`. Excluding tests would hide real test-file vulnerabilities; a prompt note lets the LLM discount them without losing signal.
 
 ### 1.2a.3e — Leading-underscore qualifier normalization
 
