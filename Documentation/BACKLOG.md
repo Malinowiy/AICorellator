@@ -210,10 +210,10 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.2a.3j — Parameter attribute arguments
 
 **Priority:** Medium
-**Status:** Not started
-**Rationale:** `param.attr` (e.g. `file_data.filename`, `session_context.current_user.id`) is still `unknown`. FinBot `create_vendor_file` has 5 such arguments — the visible remaining false-negative family. `self.X` is covered; `param.X` is not.
-**Approach:** In `_classify_argument`, treat `ast.Attribute` whose `.value` is a parameter (Name in `params`) as `parameter_match`. Nested (`param.a.b`) — decide whether to follow one level or any; the `self.X` fixpoint suggests any depth of `param.*` is fine because it is still parameter-derived by construction. Keep name-based.
-**References:** 1.2a.3g report, finding 4.
+**Status:** **Done** (2026-10-20)
+**Result:** `param.X` and `local.X` (attribute on a parameter or body-local) → `parameter_match`, any depth as long as the base name is a parameter or local. Module-level base (`obj.X`) stays `unknown`. `local.X` is `parameter_match` (consistent with `self.q = <local>` from 1.2a.3g; value-blind over-approximation for literal-derived locals, ADR-0001). Opt-in gate `parameter_attributes=False` by default; only `analyze_sink_body` opts in — `_classify_argument` is shared with the edge analyzer, and the ungated variant would change edge values. Measured ungated: byte-identical on all four corpora today, so the gate costs nothing empirically.
+**Results:** FinBot 100/2/12 → 101/2/11 (`create_vendor_file` 5 args → `parameter_match`). mcploitable 6/1/1 → 7/1/0 (`main`: `open(args.log, 'w')` with `args` from `ap.parse_args()`). NMB, dvmcp unchanged. Over-match 0 (12 args newly classified, 0 module-level base).
+**Not taken:** `self.q.name` (base is `self`, not the derived attribute — third-level indirection); `fetch().path` (base is a Call — no call tracking, ADR-0001).
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
