@@ -164,13 +164,56 @@ def test_nested_subscript_is_unknown() -> None:
     assert _analyze(src) == "unknown"
 
 
-def test_fstring_is_unknown() -> None:
-    """Interpolated f-strings are not literals (ADR-0015)."""
+def test_fstring_with_parameter_is_parameter_match() -> None:
+    """An f-string with a parameter-derived interpolation is data.
+
+    Changed by 1.2a.3g: `_classify_argument` used to treat every
+    `ast.JoinedStr` as `unknown`. The body under analysis is the one
+    that built the string, so the parameter inside it is evidence.
+    """
     src = """
     def purge(base, name):
         os.remove(f"{base}/{name}")
     """
+    assert _analyze(src) == "parameter_match"
+
+
+def test_fstring_without_a_parameter_is_unknown() -> None:
+    """An f-string whose interpolations are globals is still `unknown`.
+
+    `BASE_URL` is a module-level name, not a parameter or a local, so
+    there is no parameter-derived component (1.2a.3g).
+    """
+    src = """
+    def purge():
+        os.remove(f"{BASE_URL}/api")
+    """
     assert _analyze(src) == "unknown"
+
+
+def test_fstring_with_a_literal_local_is_local_var_match() -> None:
+    """A local variable counts even when its value is a literal.
+
+    The analyzer tracks names, not values (`_local_variable_names`), so
+    `base = "https://x"` is indistinguishable from a parameter-derived
+    local. The over-approximation is deliberate and pre-existing
+    (ADR-0001); `f"{base}"` is classified like `base` itself.
+    """
+    src = """
+    def purge():
+        base = "https://example.com"
+        os.remove(f"{base}/api")
+    """
+    assert _analyze(src) == "local_var_match"
+
+
+def test_fstring_nested_interpolation_is_parameter_match() -> None:
+    """Interpolations are classified recursively (1.2a.3g)."""
+    src = """
+    def purge(q):
+        os.remove(f"{f'{q}'}/{q}")
+    """
+    assert _analyze(src) == "parameter_match"
 
 
 def test_strongest_result_wins() -> None:
@@ -263,17 +306,56 @@ def test_empty_collection_argument_is_literal_only() -> None:
     assert _analyze(src, "subprocess.run") == "literal_only"
 
 
-def test_mixed_collection_argument_is_unknown() -> None:
-    """A collection holding a parameter is not `literal_only` — and not
-    `parameter_match` either. The collection as a whole is not a
-    constant, but we do not know whether the sink consumes the
-    parameter element or the literal one, so the honest answer is
-    `unknown` (ADR-0001, ADR-0015)."""
+def test_mixed_collection_argument_is_parameter_match() -> None:
+    """A collection holding a parameter is a match (1.2a.3g).
+
+    Changed by 1.2a.3g: 1.2a.4 pinned this as `unknown`, arguing that we
+    cannot tell which element the sink consumes. The body under analysis
+    is the one that built the collection, and the parameter is inside
+    the value handed to the dangerous call, so the collection does carry
+    parameter-derived data. ADR-0015 accepts the loosening deliberately:
+    a mixed collection is now a true positive, while a collection whose
+    non-constant part cannot be resolved (`["a", config.path]`) is still
+    `unknown`.
+    """
     src = """
     def check_tool(param):
         subprocess.run(["a", param])
     """
-    assert _analyze(src, "subprocess.run") == "unknown"
+    assert _analyze(src, "subprocess.run") == "parameter_match"
+
+
+def test_collection_with_local_var_is_local_var_match() -> None:
+    """A local variable inside a collection keeps its own kind.
+
+    The element's kind is returned, not a flattened `parameter_match`:
+    the sink analyzer collapses all three data kinds, the edge analyzer
+    reports the precise one (1.2a.3g).
+    """
+    src = """
+    def check_tool():
+        cmd = fetch_command()
+        subprocess.run(["a", cmd])
+    """
+    assert _analyze(src, "subprocess.run") == "local_var_match"
+
+
+def test_collection_with_unresolved_element_is_unknown() -> None:
+    """An element that cannot be resolved contributes nothing.
+
+    `config.path` is an attribute of another object and a call result is
+    not a name — neither promotes the collection (ADR-0001).
+    """
+    attribute = """
+    def check_tool(config):
+        subprocess.run(["a", config.path])
+    """
+    call_result = """
+    def check_tool(param):
+        subprocess.run(["a", fetch(param)])
+    """
+    assert _analyze(attribute, "subprocess.run") == "unknown"
+    assert _analyze(call_result, "subprocess.run") == "unknown"
 
 
 def test_nested_collection_argument_is_literal_only() -> None:
@@ -285,23 +367,32 @@ def test_nested_collection_argument_is_literal_only() -> None:
     assert _analyze(src, "subprocess.run") == "literal_only"
 
 
-def test_nested_mixed_collection_argument_is_unknown() -> None:
-    """A non-constant element one level down defeats the whole
-    collection."""
+def test_nested_mixed_collection_argument_is_parameter_match() -> None:
+    """A parameter one level down promotes the whole collection.
+
+    Changed by 1.2a.3g: the elements are classified recursively, so the
+    inner list is `literal_only`, the parameter is `parameter_match`,
+    and the outer list takes the strongest of the two.
+    """
     src = """
     def check_nested(param):
         subprocess.run([["a"], param])
     """
-    assert _analyze(src, "subprocess.run") == "unknown"
+    assert _analyze(src, "subprocess.run") == "parameter_match"
 
 
-def test_dict_with_parameter_value_is_unknown() -> None:
-    """One non-constant value is enough to make the dict non-constant."""
+def test_dict_with_parameter_value_is_parameter_match() -> None:
+    """A dict value that is a parameter is data (1.2a.3g).
+
+    Changed by 1.2a.3g: the values are classified like list elements, so
+    `{"q": param}` is a match and `{"a": 1, "b": 2}` stays
+    `literal_only`.
+    """
     src = """
     def check_config(param):
         subprocess.run({"a": param})
     """
-    assert _analyze(src, "subprocess.run") == "unknown"
+    assert _analyze(src, "subprocess.run") == "parameter_match"
 
 
 def test_dict_unpacking_is_unknown() -> None:
@@ -564,15 +655,17 @@ def test_sink_empty_collection_is_literal_only() -> None:
     assert _sink_body(src) == "literal_only"
 
 
-def test_sink_mixed_collection_is_unknown() -> None:
-    """A collection with a non-literal element is `unknown` — not
-    `parameter_match`: the sink's parameter is inside the collection,
-    but which element reaches the operation is not known (1.2a.4)."""
+def test_sink_mixed_collection_is_parameter_match() -> None:
+    """A collection with the sink's parameter is data (1.2a.3g).
+
+    Changed by 1.2a.3g, which loosened the 1.2a.4 rule: the parameter is
+    inside the value handed to the dangerous call.
+    """
     src = """
     def check_tool(self, param):
         subprocess.run([param, "a"])
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src) == "parameter_match"
 
 
 def test_sink_nested_collection_is_literal_only() -> None:
@@ -584,13 +677,13 @@ def test_sink_nested_collection_is_literal_only() -> None:
     assert _sink_body(src) == "literal_only"
 
 
-def test_sink_nested_mixed_collection_is_unknown() -> None:
-    """A non-literal element one level down defeats the collection."""
+def test_sink_nested_mixed_collection_is_parameter_match() -> None:
+    """A parameter one level down promotes the collection (1.2a.3g)."""
     src = """
     def check_nested(self, param):
         subprocess.run([["a"], param])
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src) == "parameter_match"
 
 
 def test_sink_dict_unpacking_is_unknown() -> None:
@@ -600,6 +693,209 @@ def test_sink_dict_unpacking_is_unknown() -> None:
         subprocess.run({**param})
     """
     assert _sink_body(src) == "unknown"
+
+
+def test_sink_self_attribute_from_parameter_is_data() -> None:
+    """`self.q = q; self.db.delete(self.q)` is a data flow (1.2a.3g).
+
+    The sink stores its own parameter on the instance and hands it to
+    the dangerous call. Values are not followed, but the name is: the
+    attribute is parameter-derived because this body assigned it from a
+    parameter.
+    """
+    src = """
+    def delete(self, q):
+        self.q = q
+        self.db.delete(self.q)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_self_attribute_from_a_local_var_is_data() -> None:
+    """A local variable on the right-hand side is enough (1.2a.3g)."""
+    src = """
+    def delete(self, q):
+        path = os.path.join("/tmp", q)
+        self.q = path
+        self.db.delete(self.q)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_self_attribute_chain_is_data() -> None:
+    """`self.q = q; self.r = self.q; ... self.r` follows the chain.
+
+    The "right-hand side is another derived attribute" rule is applied
+    until nothing changes, so a chain of any length is followed
+    (1.2a.3g).
+    """
+    src = """
+    def delete(self, q):
+        self.q = q
+        self.r = self.q
+        self.s = self.r
+        self.db.delete(self.s)
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_self_attribute_from_a_literal_is_unknown() -> None:
+    """`self.q = "literal"` is not parameter-derived (1.2a.3g)."""
+    src = """
+    def delete(self, q):
+        self.q = "literal"
+        self.db.delete(self.q)
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_self_attribute_from_a_call_is_unknown() -> None:
+    """A call result on the right-hand side is not a name (ADR-0001)."""
+    src = """
+    def delete(self, q):
+        self.q = fetch(q)
+        self.db.delete(self.q)
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_self_attribute_not_assigned_here_is_unknown() -> None:
+    """An attribute on `self` that this body never assigns (1.2a.3g).
+
+    `self.q` may hold anything the rest of the class put there — an
+    assignment in another method is not visible, because each body is
+    analyzed on its own (1.2a.5).
+    """
+    src = """
+    def delete(self, q):
+        self.db.delete(self.q)
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_attribute_of_another_object_is_unknown() -> None:
+    """`other.attr` is not `self.attr` — only `self` is followed.
+
+    `other.attr` is someone else's state: the body did not store a
+    parameter in it (1.2a.3g).
+    """
+    src = """
+    def delete(self, other):
+        self.db.delete(other.attr)
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_self_attribute_annotated_and_augmented_is_data() -> None:
+    """`self.q: str = q` and `self.q += q` are assignments too (1.2a.3g)."""
+    annotated = """
+    def delete(self, q):
+        self.q: str = q
+        self.db.delete(self.q)
+    """
+    augmented = """
+    def delete(self, q):
+        self.q += q
+        self.db.delete(self.q)
+    """
+    assert _sink_body(annotated) == "parameter_match"
+    assert _sink_body(augmented) == "parameter_match"
+
+
+def test_sink_fstring_with_parameter_is_data() -> None:
+    """An f-string built from the sink's parameter reaches the call.
+
+    This is the dvmcp `VulnerableChatAssistant` shape: the URL is
+    formatted at the call site (1.2a.3g).
+    """
+    src = """
+    def fetch(self, q):
+        requests.get(f"{BASE_URL}/api/{q}")
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_fstring_without_a_parameter_is_unknown() -> None:
+    """No parameter-derived interpolation → no evidence (1.2a.3g).
+
+    An f-string is never `literal_only`: it is evaluated at runtime even
+    when every interpolation is a constant.
+    """
+    src = """
+    def fetch(self, q):
+        requests.get(f"{BASE_URL}/api/tags")
+    """
+    assert _sink_body(src) == "unknown"
+
+
+def test_sink_fstring_with_a_derived_attribute_is_data() -> None:
+    """`self.base = base` then `f"{self.base}/tags"` is data (1.2a.3g)."""
+    src = """
+    def fetch(self, base):
+        self.base = base
+        requests.get(f"{self.base}/api/tags")
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_dict_with_parameter_value_is_data() -> None:
+    """`requests.post(url, json={"q": q})` carries the parameter.
+
+    The dict is the payload; the values are what the sink consumes
+    (1.2a.3g).
+    """
+    src = """
+    def post(self, q):
+        requests.post(URL, json={"q": q})
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_dict_with_local_var_value_is_data() -> None:
+    """The dvmcp shape: a local list built from the parameter.
+
+    `messages` is a local variable, and the body under analysis is the
+    one that built it (1.2a.3g).
+    """
+    src = """
+    def chat(self, user_message):
+        messages = [{"role": "user", "content": user_message}]
+        requests.post(
+            f"{BASE_URL}/api/chat",
+            json={"model": MODEL, "messages": messages},
+        )
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_dict_all_literals_is_literal_only() -> None:
+    """A dict of constants stays `literal_only` (1.2a.4)."""
+    src = """
+    def post(self, q):
+        requests.post("https://example.com/api", json={"a": 1, "b": "x"})
+    """
+    assert _sink_body(src) == "literal_only"
+
+
+def test_sink_list_with_parameter_is_data() -> None:
+    """A command list with the parameter in it is a data flow (1.2a.3g).
+
+    Changed by 1.2a.3g: `[param, "a"]` used to be `unknown` (1.2a.4).
+    """
+    src = """
+    def convert(self, q):
+        subprocess.run(["docker", q])
+    """
+    assert _sink_body(src) == "parameter_match"
+
+
+def test_sink_tuple_with_parameter_is_data() -> None:
+    """Tuples follow the same rule as lists (1.2a.3g)."""
+    src = """
+    def convert(self, q):
+        subprocess.run(("docker", q))
+    """
+    assert _sink_body(src) == "parameter_match"
 
 
 def test_sink_orm_delete_with_parameter() -> None:
@@ -914,10 +1210,9 @@ def _class_sink(source: str) -> str:
 def test_class_sink_init_parameter_reaches_dangerous_call() -> None:
     """A constructor parameter reaches the dangerous call (1.2a.5).
 
-    The 1.2a.5 sketch spells the same case as `self.db.delete(self.q)`
-    — a stored attribute. Attribute chains are not resolved (ADR-0001),
-    so that spelling stays `unknown`; see
-    `test_class_sink_self_attribute_argument_is_unknown`.
+    The same case spelled as a stored attribute — `self.db.delete(self.q)`
+    — is also `parameter_match` since 1.2a.3g; see
+    `test_class_sink_self_attribute_argument_is_parameter_match`.
     """
     src = """
     class X:
@@ -970,10 +1265,10 @@ def test_class_sink_without_dangerous_call_is_unknown() -> None:
 def test_class_sink_commit_only_init_with_parameter_is_data() -> None:
     """The commit exception applies at class level too (1.2a.3c).
 
-    The constructor declares a parameter, so `self.db.commit()`
-    persists the class's data and the class is `parameter_match`. The
-    preceding `self.q` argument is an unresolved attribute chain and
-    contributes nothing on its own.
+    The constructor declares a parameter, so `self.db.commit()` persists
+    the class's data and the class is `parameter_match`. The preceding
+    `self.db.delete(self.q)` is `parameter_match` on its own as well
+    (1.2a.3g), so the commit is not what decides this value.
     """
     src = """
     class X:
@@ -999,20 +1294,70 @@ def test_class_sink_commit_only_init_without_parameter_is_unknown() -> None:
     assert _class_sink(src) == "unknown"
 
 
-def test_class_sink_self_attribute_argument_is_unknown() -> None:
-    """`self.db.delete(self.q)` → unknown: attribute chains are not
-    resolved (ADR-0001). Stored-attribute data flow is backlog 1.2a.3g;
-    `_classify_argument` is untouched by this item."""
+def test_class_sink_self_attribute_argument_is_parameter_match() -> None:
+    """`self.db.delete(self.q)` is data when the body stored `q`.
+
+    Changed by 1.2a.3g: the stored attribute used to be `unknown` (the
+    1.2a.5 sketch called it a known limitation). The class body is the
+    scope, and `self.q` is assigned from the constructor's parameter.
+    """
     src = """
     class X:
         def __init__(self, q):
             self.q = q
             self.db.delete(self.q)
     """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_self_attribute_from_a_literal_is_unknown() -> None:
+    """`self.q = "literal"` then `self.q` in the call is `unknown`."""
+    src = """
+    class X:
+        def __init__(self, q):
+            self.q = "literal"
+            self.db.delete(self.q)
+    """
     assert _class_sink(src) == "unknown"
 
 
+def test_class_sink_attribute_from_another_method_is_unknown() -> None:
+    """Each method is its own scope: `__init__` does not help `delete`.
 
+    1.2a.5 analyzes every method separately, so an attribute stored in
+    one is not visible in another (1.2a.3g).
+    """
+    src = """
+    class X:
+        def __init__(self, q):
+            self.q = q
+        def delete(self):
+            self.db.delete(self.q)
+    """
+    assert _class_sink(src) == "unknown"
+
+
+def test_class_sink_fstring_argument_is_parameter_match() -> None:
+    """The dvmcp shape, at class level: a formatted URL with the sink's
+    parameter (1.2a.3g)."""
+    src = """
+    class X:
+        def fetch(self, q):
+            requests.get(f"{BASE_URL}/api/{q}")
+    """
+    assert _class_sink(src) == "parameter_match"
+
+
+def test_class_sink_dict_argument_with_local_var_is_parameter_match() -> None:
+    """The `VulnerableChatAssistant` shape: `messages` is a local built
+    from the parameter and handed to the sink in a dict (1.2a.3g)."""
+    src = """
+    class X:
+        def chat(self, user_message):
+            messages = [{"role": "user", "content": user_message}]
+            requests.post(BASE_URL, json={"messages": messages})
+    """
+    assert _class_sink(src) == "parameter_match"
 
 
 def test_class_sink_strongest_scope_wins() -> None:

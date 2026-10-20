@@ -1382,6 +1382,13 @@ class FileRepository:
         return p
 """
 
+CLASS_SINK_STORED_ATTRIBUTE = """
+class FileRepository:
+    def __init__(self, q):
+        self.q = q
+        self.db.delete(self.q)
+"""
+
 
 def _class_sink_manifest(target: Target, source: str) -> FileManifest:
     """A one-file project whose only file defines the repository class."""
@@ -1480,6 +1487,24 @@ def test_class_sink_node_without_dangerous_call_is_unknown(
 
     sink = _node(delta, "FileRepository")
     assert sink.attributes["sink_data_flow"] == "unknown"
+
+
+def test_class_sink_node_with_stored_attribute_is_parameter_match(
+    target: Target,
+) -> None:
+    """`self.q = q; self.db.delete(self.q)` reaches the node (1.2a.3g).
+
+    The attribute is parameter-derived, so the class-kind sink records
+    `parameter_match` instead of the `unknown` the stored-attribute
+    spelling produced before 1.2a.3g.
+    """
+    manifest = _class_sink_manifest(target, CLASS_SINK_STORED_ATTRIBUTE)
+    delta = normalize(
+        manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
+    )
+
+    sink = _node(delta, "FileRepository")
+    assert sink.attributes["sink_data_flow"] == "parameter_match"
 
 
 def test_class_sink_detector_node_resolves_the_class_body(

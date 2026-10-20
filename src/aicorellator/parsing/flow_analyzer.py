@@ -41,14 +41,31 @@ The first rule that matches wins, in the order above (with `no_args`
 checked first and `unknown` last); the ranking is not linear.
 
 This is deliberately name-based, not value-based (ADR-0001 forbids full
-dataflow analysis). It finds `os.remove(query)` where `query` is a tool
-parameter. It does not resolve dictionary lookups, f-strings, or
-attribute chains — those fall back to `unknown`. False negatives are
-accepted; the LLM calibrates confidence from the result (ADR-0015).
+dataflow analysis). It does not follow data through calls or control
+flow: a subscript, a binop, or an attribute of another object falls back
+to `unknown`. False negatives are accepted; the LLM calibrates
+confidence from the result (ADR-0015).
+
+Three shapes are looked one step into (1.2a.3g), because there the body
+being analyzed is the one *constructing* the value:
+
+    self.q      an attribute on `self` assigned from a parameter or a
+                local variable earlier in the same body
+    f"{q}/x"    an f-string with a parameter-derived interpolation
+    {"k": q}    a collection with a parameter-derived element or value
+
+They return the kind of the name inside them, so
+`self.q = q; self.db.delete(self.q)` and
+`requests.post(f"{self.base}/chat", json={"m": messages})` are
+recognized. Only names are followed — never call results — and only
+within one body: the same `self.q` read in another method is `unknown`.
 
 A literal is a constant or a collection of constants: the command list
 of `subprocess.run(["docker", "info"])` is constant data, so it is
-`literal_only`, not `unknown` (1.2a.4).
+`literal_only`, not `unknown` (1.2a.4). A collection is classified by
+its elements, so `["a", param]` is `parameter_match` — the parameter is
+inside the value the sink is handed (1.2a.3g, loosening the earlier
+"mixed collection is `unknown`" rule).
 
 A commit call is the one exception to the no-argument rule (1.2a.3c).
 `db.commit()` takes no arguments and is still the dangerous operation:
@@ -154,9 +171,12 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
 
     A `literal_only` sink cannot receive attacker data through its own
     arguments — only constants reach the dangerous call. Like
-    `analyze_has_access_to` this is name-based (ADR-0001): attribute
-    access, subscripts and f-strings fall back to `unknown`, and false
-    negatives are accepted (ADR-0015).
+    `analyze_has_access_to` this is name-based (ADR-0001): values are
+    never followed, so subscripts, call results, and attributes of other
+    objects fall back to `unknown`. A stored attribute (`self.q = q`),
+    an f-string, and a collection are looked one step into (1.2a.3g),
+    because here the body under analysis is the one that built the
+    value. False negatives are accepted (ADR-0015).
     """
     dangerous = _dangerous_calls(sink_func)
     # 1.2a.3c: a commit the capability extractor does not already treat
@@ -171,6 +191,7 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
 
     params = _parameter_names(sink_func)
     locals_ = _local_variable_names(sink_func)
+    self_attrs = _self_attribute_names(sink_func)
     saw_literal_only = False
 
     for call in dangerous:
@@ -186,7 +207,10 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
                 return "parameter_match"
             continue
 
-        kinds = [_classify_argument(arg, params, locals_) for arg in arguments]
+        kinds = [
+            _classify_argument(arg, params, locals_, self_attrs)
+            for arg in arguments
+        ]
         if any(kind in DATA_FLOW_DATA_VALUES for kind in kinds):
             return "parameter_match"
         if all(kind == "literal_only" for kind in kinds):
@@ -423,12 +447,87 @@ def _is_literal(node: ast.expr | None) -> bool:
     return False
 
 
+def _is_self_attribute(node: ast.expr) -> bool:
+    """True if `node` is an attribute of the bound instance (`self.x`).
+
+    `cls.x` and `other.x` do not count: the analyzer only follows state
+    the body itself stored on `self` (1.2a.3g).
+    """
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def _classify_components(
+    elements: list[ast.expr],
+    params: set[str],
+    locals_: set[str],
+    self_attrs: frozenset[str],
+    *,
+    literal_if_all_constant: bool = True,
+) -> str:
+    """Classify the parts of a composite expression as one value.
+
+    The strongest part wins, with the same ranking as the call site:
+    `parameter_match`, else `local_var_match`, else `literal_only` when
+    every part is a constant, else `unknown`. A part that cannot be
+    resolved (a subscript, a call result, an attribute of another
+    object) contributes nothing — `[fetch(q)]` stays `unknown`, because
+    following a call is dataflow, not naming (ADR-0001).
+
+    `literal_if_all_constant=False` is for f-strings: their parts are
+    interpolations, and an f-string is never constant data even when
+    every interpolation is (`f"{3}"`), so the weakest result there is
+    `unknown` (deliberate, 1.2a.3g).
+
+    This is where 1.2a.4's "a collection that mixes a parameter and a
+    literal is `unknown`" rule is loosened (1.2a.3g): a collection with
+    a parameter inside it does carry parameter-derived data, and the
+    body under analysis is the one that built it, so the parameter is
+    evidence that the sink received data.
+    """
+    if literal_if_all_constant and all(
+        _is_literal(element) for element in elements
+    ):
+        return "literal_only"
+    kinds = [
+        _classify_argument(element, params, locals_, self_attrs)
+        for element in elements
+    ]
+    if "parameter_match" in kinds:
+        return "parameter_match"
+    if "local_var_match" in kinds:
+        return "local_var_match"
+    return "unknown"
+
+
 def _classify_argument(
     node: ast.expr,
     params: set[str],
     locals_: set[str],
+    self_attrs: frozenset[str] = frozenset(),
 ) -> str:
-    """Classify a single argument expression."""
+    """Classify a single argument expression.
+
+    Name-based, one level deep (ADR-0001, ADR-0015): a name is a
+    parameter, a local variable, or neither — values are never followed.
+
+    Three shapes are looked into, because the body being analyzed is the
+    one that built them (1.2a.3g):
+
+        `self.q`     parameter-derived when `q` is in `self_attrs`,
+                     i.e. when this body assigned it from a parameter or
+                     a local variable (`_self_attribute_names`)
+        `f"{q}/x"`   the interpolations are classified recursively
+        `[q, "x"]`   the elements — or a dict's values — are classified
+                     recursively
+
+    `self_attrs` defaults to empty, so a caller that does not build the
+    set (the edge analyzer, 1.2a.3g scope) still sees `self.q` as
+    `unknown`, exactly as before.
+    """
     # `await foo()` is still a call result.
     if isinstance(node, ast.Await):
         node = node.value
@@ -447,19 +546,46 @@ def _classify_argument(
     if isinstance(node, ast.Constant):
         return "literal_only"
 
-    # Constant collections are literals for our purposes (1.2a.4).
-    # A collection that mixes a parameter and a literal is deliberately
-    # `unknown`, not the element's kind: the collection as a whole is
-    # not a constant, and we do not know whether the sink consumes the
-    # parameter element or the literal one, so claiming
-    # `parameter_match` would overstate the evidence (ADR-0001,
-    # ADR-0015 — false negatives are accepted, overstated evidence is
-    # not).
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
-        return "literal_only" if _is_literal(node) else "unknown"
+    # 1.2a.3g: `self.q` where `q` was stored on the instance earlier in
+    # the same body. An attribute that is not on `self`, or on `self`
+    # but never assigned in this body, stays `unknown`.
+    if isinstance(node, ast.Attribute):
+        if _is_self_attribute(node) and node.attr in self_attrs:
+            return "parameter_match"
+        return "unknown"
 
-    # Attribute access, subscript, f-string, binop, starred, ... —
-    # name-based analysis cannot follow these (ADR-0001, ADR-0015).
+    # An f-string is never `literal_only`: formatting is evaluated at
+    # runtime even when every interpolation is a constant.
+    if isinstance(node, ast.JoinedStr):
+        return _classify_components(
+            [
+                part.value
+                for part in node.values
+                if isinstance(part, ast.FormattedValue)
+            ],
+            params,
+            locals_,
+            self_attrs,
+            literal_if_all_constant=False,
+        )
+
+    # Constant collections are literals for our purposes (1.2a.4); a
+    # collection with a parameter-derived element is a match (1.2a.3g).
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return _classify_components(node.elts, params, locals_, self_attrs)
+
+    if isinstance(node, ast.Dict):
+        # `{**mapping}` is not a value that can be read: `ast.Dict.keys`
+        # marks each unpacking with `None` (1.2a.4). Keys are not
+        # classified — the sink consumes the values.
+        if any(key is None for key in node.keys):
+            return "unknown"
+        return _classify_components(
+            list(node.values), params, locals_, self_attrs
+        )
+
+    # Subscript, binop, starred, comprehension, ... — name-based
+    # analysis cannot follow these (ADR-0001, ADR-0015).
     return "unknown"
 
 
@@ -500,6 +626,66 @@ def _local_variable_names(func: FunctionNode) -> set[str]:
     names.discard("self")
     names.discard("cls")
     return names
+
+
+def _self_attribute_names(func: FunctionNode) -> frozenset[str]:
+    """Attributes on `self` that hold parameter-derived data (1.2a.3g).
+
+    `self.q = q; self.db.delete(self.q)` stores a parameter on the
+    instance and hands it to the dangerous call one line later. Values
+    cannot be followed (ADR-0001), but *names* can: an attribute is
+    parameter-derived when the right-hand side of an assignment to it is
+
+        a parameter or a local variable   `self.q = q`
+        another derived attribute         `self.r = self.q`
+
+    The second rule is applied until nothing changes, so a chain of any
+    length is followed — it is the same rule, and stopping after one hop
+    would be an arbitrary cutoff. Nothing else counts: `self.q = fetch(q)`
+    is not derived, because following a call is dataflow, not naming.
+
+    Assignments are collected from the whole body, so order is not
+    modeled (a name is derived if *any* assignment to it is); that
+    matches `_local_variable_names`, which is likewise order-blind. The
+    scope is one body: `self.q` assigned in `__init__` says nothing about
+    `self.q` read in `delete`, because the two are analyzed separately
+    (1.2a.5). `self.q: str = q` and `self.q += q` count as assignments.
+    """
+    assignments: list[tuple[str, ast.expr]] = []
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign):
+            assignments.extend(
+                (target.attr, node.value)
+                for target in node.targets
+                if _is_self_attribute(target)
+            )
+        elif isinstance(node, ast.AnnAssign):
+            if node.value is not None and _is_self_attribute(node.target):
+                assignments.append((node.target.attr, node.value))
+        elif isinstance(node, ast.AugAssign):
+            if _is_self_attribute(node.target):
+                assignments.append((node.target.attr, node.value))
+
+    params = _parameter_names(func)
+    locals_ = _local_variable_names(func)
+    derived: set[str] = set()
+    progress = True
+    while progress:
+        progress = False
+        for attr, value in assignments:
+            if attr in derived:
+                continue
+            if isinstance(value, ast.Name):
+                is_derived = value.id in params or value.id in locals_
+            elif _is_self_attribute(value):
+                is_derived = value.attr in derived
+            else:
+                is_derived = False
+            if is_derived:
+                derived.add(attr)
+                progress = True
+
+    return frozenset(derived)
 
 
 # ============================================================
