@@ -40,6 +40,10 @@ VALID_EDGE_KINDS = frozenset({
     "delegates_to",
     "has_access_to",
     "guards",
+    # A writer produces an untrusted source (1.3a.1, ADR-0010). Control,
+    # not data: the edge records that the writer *declares* the source's
+    # content, which is not a traced dataflow (ADR-0015).
+    "writes_to",
 })
 
 # Valid flow kinds (ADR-0015). Mirrors the CHECK constraint in schema.sql.

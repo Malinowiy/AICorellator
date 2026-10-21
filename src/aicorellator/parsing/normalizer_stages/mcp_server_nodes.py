@@ -1,6 +1,6 @@
 """McpServerNodeStage — `mcp_server` nodes from file paths.
 
-Run order: 1 of 15 (see `normalizer_stages.STAGES`).
+Run order: 1 of 16 (see `normalizer_stages.STAGES`).
 
 C4: "**MCP server nodes** — from file paths under `mcp/servers/`." The
 detector-discovered servers (`FastMCP(...)`, `Server(...)`) arrive with

@@ -73,6 +73,39 @@ def test_untrusted_source_node_kind_is_accepted(store: GraphStore) -> None:
     assert fetched.attributes["source_type"] == "rag_corpus"
 
 
+def test_edge_kind_check(store: GraphStore) -> None:
+    """`writes_to` is in the CHECK constraint; an unknown kind is not.
+
+    The 1.3a.1 writer edge (ADR-0010) is the seventh kind. It is
+    `control` with `data_flow_confirmed = "unknown"` — the same pair
+    `provides_tool` carries (ADR-0015, decision 5).
+    """
+    store.nodes.upsert(Node(
+        id="s:1", kind="mcp_server", name="knowledge", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="u:1", kind="untrusted_source",
+        name="mcp_tool_description:client.list_tools", host_id="localhost",
+    ))
+
+    store.edges.add(Edge(
+        id="e:1", source_id="s:1", target_id="u:1",
+        kind="writes_to", host_id="localhost",
+        data_flow_confirmed="unknown",
+    ))
+
+    fetched = store.edges.get("e:1")
+    assert fetched is not None
+    assert fetched.kind == "writes_to"
+    assert fetched.data_flow_confirmed == "unknown"
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.edges.add(Edge(
+            id="e:2", source_id="s:1", target_id="u:1",
+            kind="not-a-kind", host_id="localhost",
+        ))
+
+
 def test_edge_self_loop_rejected(store: GraphStore) -> None:
     """source_id == target_id is rejected by CHECK."""
     store.nodes.upsert(Node(

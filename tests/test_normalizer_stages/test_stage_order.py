@@ -10,6 +10,11 @@ The order encodes four facts that are easy to lose in a refactor:
     handler resolves to the entry point node) and before the merge, for
     the same id reason as `entry_to_sink` (see
     `normalizer_stages.untrusted_sources`);
+  - `untrusted_source_writers` runs *after* the merge, because the
+    framework-detected `mcp_server` nodes it matches against only exist
+    once `detector_merge` has run, and before `flow_kind`, so the one
+    derivation classifies the edge it emits (see
+    `normalizer_stages.untrusted_source_writers`);
   - `body_attributes` runs last, because the merge replaces nodes and
     the replacement is what the graph keeps.
 """
@@ -30,6 +35,7 @@ EXPECTED = (
     "delegation_edges",
     "entry_to_sink",
     "detector_merge",
+    "untrusted_source_writers",
     "flow_kind",
     "cross_file_resolution",
     "mcp_entry_synthesis",
@@ -42,9 +48,9 @@ def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
 
 
-def test_stage_count_is_fifteen() -> None:
-    """The count is quoted in the per-stage docstrings (`N of 15`)."""
-    assert len(STAGES) == 15
+def test_stage_count_is_sixteen() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 16`)."""
+    assert len(STAGES) == 16
 
 
 def test_every_stage_satisfies_the_protocol() -> None:
@@ -68,3 +74,14 @@ def test_entry_to_sink_precedes_the_detector_merge() -> None:
     """`sinks_by_file` holds TSA ids; the merge invalidates them."""
     names = [stage.name for stage in STAGES]
     assert names.index("entry_to_sink") < names.index("detector_merge")
+
+
+def test_writer_stage_follows_the_merge_and_precedes_flow_kind() -> None:
+    """Framework-detected servers exist only after the merge; the one
+    `flow_kind` derivation has to see the edge this stage emits."""
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("detector_merge")
+        < names.index("untrusted_source_writers")
+        < names.index("flow_kind")
+    )

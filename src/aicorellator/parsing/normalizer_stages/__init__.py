@@ -20,11 +20,12 @@ this order:
      8  delegation_edges       entry → agent, agent → agent, agent → server
      9  entry_to_sink          entry → same-file sink reachability
     10  detector_merge         detector nodes authoritative; id remap
-    11  flow_kind              flow_kind on every edge (ADR-0015)
-    12  cross_file_resolution  uses_tool across modules (Resolver 1)
-    13  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
-    14  orphan_entry           orphan entry → single agent (Resolver 2)
-    15  body_attributes        sink_data_flow / returns_data backfill
+    11  untrusted_source_writers  server → writes_to → source (1.3a.1)
+    12  flow_kind              flow_kind on every edge (ADR-0015)
+    13  cross_file_resolution  uses_tool across modules (Resolver 1)
+    14  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
+    15  orphan_entry           orphan entry → single agent (Resolver 2)
+    16  body_attributes        sink_data_flow / returns_data backfill
 
 Note on the order:
 
@@ -41,6 +42,12 @@ Note on the order:
     `untrusted_sources` is before the merge for the same reason, and
     after `entry_points` because a read inside a route handler resolves
     to the entry point node, which that stage creates.
+  - `untrusted_source_writers` (1.3a.1) runs **after** the merge, for the
+    opposite reason: the `mcp_server` nodes it matches against arrive in
+    two waves, and the framework-detected one — the kind that carries
+    the file the rule matches on — only exists once `detector_merge` has
+    run. It runs before `flow_kind` so the one derivation classifies the
+    edge it emits.
   - `BodyAttributeStage` runs last, not at node construction. Its
     *position* is load-bearing for the same kind of reason: the merge can
     replace a TSA node with a detector node that arrives without the
@@ -64,6 +71,7 @@ from .mcp_entry_synthesis import McpEntrySynthesisStage
 from .mcp_server_nodes import McpServerNodeStage
 from .method_nodes import MethodNodeStage
 from .orphan_entry import OrphanEntryStage
+from .untrusted_source_writers import UntrustedSourceWriterStage
 from .untrusted_sources import UntrustedSourceStage
 
 __all__ = ["STAGES", "NormalizerStage"]
@@ -83,6 +91,7 @@ STAGES: tuple[NormalizerStage, ...] = (
     DelegationEdgeStage(),
     EntryToSinkStage(),
     DetectorMergeStage(),
+    UntrustedSourceWriterStage(),
     FlowKindStage(),
     CrossFileResolutionStage(),
     McpEntrySynthesisStage(),

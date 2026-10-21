@@ -37,6 +37,7 @@ from aicorellator.parsing import (
 )
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
+from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
 
 
@@ -421,24 +422,29 @@ def test_pipeline_finds_no_chain_groups_yet(
     untrusted_target: Path,
     pipeline_db: Path,
 ) -> None:
-    """1.3b: the enumerator runs end to end and finds nothing, for two
-    recorded reasons — neither of which is papered over here.
+    """1.3b + 1.3a.1: the enumerator runs end to end and finds nothing,
+    for three recorded reasons — none of them papered over here.
 
-    1. **No write side exists.** 1.3a emits `source → reader` only;
-       nothing emits `writer → source`, so no source node has an
-       incoming edge and `_write_chains_to` has nothing to walk. That
-       is 1.3a.1, and it is a *detection* question (which source node
-       does a writer write into?), not an enumeration one.
+    1. **The write side exists but has no pair in this fixture.**
+       1.3a.1 emits `mcp_server → writes_to → untrusted_source`, and
+       this project gives it nothing to match: the catalogue source is
+       in `apps/chat.py`, which holds no server, and the one server
+       (`mcp/servers/knowledge/`) shares its file with a *rag_corpus*
+       read — the server reading its store, not declaring a catalogue.
+       Both halves are asserted below.
     2. **No read side reaches a sink.** The corpus read lands on
-       `get_documents`, a tool with no capabilities, and the catalogue
-       read lands on an entry point; the project has no sink at all, so
-       no read chain terminates.
+       `get_documents` and the catalogue read lands on a plain function
+       with no node at all; the project has no sink, so no read chain
+       terminates.
+    3. **No entry point reaches a server**, so even if a write edge
+       existed there would be no write chain to pair.
 
-    The assertions below pin both absences explicitly, so this test
-    fails the moment either side appears: it is a statement about the
-    graph, not a tolerance of zero. Do not add a write side to
-    `UNTRUSTED_FILES` to make this green — a fabricated writer would
-    test the fixture, not the pipeline.
+    The assertions pin all three absences explicitly, so this test fails
+    the moment the fixture gains a writer: it is a statement about the
+    graph, not a tolerance of zero. Do not add a catalogue read to
+    `mcp/servers/knowledge/server.py` to make it green — the writer path
+    is covered by `test_pipeline_writer_edge_reaches_the_store`, and a
+    fixture bent to produce a group would test the fixture.
     """
     target = ingest(untrusted_target, kind="folder")
     manifest = discover(target)
@@ -464,12 +470,153 @@ def test_pipeline_finds_no_chain_groups_yet(
         for source in sources:
             assert store.edges.list(source_id=source.id)
 
-        # The write side is absent: no edge ends at a source.
+        # The write side has no pair: no edge ends at a source.
         for source in sources:
             assert store.edges.list(target_id=source.id) == []
+        assert store.edges.list(kind="writes_to") == []
+
+        # Why: no server is visible from the catalogue's file. The two
+        # server nodes this project has are the class-detected
+        # `KnowledgeServer` and the path-heuristic `knowledge`, both in
+        # `mcp/servers/knowledge/` — neither in `apps/chat.py`.
+        by_name = {n.name: n for n in sources}
+        catalogue = by_name["mcp_tool_description:client.list_tools"]
+        assert catalogue.attributes["source_file"] == "apps/chat.py"
+        assert sorted(
+            n.attributes.get("source_file", "")
+            for n in store.nodes.list(kind="mcp_server")
+        ) == ["", "mcp/servers/knowledge/server.py"]
 
         # And no sink exists anywhere for a read chain to reach.
         assert store.nodes.list(kind="sink") == []
         assert store.query.find_chains() == []
 
+        assert store.query.find_chain_groups() == []
+
+
+# ============================================================
+# Untrusted source writers (1.3a.1)
+# ============================================================
+
+WRITER_FILES: dict[str, str] = {
+    # Path-heuristic server: the directory names the server (stage 1),
+    # so the source under the same directory is one it declares.
+    "mcp/servers/knowledge/server.py": '''\
+"""Knowledge MCP server — declares a catalogue and reads it back."""
+
+
+class KnowledgeServer:
+    """Exposes a retrieval tool and introspects its own catalogue."""
+
+    def get_documents(self, query: str) -> list:
+        return vectorstore.similarity_search(query)
+
+    def declared_tools(self) -> list:
+        return client.list_tools()
+''',
+
+    # Framework-detected server: `FastMCP(...)` names it, and the node
+    # only exists after the detector merge — the reason the writer stage
+    # runs after that stage.
+    "mcp/fastserver.py": '''\
+"""A FastMCP server that introspects its own catalogue."""
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("fastknowledge")
+
+
+@mcp.tool()
+def search(query: str) -> str:
+    """Search the corpus."""
+    return "ok"
+
+
+def catalogue() -> list:
+    return server.list_tools()
+''',
+}
+
+
+@pytest.fixture
+def writer_target(tmp_path: Path) -> Path:
+    """A two-file project with one writer of each server kind."""
+    root = tmp_path / "writers"
+    for rel_path, content in WRITER_FILES.items():
+        full = root / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+    return root
+
+
+def test_pipeline_writer_edge_reaches_the_store(
+    writer_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """1.3a.1 end to end: `mcp_server → writes_to → untrusted_source`.
+
+    Two writers per file, because the graph has more than one kind of
+    `mcp_server` node and the rule is "every server visible from the
+    source's file":
+
+      - `mcp/servers/knowledge/server.py` yields **two** server nodes —
+        `KnowledgeServer` (a `*Server` class under `mcp/servers/`,
+        classified by `class_nodes`, stage 2) and `knowledge` (the path
+        heuristic, stage 1). Both declare the catalogue read in the same
+        file, so both write it;
+      - `mcp/fastserver.py` yields `fastknowledge`, detected from
+        `FastMCP("fastknowledge")` — and that node only exists once
+        `detector_merge` has run, which is why the writer stage runs
+        after the merge.
+
+    The `rag_corpus` read in the first file gets no writer edge: the
+    server reads its store, it does not declare the corpus. That gate is
+    the whole scope of 1.3a.1.
+    """
+    target = ingest(writer_target, kind="folder")
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    detection = run_detectors(manifest)
+    delta = normalize(make_context(
+        manifest, tsa, ep, llm,
+        capabilities=capabilities, framework_detection=detection,
+    ))
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        nodes = {n.id: n for n in store.nodes.list()}
+        sources = [n for n in nodes.values() if n.kind == "untrusted_source"]
+        assert len(sources) == 3
+
+        edges = store.edges.list(kind="writes_to")
+        assert len(edges) == 3
+        # Control, with no traced dataflow (ADR-0015 decision 5).
+        assert {e.flow_kind for e in edges} == {"control"}
+        assert {e.data_flow_confirmed for e in edges} == {"unknown"}
+        assert sorted(
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in edges
+        ) == [
+            ("KnowledgeServer", "mcp_tool_description:client.list_tools"),
+            ("fastknowledge", "mcp_tool_description:server.list_tools"),
+            ("knowledge", "mcp_tool_description:client.list_tools"),
+        ]
+
+        # The corpus read is not a catalogue: no writer edge.
+        rag = next(
+            n for n in sources
+            if n.name == "rag_corpus:vectorstore.similarity_search"
+        )
+        assert store.edges.list(target_id=rag.id) == []
+
+        # The write side alone is not a group (ADR-0010): no entry point
+        # reaches a server, and the project has no sink for a read chain
+        # to terminate at.
         assert store.query.find_chain_groups() == []

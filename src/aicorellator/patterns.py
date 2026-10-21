@@ -68,6 +68,8 @@ EDGE_KINDS: frozenset[str] = frozenset({
     "delegates_to",
     "has_access_to",
     "guards",
+    # A writer produces an untrusted source (1.3a.1, ADR-0010).
+    "writes_to",
 })
 
 # Mirrors the CHECK constraint on edges.flow_kind in graph/schema.sql
@@ -88,8 +90,15 @@ STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({"guards"})
 
 # Edge kinds that carry flow_kind = "control" and data_flow_confirmed
 # = "unknown" unless a framework detector enriches them (ADR-0015).
+#
+# `writes_to` (1.3a.1) is here for the same reason `provides_tool` is:
+# "this server produces this catalogue" is a declaration, and the
+# producer never traced data into the source — it matched a server to a
+# source by file. A traced write (RAG `add_documents`, an email send)
+# would carry its own value when it lands.
 CONTROL_EDGE_KINDS: frozenset[str] = frozenset({
     "uses_model", "uses_tool", "provides_tool", "delegates_to",
+    "writes_to",
 })
 
 # Flow kinds that find_chains traverses (ADR-0015, decision 5).

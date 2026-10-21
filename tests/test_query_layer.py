@@ -538,6 +538,56 @@ def test_find_chain_groups_pairs_one_write_with_one_read(
     assert len(group.read_chain_ids) == 1
 
 
+def test_find_chain_groups_traverses_a_control_write_edge(
+    store: GraphStore,
+) -> None:
+    """The 1.3a.1 shape: `mcp_server → writes_to → source`, control.
+
+    The edge the writer stage emits is `control` with
+    `data_flow_confirmed = "unknown"` (ADR-0015 decision 5 — a
+    declaration, not a traced dataflow). It must still be traversable:
+    a group is a pair, and a control write edge is the only kind the
+    graph can produce for this side today.
+    """
+    ids = {
+        "entry": "entry_point:" + "e" * 16,
+        "server": "mcp_server:" + "m" * 16,
+        "source": "untrusted_source:" + "u" * 16,
+        "reader": "tool:" + "r" * 16,
+        "sink": "sink:" + "s" * 16,
+        "e_m": "edge:" + "1" * 16,
+        "m_u": "edge:" + "2" * 16,
+        "u_r": "edge:" + "3" * 16,
+        "r_k": "edge:" + "4" * 16,
+    }
+    _put(store, ids["entry"], "entry_point", "GET /tools")
+    _put(store, ids["server"], "mcp_server", "knowledge")
+    _put(
+        store, ids["source"], "untrusted_source",
+        "mcp_tool_description:client.list_tools",
+    )
+    _put(store, ids["reader"], "tool", "get_documents")
+    _put(store, ids["sink"], "sink", "run_shell")
+    _link(store, ids["e_m"], ids["entry"], ids["server"])
+    _link(
+        store, ids["m_u"], ids["server"], ids["source"],
+        kind="writes_to",
+    )
+    _link(store, ids["u_r"], ids["source"], ids["reader"], flow_kind="data")
+    _link(store, ids["r_k"], ids["reader"], ids["sink"])
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].untrusted_source_id == ids["source"]
+    assert groups[0].write_chains == [
+        [ids["entry"], ids["server"], ids["source"]]
+    ]
+    assert groups[0].read_chains == [
+        [ids["source"], ids["reader"], ids["sink"]]
+    ]
+
+
 def test_find_chain_groups_ids_are_pinned_and_prefixed(
     store: GraphStore,
 ) -> None:

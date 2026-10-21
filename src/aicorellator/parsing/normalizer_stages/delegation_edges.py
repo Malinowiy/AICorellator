@@ -1,6 +1,6 @@
 """DelegationEdgeStage — `delegates_to` and agent → server.
 
-Run order: 8 of 15 (see `normalizer_stages.STAGES`).
+Run order: 8 of 16 (see `normalizer_stages.STAGES`).
 
 C4: "**Delegation edges** — entry point to agent, agent to agent, agent
 to MCP server."

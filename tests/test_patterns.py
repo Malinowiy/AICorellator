@@ -39,8 +39,17 @@ def test_control_edge_kinds_subset_of_edge_kinds() -> None:
     assert "uses_model" in patterns.CONTROL_EDGE_KINDS
     assert "uses_tool" in patterns.CONTROL_EDGE_KINDS
     assert "delegates_to" in patterns.CONTROL_EDGE_KINDS
+    # `writes_to` (1.3a.1) is control: a declaration that the writer
+    # produces the source, not a traced dataflow.
+    assert "writes_to" in patterns.CONTROL_EDGE_KINDS
     # No edge kind is both control and structural.
     assert not (patterns.CONTROL_EDGE_KINDS & patterns.STRUCTURAL_EDGE_KINDS)
+
+
+def test_writes_to_is_a_registered_edge_kind() -> None:
+    """The 1.3a.1 writer edge is in the registry and not structural."""
+    assert "writes_to" in patterns.EDGE_KINDS
+    assert "writes_to" not in patterns.STRUCTURAL_EDGE_KINDS
 
 
 def test_class_suffix_kinds_unique() -> None:
