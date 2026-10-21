@@ -31,8 +31,8 @@ from __future__ import annotations
 
 import ast
 
-from ..capability_extractor import _classify_call, _dotted_name, _matches_any
-from ...patterns import ORM_COMMIT_CALLS, SINK_CAPABILITIES
+from ..capability_extractor import _classify_call, _dotted_name
+from ...patterns import COMMIT_RULE, SINK_CAPABILITIES
 from .arguments import (
     FunctionNode,
     _argument_evidence,
@@ -202,15 +202,16 @@ def _is_commit_call(call: ast.Call) -> bool:
     """True if `call` is a commit on a database session (1.2a.3c).
 
     `self.db.commit()` and `conn.commit()` are the same operation under
-    different qualifiers. The names are data (`patterns.ORM_COMMIT_CALLS`)
-    and are matched with the Capability Extractor's trailing-segment rule,
-    so `self.db.commit` matches `db.commit` while a bare `commit()`
-    matches nothing.
+    different qualifiers. The names are data (`patterns.COMMIT_RULE`,
+    whose capability `commit` is a routing capability — it never lands
+    on a node) and are matched with the same trailing-segment rule as
+    every other call-site pattern, so `self.db.commit` matches
+    `db.commit` while a bare `commit()` matches nothing.
     """
     dotted = _dotted_name(call.func)
     if dotted is None:
         return False
-    return _matches_any(dotted, ORM_COMMIT_CALLS)
+    return COMMIT_RULE.matches(dotted)
 
 
 def _commit_calls(func: FunctionNode) -> list[ast.Call]:
