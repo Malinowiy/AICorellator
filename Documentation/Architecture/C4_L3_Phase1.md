@@ -1,6 +1,6 @@
 # AICorellator — C4 Level 3: Components (Phase 1)
 
-**View:** Component (C4 L3) · **Phase:** 1 — AST + Framework Detection + Capabilities · **Date:** 2026-10-09 · **Last reviewed:** 2026-10-20 · **Status:** Accepted
+**View:** Component (C4 L3) · **Phase:** 1 — AST + Framework Detection + Capabilities · **Date:** 2026-10-09 · **Last reviewed:** 2026-10-21 · **Status:** Accepted
 
 ---
 
@@ -18,11 +18,13 @@ The phase has three classification layers (ADR-0009, ADR-0011):
 
 Every edge produced in Phase 1 carries `flow_kind` — `control`, `data`, or `structural` (ADR-0015). Cross-file edges and MCP entry synthesis are resolved by the normalizer after detector merge (ADR-0013).
 
+**Architectural repair (v0.2.0-dev).** The parsing layer was refactored in four steps: `FlowDecision` type (one flow-decision contract, one `flow_kind_for` mapping), `flow/` split (one module per analyzer question), `patterns_registry.py` (matching semantics separated from data), and `normalizer_stages/` (14 explicitly ordered `NormalizerStage` objects). The component descriptions below reflect the post-repair layout.
+
 ---
 
 ## Diagram
 
-```mermaid
+``mermaid
 flowchart TB
     subgraph PH1["Phase 1 — AST + Framework Detection + Capabilities"]
         ING[Ingestion<br/>accepts target path]
@@ -33,11 +35,8 @@ flowchart TB
         RUN[Detectors Runner<br/>orchestrates detectors]
         EP[Entry Points Detector<br/>routes, agent calls,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
-        FLOW[Flow Analyzer<br/>argument matching,<br/>flow_kind assignment]
-        NORM[AST Normalizer<br/>merge + cross-file +<br/>MCP entry synthesis]
-        XF[Cross-File Resolver<br/>imports → uses_tool]
-        MCPENT[MCP Entry Synthesis<br/>mcp_server → entry_point]
-        ORPH[Orphan Entry Resolver<br/>entry_points → single agent]
+        FLOW["flow/ package<br/>arguments, edge_analyzer,<br/>sink_analyzer, tool_analyzer"]
+        NORM["AST Normalizer<br/>14 stages (normalizer_stages/)"]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
     end
@@ -56,14 +55,11 @@ flowchart TB
     EP --> NORM
     LLMX --> NORM
     NORM --> FLOW
-    FLOW --> XF
-    XF --> MCPENT
-    MCPENT --> ORPH
-    ORPH --> WRITE
+    NORM --> WRITE
     WRITE --> GS[(Graph Store)]
     WRITE --> FLAG
     FLAG --> STATE[(State)]
-```
+``
 
 ---
 
@@ -116,7 +112,7 @@ flowchart TB
 - `TSAOutput.files_analyzed: int`
 - `TSAOutput.files_failed: int`
 
-**Invocation:** `uvx --from tree-sitter-analyzer` as a local subprocess. No venv, no Node, no compiler required.
+**Invocation:** `uvx --python 3.14 --from tree-sitter-analyzer` as a local subprocess. No venv, no Node, no compiler required. Python 3.14 is pinned because `tree-sitter-analyzer` 2.2.0 depends on `cachebox` 5.2.3, a PyO3 extension that does not yet support Python 3.15.
 
 **Output format:** JSON. Parsed into `TSASymbol` records carrying name, kind, file path, line range, and optional enclosing class.
 
@@ -137,11 +133,13 @@ flowchart TB
 - `FileCapabilities.symbols: list[SymbolCapabilities]`
 - `FileCapabilities.module_capabilities: set[str]`
 
+**Pattern registry.** The set of recognized call patterns is data, not code: `patterns.py` declares 14 `CapabilityRule` objects (198 `CallPattern` entries, each rule with a required `reason` string), and `patterns_registry.py` owns the matching semantics (`CallPattern.matches`, `matches_any`, the underscore and wildcard rules, the two validation invariants). Wildcards are not a concept in the matcher — `repo.get*` is `CallPattern("repo", "get", verb_family=True)`.
+
 **Capabilities emitted:** `executes_code`, `executes_shell`, `reads_filesystem`, `writes_filesystem`, `reads_db`, `writes_db`, `http_egress`, `reads_env`, `reads_secrets`, `calls_llm`, `invokes_mcp_tool`.
 
 **Not emitted:** `reads_untrusted` (requires untrusted-source detection, ADR-0010, deferred), `http_ingress` (entry points are detected by kind, not capability).
 
-**Design:** call-site based, not dataflow. False positives are accepted; they are better than no signal. The LLM in Phase 3 explains and prioritizes.
+**Design:** call-site based, not dataflow. False positives are accepted; they are better than no signal. The LLM in Phase 3 explains and prioritizes. Every credit is logged at DEBUG with the rule's `reason`: `capability <x> from <call>: <reason>`.
 
 **Nested functions are scanned.** Functions defined inside factories are found by name, so `@tool`-decorated closures receive their capabilities.
 
@@ -165,8 +163,8 @@ flowchart TB
 
 **What detectors emit:**
 
-- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities. Within-file `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file. **All edges carry `flow_kind = "control"`** (ADR-0015).
-- **LangGraph**: graph nodes from `graph.add_node(...)`, graph edges from `graph.add_edge(...)` and `graph.add_conditional_edges(...)`, entry points from `graph.set_entry_point(...)`. Node kind is inferred from the node name. **Graph edges carry `flow_kind = "control"`.**
+- **LangChain**: `agent` nodes from `AgentExecutor`, `initialize_agent`, `create_agent`; `tool` nodes from `@tool`, `Tool(...)`, `StructuredTool.from_function(...)`; `llm_endpoint` nodes from `ChatOpenAI`, `ChatAnthropic`, `ChatOllama`, and others. Tool bodies are scanned for capabilities. Within-file `uses_tool` and `uses_model` edges when the agent's `tools=` or `model=` argument can be resolved in the same file.
+- **LangGraph**: graph nodes from `graph.add_node(...)`, graph edges from `graph.add_edge(...)` and `graph.add_conditional_edges(...)`, entry points from `graph.set_entry_point(...)`. Node kind is inferred from the node name.
 - **FastMCP**: `mcp_server` nodes from `FastMCP(...)`; `tool` nodes from `@<var>.tool(...)` decorators, with `parent_server` set. Tool bodies are scanned for capabilities.
 - **MCP Python SDK**: `mcp_server` nodes from `Server(...)`; `tool` nodes from `@<var>.call_tool()` decorators, with `parent_server` set. Other server-bound decorators (`list_resources`, `read_resource`) are recognized but not emitted as tools.
 
@@ -176,7 +174,9 @@ flowchart TB
 
 **Version support:** each detector declares a supported version range. If the detected framework version is outside the range, a warning is logged and detection proceeds at the user's risk.
 
-**Flow-kind enrichment.** Framework detectors may, in future iterations, upgrade `data_flow_confirmed` on the edges they own, using framework-specific knowledge (ADR-0015, enrichment principle). Today all detector edges carry `data_flow_confirmed = "unknown"`.
+**Flow-kind enrichment.** Detectors return `FlowDecision` objects from the enrichment helpers (`enrichment.py`). LangChain `uses_tool` is `parameter_match` when the tool is named in the agent's system prompt, else `unknown`. LangChain `uses_model` is `literal_only` for a literal or resolved module assignment, `parameter_match` for a function parameter, else `unknown`. FastMCP and MCP Python set `tool_data_flow` on tool nodes (`parameter_match` / `no_args`), which the normalizer copies onto the MCP edges it builds (1.2a.2). Detector edges carry `flow_kind = flow_kind_for(decision)`.
+
+**Note on MCP edges.** The `provides_tool` edge from an MCP server to a tool is built by the normalizer, not by the detector (only path-heuristic servers get a `provides_tool` edge; detector-owned servers get a virtual entry + `delegates_to`). The detector's contribution is the `tool_data_flow` attribute on the tool node; the normalizer copies it at the two waived enrichment sites.
 
 ---
 
@@ -245,64 +245,75 @@ flowchart TB
 
 ---
 
-### 9. Flow Analyzer
+### 9. `flow/` package
 
-**Responsibility:** Determines the `flow_kind` and `data_flow_confirmed` of every edge that the normalizer creates, per ADR-0015.
+**Responsibility:** Answers three distinct flow questions. One module per question (split in architectural repair, step 2).
 
-**Interface:**
+**Modules:**
 
-- `analyze_has_access_to(tool_body, sink_call) -> str`
-  Returns one of `parameter_match`, `local_var_match`, `call_result_match`, `literal_only`, `no_args`, `unknown`.
+- **`flow/decision.py`** — `FlowDecision(kind, evidence, source)` value object and `flow_kind_for(decision)` mapping. `VALID_KINDS` and `DATA_KINDS` are the single source of truth; `DATA_FLOW_CONFIRMED_VALUES` and `DATA_FLOW_DATA_VALUES` are aliases kept for backward compatibility. `FlowDecision` validates its `kind` on construction. `flow_kind_for` is the single mapping from `data_flow_confirmed` to `flow_kind` (ADR-0015 decision 3).
+- **`flow/arguments.py`** — shared argument primitives: `_classify_argument`, `_is_literal`, `_parameter_names`, `_local_variable_names`, `_self_attribute_names`, `_is_self_attribute`, `_attribute_base_name`, `_classify_components`, evidence helpers. Import only `ast`.
+- **`flow/edge_analyzer.py`** — `analyze_has_access_to(tool_func, sink_call) -> FlowDecision` (source `"edge_analyzer"`). Never opts into `parameter_attributes`.
+- **`flow/sink_analyzer.py`** — `analyze_sink_body(func) -> FlowDecision` (source `"sink_body"`) and `analyze_sink_class(cls) -> FlowDecision` (source `"sink_class"`). Contains the commit exception (1.2a.3c). The only module that imports `capability_extractor` / `patterns` and the only one that passes `parameter_attributes=True` (declared in its own call sites, not in the shared signature's default).
+- **`flow/tool_analyzer.py`** — `analyze_tool_returns(func) -> bool` (different contract: a tool returning data is not a flow decision).
+
+**FlowDecision fields.** `kind` (one of six), `evidence` (a short tuple of names — parameter names, argument descriptors, method names — never values, source text, line numbers, or file paths), `source` (the analyzer or enrichment helper that produced the decision).
 
 **Algorithm (name-based, not value-based):**
 
-For each argument of the sink call, classify it:
+For each argument of the dangerous call, classify it:
 
-- A parameter of the tool function → `parameter_match`.
-- A local variable defined in the tool body → `local_var_match`.
+- A parameter of the enclosing function → `parameter_match`.
+- A local variable defined in the body → `local_var_match`.
 - The result of another call → `call_result_match`.
-- A literal or constant → `literal_only`.
+- A literal or constant, or a collection of constants → `literal_only`.
 - No arguments at all → `no_args`.
-- Anything else (attribute access, indexing, unpacking) → `unknown`.
+- An attribute on `self` assigned from a parameter or local in the same body → `parameter_match` (1.2a.3g).
+- An attribute on a parameter or local (`param.attr`, `local.attr`) to any depth → `parameter_match` (1.2a.3j).
+- A collection with a parameter-derived element → `parameter_match` (the composite's own kind, 1.2a.3g).
+- Anything else (unresolved attribute, call result, f-string with no parameter component) → `unknown`.
 
-The edge takes the strongest result across all arguments: `parameter_match` > `local_var_match` > `call_result_match` > `literal_only` > `no_args` > `unknown`.
+The edge takes the strongest result across all arguments (non-linear ranking): any `parameter_match` wins, then any `local_var_match`, then any `call_result_match`, then all-literal `literal_only`, then `no_args`, else `unknown`.
 
-**Mapping to `flow_kind`:**
+**Mapping to `flow_kind`:** `flow_kind_for(decision)` — `data` for the three data kinds, `control` otherwise.
 
-- `parameter_match`, `local_var_match`, `call_result_match` → `flow_kind = "data"`.
-- `literal_only`, `no_args`, `unknown` → `flow_kind = "control"`.
+**Scope.** `analyze_has_access_to` runs on `has_access_to` edges only (same-file tool to sink). `analyze_sink_body` runs on sink-node bodies. `analyze_sink_class` runs on class-kind sink bodies (`__init__`, `__call__`, all direct methods, class-level statements). For `uses_model`, `uses_tool`, `delegates_to`, `data_flow_confirmed` comes from the detector enrichment, not from the generic analyzer.
 
-**Scope.** The analyzer runs on `has_access_to` edges only, because only there does the normalizer have both the tool body and the sink call in view. For `uses_model`, `uses_tool`, `delegates_to`, `data_flow_confirmed` is `"unknown"` — the agent body is not visible (ADR-0015).
-
-**Limitations.** The analyzer does not track data through function calls, dictionary lookups, or f-strings. False negatives are accepted; false positives on `call_result_match` are accepted (ADR-0009).
+**Limitations.** No data tracking through function calls (ADR-0001). `self.q.name` (base is `self`, not the derived attribute) is `unknown`. `fetch().path` (base is a Call) is `unknown`. False negatives are accepted; false positives on `call_result_match` and `local.X` from a literal-derived local are accepted (ADR-0009, ADR-0001).
 
 ---
 
-### 10. AST Normalizer
+### 10. AST Normalizer (14-stage pipeline)
 
 **Responsibility:** The central merge component. Takes all Phase 1 outputs and produces a single `GraphDelta` of nodes and edges.
 
-**Interface:**
+**Interface (post-repair):**
 
-- `normalize(manifest, tsa_output, entry_points, llm_output, capabilities, framework_detection) -> GraphDelta`
+- `normalize(ctx: NormalizeContext) -> GraphDelta`
 - `GraphDelta.nodes: list[Node]`
 - `GraphDelta.edges: list[Edge]`
+- `make_context(manifest, tsa_output, entry_points=None, llm_output=None, capabilities=None, framework_detection=None, host_id="localhost") -> NormalizeContext`
 
-**Pipeline inside the normalizer:**
+`normalize` is a 135-line loop over `STAGES`; the work is in 14 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
 
-1. **MCP server nodes** — from file paths under `mcp/servers/`.
-2. **Class nodes** — Level 3 classification, with Level 2 capabilities supplied as input.
-3. **Method nodes** — Level 3 classification, with capabilities. Tools and sinks are tracked per file.
-4. **Intra-file edges** — `provides_tool` (MCP server to tool), `has_access_to` (tool to sink).
-5. **Entry point nodes** — from the entry points detector, including HTTP, CLI, and Streamlit.
-6. **LLM endpoint nodes** — from the LLM extractor.
-7. **Delegation edges** — entry point to agent, agent to agent, agent to MCP server.
-8. **Detector node merge** — detector nodes are authoritative for kind. When a detector node and a TSA node share name and source file, the detector node replaces the TSA node. Capabilities are merged from the TSA node if the detector node has none. Edges pointing at the removed node are re-pointed to the replacement, and their IDs are recomputed and deduplicated. `flow_kind` and `data_flow_confirmed` are preserved across the merge.
-9. **Flow-kind assignment** — every edge created in steps 4, 7, and the resolvers below is assigned `flow_kind` per ADR-0015. `provides_tool` is `control` with `data_flow_confirmed = "unknown"` — the access path to a tool is the candidate attack path, not a declaration. `guards` is `structural`. `uses_model`, `uses_tool`, `delegates_to` are `control` with `data_flow_confirmed = "unknown"`. `has_access_to` is `data` or `control` based on `data_flow_confirmed` from the Flow Analyzer.
-10. **Cross-file resolution** — `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1).
-11. **MCP entry synthesis** — for each `mcp_server` node carrying a `framework` attribute, create a virtual `entry_point` node named `MCP:<server_name>` and emit `delegates_to` edges to every tool whose `parent_server` matches (ADR-0013, Resolver 3).
-12. **Orphan entry resolution** — `delegates_to` edges from entry points with no outgoing delegation edge to the single framework agent in the project (ADR-0013, Resolver 2).
-13. **Entry-point-to-sink reachability** — `has_access_to` edges from entry points (HTTP, MCP, CLI, Streamlit) to sinks reachable through same-file calls (ADR-0013, cross-file reachability resolver).
+**The 14 stages, in order:**
+
+| # | Stage | Responsibility |
+|---|---|---|
+| 1 | `mcp_server_nodes` | `mcp_server` nodes from file paths under `mcp/servers/`. |
+| 2 | `class_nodes` | Class nodes (Level 3 classification + Level 2 capabilities). |
+| 3 | `method_nodes` | Method nodes; also fills `ctx.tools_by_file`, `ctx.sinks_by_file`. |
+| 4 | `intra_file_edges` | `provides_tool` (MCP server → tool), `has_access_to` (tool → sink, same file). Sets `data_flow_confirmed` from the edge analyzer; leaves `flow_kind` at its default. |
+| 5 | `entry_points` | Entry point nodes (HTTP, CLI, Streamlit) from the entry points detector. |
+| 6 | `llm_endpoints` | LLM endpoint nodes from the LLM extractor. |
+| 7 | `delegation_edges` | `delegates_to` — entry → agent, agent → agent, agent → MCP server. |
+| 8 | `entry_to_sink` | `has_access_to` from entry points to sinks reachable through same-file calls. **Must run before `detector_merge`.** See the invariant below. |
+| 9 | `detector_merge` | Detector nodes authoritative for kind; capability preservation; id remap; edge re-point; duplicate-id collapse. `flow_kind` and `data_flow_confirmed` preserved across the merge. |
+| 10 | `flow_kind` | The single place calling `flow_kind_for`. Reads `data_flow_confirmed` from each edge (an explicit `FlowDecision` re-validation), sets `flow_kind`. Structural edges skipped. |
+| 11 | `cross_file_resolution` | `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1). |
+| 12 | `mcp_entry_synthesis` | Virtual MCP entry point per framework-detected server + `delegates_to` to each tool whose `parent_server` matches (ADR-0013, Resolver 3). Carries the enrichment value from `tool_data_flow` through `flow_for_tool_node`. |
+| 13 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
+| 14 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
 
 **Key invariants:**
 
@@ -312,6 +323,8 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 - MCP entries are marked with `entry_kind = "mcp"`; CLI and Streamlit entries are marked with `entry_kind = "cli"` and `entry_kind = "streamlit"`. HTTP routes remain unmarked.
 - **Every edge carries `flow_kind`.** An edge without `flow_kind` is a construction bug, caught by tests.
 - **`structural` edges do not participate in `find_chains`.** `guards` describes a defensive control, not a path. `provides_tool` is `control` and is traversed.
+- **`entry_to_sink` runs before `detector_merge`.** The resolver reads the TSA-side `sinks_by_file` index and emits `has_access_to` edges to node ids that the merge may remove; running it after the merge produces dangling edges (measured: six on dvmcp) and a `FOREIGN KEY` failure at write time. The merge's id remap re-points those edges as it always did. The stage order is pinned by `tests/test_normalizer_stages/test_stage_order.py`.
+- **`GraphDelta` lives in `parsing.ast_normalizer`.** It is a parsing-layer value type; `graph.models` holds `Node` / `Edge`. Stages import it under `TYPE_CHECKING` to avoid an import cycle. Moving it to `graph.models` is a future cleanup.
 
 ---
 
@@ -319,13 +332,13 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 
 **Responsibility:** Resolve edges that cannot be seen from a single file (ADR-0013).
 
-**Implemented in:** `framework_detectors/cross_file.py`.
+**Implemented in:** `framework_detectors/cross_file.py` (Resolver 1) and `normalizer_stages/` (Resolvers 2, 3, 4, as stages 8, 11, 12, 13 above).
 
 **Function:**
 
-- `resolve_agent_tool_edges(manifest, detector_nodes, host_id) -> list[Edge]`
+- `resolve_agent_tool_edges(manifest, detector_nodes, host_id) -> list[Edge]` — Resolver 1.
 
-**Algorithm:** index tools by source file, index framework agents, collect per-file imports, match imported module names to file paths by trailing segments, emit `uses_tool` edges from each agent to every tool in each matched file.
+**Algorithm (Resolver 1):** index tools by source file, index framework agents, collect per-file imports, match imported module names to file paths by trailing segments, emit `uses_tool` edges from each agent to every tool in each matched file.
 
 **Flow kind:** `control`, `data_flow_confirmed = "unknown"` (ADR-0015).
 
@@ -344,7 +357,7 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 
 **Return value:** counts of added and updated nodes and edges.
 
-**Deduplication:** handled by the repository `upsert` methods. Attributes are merged, capabilities are unioned, confidence takes the maximum, precision is upgraded. `flow_kind` and `data_flow_confirmed` are overwritten by the newer edge — they describe the current analysis, not a history.
+**Deduplication:** handled by the repository `upsert` methods. Attributes are merged, capabilities are unioned, confidence takes the maximum, precision is upgraded. `flow_kind` and `data_flow_confirmed` are overwritten by the newer edge — they describe the current analysis, not a history. A latent hazard (an explicit `"unknown"` overwriting an enriched `"data"`) exists today but no duplicate edge ids are produced; see backlog 1.2a.2c.
 
 ---
 
@@ -364,11 +377,11 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 | File Discovery | `Target` | `FileManifest` |
 | Capability Extractor | manifest | per-file `FileCapabilities` |
 | TSA Worker | manifest + root | `TSAOutput` (symbols) |
-| Framework Detectors | manifest | `DetectionResult` (nodes + edges) |
+| Framework Detectors | manifest | `DetectionResult` (nodes + edges, with `FlowDecision` from enrichment) |
 | Entry Points Detector | manifest | `EntryPointOutput` (routes, agent calls, call graph, imports) |
 | LLM Extractor | manifest | `LLMExtractorOutput` |
-| Flow Analyzer | tool body + sink call | `data_flow_confirmed` value |
-| AST Normalizer | all of the above | `GraphDelta` with `flow_kind` on every edge |
+| `flow/` analyzers | tool body + sink call; sink body; class body | `FlowDecision` (kind, evidence, source) |
+| AST Normalizer | `NormalizeContext` | `GraphDelta` with `flow_kind` on every edge |
 | Graph Writer | `GraphDelta` | rows in `nodes`, `edges` |
 | Flag Setter | — | `phase1_done = true` |
 
@@ -393,7 +406,8 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 - **SCIP worker** — deferred (ADR-0002, ADR-0003). TSA does not provide call edges; SCIP would not change flow-kind determination.
 - **Precision merge** — deferred with SCIP.
 - **Cross-file tool to sink.** Same-file reachability is implemented; cross-file requires call-graph extension across imports. Deferred (backlog).
-- **Full dataflow analysis.** Out of scope (ADR-0001). The Flow Analyzer is name-based, not value-based.
+- **Full dataflow analysis.** Out of scope (ADR-0001). The `flow/` analyzers are name-based, not value-based.
+- **Stage-disabling flags.** `--no-cross-file` and similar are a future concern; not part of the pipeline.
 
 ---
 
@@ -411,11 +425,14 @@ The edge takes the strongest result across all arguments: `parameter_match` > `l
 10. **`uses_tool` is a stored edge kind.** Introduced for cross-file agent-to-tool edges (ADR-0013).
 11. **MCP entries are virtual.** They do not correspond to an HTTP route; they model "an MCP client can invoke this server's tools". Marked with `entry_kind = "mcp"`.
 12. **Two MCP detectors, one entry synthesis.** FastMCP and the Python SDK are detected separately; the MCP entry synthesis is shared.
-13. **Call-graph reachability extends to MCP, CLI, and Streamlit.** The `_link_entry_points_to_sinks` resolver operates on any entry point. A chain can start at an MCP tool, a CLI script, or a Streamlit app, and reach a sink through same-file calls.
+13. **Call-graph reachability extends to MCP, CLI, and Streamlit.** The `entry_to_sink` stage operates on any entry point. A chain can start at an MCP tool, a CLI script, or a Streamlit app, and reach a sink through same-file calls.
 14. **`flow_kind` on every edge is mandatory.** Every edge created in Phase 1 carries `control`, `data`, or `structural`. Missing `flow_kind` is a construction bug (ADR-0015).
 15. **Structural edges do not participate in `find_chains`.** `guards` describes a defensive control, not a path. `provides_tool` is `control` and is traversed.
 16. **`provides_tool` is control because the access path is the attack path.** "The agent can reach a server that exposes `delete_file`" puts `delete_file` in the agent's reachable action set. Whether a particular request invokes it is a runtime question. Classifying the edge as a declaration would hide reachable dangerous actions whenever invocation is indirect — dispatched by the MCP framework, selected by the model, or triggered by a prompt — which are exactly the cases the analysis exists to evaluate. `guards` stays `structural`: a guardrail is a defensive control, and no data or control flows from it to the guarded component along that edge. Phase 2 runtime monitoring will separate exposure from invocation (ADR-0015, Deferred).
-17. **`data_flow_confirmed` is enrichable.** Today only the Flow Analyzer on `has_access_to` sets it. Framework detectors may upgrade it for their own edges in future iterations (ADR-0015, enrichment principle).
+17. **`data_flow_confirmed` is enrichable.** The generic `flow/` analyzers set it on `has_access_to`. Framework detectors set it on the edges they own (LangChain `uses_tool`/`uses_model`) and record `tool_data_flow` on tool nodes for the normalizer to copy onto the MCP edges it builds (1.2a.2). An explicit `"unknown"` in `EdgesRepository.upsert` currently overwrites an enriched value; no duplicate edge ids exist today (backlog 1.2a.2c).
+18. **`FlowDecision` is the one flow contract.** Every analyzer and enrichment helper returns `FlowDecision(kind, evidence, source)`. `flow_kind_for(decision)` is the single mapping to `flow_kind`. No second implementation, no per-caller copy. The decision's `kind` is what `data_flow_confirmed` stores.
+19. **Stage pipeline.** `normalize(ctx)` is a loop over 14 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `entry_to_sink` before `detector_merge`.
+20. **Pattern registry.** `patterns.py` is data (14 rules, 198 patterns, reasons, the `INTENTIONAL_OVERLAPS` allowlist); `patterns_registry.py` is matching semantics (`CallPattern.matches`, `matches_any`, the two validation invariants). Wildcards are not a concept in the matcher.
 
 ---
 
