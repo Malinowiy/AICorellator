@@ -308,5 +308,110 @@ def test_pipeline_persists_capabilities(
         # with subprocess.run(shell=True) — it must have executes_shell.
         sinks = store.nodes.list(kind="sink")
         names = {s.name: s.capabilities for s in sinks}
-        assert "execute_script" in names
         assert "executes_shell" in names["execute_script"]
+
+
+# ============================================================
+# Untrusted sources (1.3a)
+# ============================================================
+
+UNTRUSTED_FILES: dict[str, str] = {
+    "mcp/servers/knowledge/server.py": '''\
+"""Knowledge MCP server — retrieval over an attacker-seedable corpus."""
+
+
+class KnowledgeServer:
+    """Exposes a retrieval tool."""
+
+    def get_documents(self, query: str) -> list:
+        return vectorstore.similarity_search(query)
+''',
+
+    "apps/chat.py": '''\
+"""HTTP API that reads the MCP tool catalogue."""
+from fastapi import APIRouter
+
+router = APIRouter()
+
+
+@router.get("/tools")
+async def list_available_tools():
+    """List the tools the client knows about."""
+    return client.list_tools()
+''',
+}
+
+
+@pytest.fixture
+def untrusted_target(tmp_path: Path) -> Path:
+    """A two-file project with one read of each of two source families."""
+    root = tmp_path / "untrusted"
+    for rel_path, content in UNTRUSTED_FILES.items():
+        full = root / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+    return root
+
+
+def test_pipeline_produces_untrusted_source_nodes(
+    untrusted_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """1.3a: source nodes and their reader edges survive to the store.
+
+    The end-to-end shape of the new kind: the extractor credits
+    `reads_untrusted` on the reader, the stage emits one node per read
+    site, and the edge from the source to the reader reaches SQLite with
+    the derived `flow_kind` — the whole 1.3a path, in one scan.
+    """
+    target = ingest(untrusted_target, kind="folder")
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    delta = normalize(
+        make_context(manifest, tsa, ep, llm, capabilities=capabilities)
+    )
+
+    sources = [n for n in delta.nodes if n.kind == "untrusted_source"]
+    assert {n.attributes["source_type"] for n in sources} == {
+        "rag_corpus", "mcp_tool_description",
+    }
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        assert store.nodes.count(kind="untrusted_source") == 2
+        by_name = {
+            n.name: n for n in store.nodes.list(kind="untrusted_source")
+        }
+        rag = by_name["rag_corpus:vectorstore.similarity_search"]
+        assert rag.attributes["source_file"] == (
+            "mcp/servers/knowledge/server.py"
+        )
+
+        # The capability is on the reader, not on the source.
+        tool = next(
+            n for n in store.nodes.list(kind="tool")
+            if n.name == "get_documents"
+        )
+        assert "reads_untrusted" in tool.capabilities
+        assert rag.capabilities == []
+
+        edges = store.edges.list(source_id=rag.id, kind="has_access_to")
+        assert [e.target_id for e in edges] == [tool.id]
+        assert edges[0].flow_kind == "data"
+        assert edges[0].data_flow_confirmed == "call_result_match"
+
+        # The catalogue read happens in a route handler, so its reader is
+        # the entry point node the same scan created.
+        catalogue = by_name["mcp_tool_description:client.list_tools"]
+        entry = store.nodes.list(kind="entry_point")
+        assert [e.target_id for e in store.edges.list(
+            source_id=catalogue.id
+        )] == [n.id for n in entry if n.name == "GET /tools"]

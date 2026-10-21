@@ -57,6 +57,22 @@ def test_node_kind_check(store: GraphStore) -> None:
         ))
 
 
+def test_untrusted_source_node_kind_is_accepted(store: GraphStore) -> None:
+    """The 1.3a kind is in the CHECK constraint (ADR-0010)."""
+    store.nodes.add(Node(
+        id="untrusted_source:1",
+        kind="untrusted_source",
+        name="rag_corpus:retriever.invoke",
+        host_id="localhost",
+        attributes={"source_type": "rag_corpus", "source_file": "app.py"},
+    ))
+
+    fetched = store.nodes.get("untrusted_source:1")
+    assert fetched is not None
+    assert fetched.kind == "untrusted_source"
+    assert fetched.attributes["source_type"] == "rag_corpus"
+
+
 def test_edge_self_loop_rejected(store: GraphStore) -> None:
     """source_id == target_id is rejected by CHECK."""
     store.nodes.upsert(Node(

@@ -50,6 +50,12 @@ NODE_KINDS: frozenset[str] = frozenset({
     "sink",
     "entry_point",
     "guardrail",
+    # The anchor for attacker-influenced data (1.3a, ADR-0010). A
+    # `untrusted_source` node is not an actor and not an action: it is
+    # the place untrusted content is read from — a retrieval corpus, an
+    # MCP tool catalogue, a mailbox. Chain groups hang off it, which is
+    # why it is a node kind and not a node attribute.
+    "untrusted_source",
 })
 
 # Mirrors the CHECK constraint on edges.kind in graph/schema.sql
@@ -300,6 +306,39 @@ PROVIDER_HINTS: tuple[tuple[str, str], ...] = (
 # segments before it. `verb_family=True` relaxes the verb to a prefix
 # (1.2a.3b), and leading underscores on the receiver are ignored
 # (1.2a.3e) — both are flags on the pattern now, not text conventions.
+
+# --- The capability vocabulary ---
+# Every capability a *rule may credit* is declared here, and
+# `capability_extractor._credit` refuses anything else. The refusal is
+# the point: a typo in a rule's `capability` used to widen the graph's
+# vocabulary silently, and a node capability is read by classification
+# (SINK_CAPABILITIES below), by the prompt and by the trifecta voter. An
+# unknown string there is a bug that shows up as a missing finding,
+# weeks later, not as an error.
+#
+# This is not the set of capabilities a rule produces today — a
+# declared-but-uncredited name (`http_ingress`) is legitimate, because
+# its rule exists and the extractor simply finds nothing to credit.
+#
+# Routing capabilities (`db_statement`, `commit`) are deliberately
+# absent: `patterns_registry.ROUTING_CAPABILITIES` is the list of
+# capabilities that never land on a node, and `_credit` is the function
+# that would otherwise write them.
+VALID_CAPABILITIES: frozenset[str] = frozenset({
+    "executes_code",
+    "executes_shell",
+    "reads_filesystem",
+    "writes_filesystem",
+    "reads_db",
+    "writes_db",
+    "http_egress",
+    "http_ingress",
+    "reads_env",
+    "reads_secrets",
+    "calls_llm",
+    "invokes_mcp_tool",
+    "reads_untrusted",
+})
 
 # --- Adapter attribute patterns (1.2a.3i) ---
 # Some calls go through a wrapper object instead of a module: an
@@ -750,6 +789,112 @@ INVOKES_MCP_TOOL_RULE = CapabilityRule(
     reason="the call invokes a tool on an MCP server or client",
 )
 
+# --- Untrusted sources (1.3a, ADR-0010) ---
+# Three families, one capability: `reads_untrusted`. Each rule is one
+# *source type* — where the attacker-influenced data lives — and the
+# detector in `parsing/untrusted_sources.py` turns a matching call into
+# an `untrusted_source` node of that type. The capability and the node
+# come from the same table, so a name the extractor credits can never be
+# a name the detector ignores.
+#
+# What makes a call a source: it pulls content the operator does not
+# control out of a store an attacker can write to. Everything below is
+# that shape, and the set is deliberately narrow — ADR-0009 accepts
+# false positives, but an `untrusted_source` node is a chain-group
+# anchor (1.3b), so a wrong one is not noise the LLM filters out, it is
+# a wrong group.
+#
+# Deliberately out of scope in 1.3a:
+#
+#   - **Web scrapes.** `requests.get` / `urllib.request.urlopen` are
+#     already `http_egress` (HTTP_EGRESS_RULE), and one call is one
+#     fact: re-crediting it as `reads_untrusted` would double-count the
+#     same evidence on the same node. A scrape is also a *direct* read
+#     of a live response, not a read of a store an earlier write
+#     populated, which is the shape chain groups model (ADR-0010).
+#
+#   - **User uploads.** An upload is a structural signal — a route
+#     handler that writes and later reads a directory — not a call
+#     shape: the same `open()` is an upload sink in one file and a
+#     config read in the next, and the route is not visible to a
+#     call-site detector. Deferred rather than guessed at.
+#
+#   - **`session.list_tools`.** The exception inside the MCP family:
+#     ORM_READS_RULE owns a `session.list*` verb family, so
+#     `session.list_tools` would be credited `reads_db` *and*
+#     `reads_untrusted`. The MCP SDK's `ClientSession` spells it that
+#     way, but every corpus call site in 1.3a goes through a
+#     `Client` / `FastMCP` handle (`client.` / `server.` / `mcp.`), and
+#     a spurious `reads_db` on an MCP session is worse than the miss.
+#     Revisit if a real target uses `ClientSession` directly.
+#
+# rag_corpus — a retrieval corpus read. Vector stores and retrievers
+# spell their read end explicitly; the constructors (`chromadb.Client`,
+# `FAISS.from_documents`, `Chroma(...)`) are deliberately absent — a
+# handle is not a read, and `db.query` (plain SQLAlchemy) is the
+# dominant `.query(` in the reference corpora, which is why `query` is
+# only ever matched under a store-specific qualifier.
+READS_UNTRUSTED_RAG_RULE = CapabilityRule(
+    capability="reads_untrusted",
+    patterns=(
+        CallPattern("retriever", "get_relevant_documents"),
+        CallPattern("retriever", "invoke"),
+        CallPattern("vectorstore", "similarity_search"),
+        CallPattern("vectorstore", "similarity_search_with_score"),
+        CallPattern("vector_store", "similarity_search"),
+        CallPattern("collection", "query"),
+        CallPattern("collection", "search"),
+    ),
+    reason=(
+        "the call reads retrieved chunks back from a corpus an "
+        "attacker can seed (indirect prompt injection through RAG)"
+    ),
+)
+
+# mcp_tool_description — the tool catalogue. `list_tools()` returns
+# server-supplied name/description/schema, and the description is
+# attacker-controlled text that reaches the model's context
+# (tool-poisoning / the MCP rug pull). The qualifiers are the client
+# handles the SDK and the frameworks expose; see the `session` note
+# above.
+READS_UNTRUSTED_MCP_DESCRIPTION_RULE = CapabilityRule(
+    capability="reads_untrusted",
+    patterns=(
+        CallPattern("client", "list_tools"),
+        CallPattern("server", "list_tools"),
+        CallPattern("mcp", "list_tools"),
+        CallPattern("mcp_client", "list_tools"),
+    ),
+    reason=(
+        "the call reads MCP tool descriptions, which the server "
+        "supplies and the model then trusts (tool poisoning)"
+    ),
+)
+
+# email_inbox — a mailbox read. `imaplib.IMAP4*` is the one
+# constructor credited as a source rather than as a handle: unlike
+# `chromadb.Client()`, the name is mailbox-protocol-specific, so
+# building the connection is evidence of mailbox access, and the read
+# verbs that follow are matched on the connection object's name
+# (`imap`, the conventional local name for an `IMAP4` instance).
+READS_UNTRUSTED_EMAIL_RULE = CapabilityRule(
+    capability="reads_untrusted",
+    patterns=(
+        CallPattern("imaplib", "IMAP4"),
+        CallPattern("imaplib", "IMAP4_SSL"),
+        CallPattern("imaplib", "IMAP4_stream"),
+        CallPattern("imap", "search"),
+        CallPattern("imap", "fetch"),
+        CallPattern("imap", "uid"),
+        CallPattern("mailbox", "get_message"),
+        CallPattern("mailbox", "get_messages"),
+    ),
+    reason=(
+        "the call reads a mailbox, the original unbounded "
+        "attacker-writable channel (phishing / spam poisoning)"
+    ),
+)
+
 # --- The registry ---
 # Every call-pattern rule in this file, in declaration order. The order
 # that matters for classification lives in capability_extractor; this
@@ -770,7 +915,56 @@ CALL_RULES: tuple[CapabilityRule, ...] = (
     READS_ENV_RULE,
     CALLS_LLM_RULE,
     INVOKES_MCP_TOOL_RULE,
+    READS_UNTRUSTED_RAG_RULE,
+    READS_UNTRUSTED_MCP_DESCRIPTION_RULE,
+    READS_UNTRUSTED_EMAIL_RULE,
 )
+
+# --- Source-type table (1.3a) ---
+# Source type → rule. A tuple of pairs, not a dict: the declaration
+# order is the call order in the detector and the extractor, and a
+# `*_RULE` name plus this table is the whole definition of a family.
+#
+# The source type is a data value and the node *prefix* — the node names
+# are `rag_corpus:<target>`, `mcp_tool_description:<target>`,
+# `email_inbox:<target>` — so `source_type` on the node carries the same
+# string.
+#
+# The name ends in `RULES`, not `_RULE`, which is what keeps it out of
+# `tests/test_patterns_registry.py::test_no_rule_is_missing_from_the_registry`
+# (that test collects `*_RULE` names from this module): the values are
+# rules, but this is a table of them, and each owner is registered in
+# `CALL_RULES` above.
+UNTRUSTED_SOURCE_RULES: tuple[tuple[str, CapabilityRule], ...] = (
+    ("rag_corpus", READS_UNTRUSTED_RAG_RULE),
+    ("mcp_tool_description", READS_UNTRUSTED_MCP_DESCRIPTION_RULE),
+    ("email_inbox", READS_UNTRUSTED_EMAIL_RULE),
+)
+
+
+def untrusted_source_match(
+    call_target: str,
+) -> tuple[str, CapabilityRule] | None:
+    """The `(source_type, rule)` whose rule matches `call_target`.
+
+    Returns None when the call is not a read of a known source. The pair,
+    not just the type, because the two consumers want different halves of
+    it: `capability_extractor` credits the capability and logs the rule's
+    `reason`, `parsing/untrusted_sources.py` names the node after the
+    source type. One table means the two can never disagree about a name
+    — a divergence would show up as a capability with no node, or a node
+    with no capability, and neither is a state the graph should be able
+    to hold.
+
+    A call matches at most one family today; the first match wins, so a
+    future overlap resolves by declaration order (the `session` note
+    above is what a declared overlap would look like).
+    """
+    for source_type, rule in UNTRUSTED_SOURCE_RULES:
+        if rule.matches(call_target):
+            return source_type, rule
+    return None
+
 
 # --- Deliberate capability overlaps ---
 # A call can evidence more than one capability, and two rules may
@@ -822,6 +1016,16 @@ CAPABILITY_HTTP_INGRESS = HTTP_INGRESS_RULE.text_patterns
 CAPABILITY_READS_ENV = READS_ENV_RULE.text_patterns
 CAPABILITY_CALLS_LLM = CALLS_LLM_RULE.text_patterns
 CAPABILITY_INVOKES_MCP_TOOL = INVOKES_MCP_TOOL_RULE.text_patterns
+# The union of the three source families: one capability, so one view.
+# Per-family text is on the rules themselves (`READS_UNTRUSTED_RAG_RULE
+# .text_patterns`), and `UNTRUSTED_SOURCE_RULES` is what maps a family
+# to its rule; this is the flat list a caller wants when it does not
+# care which family matched.
+CAPABILITY_READS_UNTRUSTED = (
+    READS_UNTRUSTED_RAG_RULE.text_patterns
+    + READS_UNTRUSTED_MCP_DESCRIPTION_RULE.text_patterns
+    + READS_UNTRUSTED_EMAIL_RULE.text_patterns
+)
 
 
 # --- Secret-like env variable names ---

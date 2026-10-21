@@ -61,6 +61,13 @@ VALUES ('localhost', 'localhost', 'standalone', 'active');
 --   credential:   sha256(source_file + var_name)
 --   sink:         sha256(call_target + file_path)
 --   entry_point:  sha256(file_path + route_path)
+--   untrusted_source: sha256(source_type + call_target + source_file)
+--     (1.3a, ADR-0010) — one node per read site. The source_type is the
+--     family (rag_corpus, mcp_tool_description, email_inbox), the
+--     call_target is the dotted call as spelled in the code, and the
+--     source_file is where the read happens. The read site is the only
+--     identity available: the corpus path, tool name or mailbox address
+--     is not in the call.
 --
 -- capabilities (ADR-0009): JSON array of capability strings
 -- derived from AST calls, not from names. Examples:
@@ -87,7 +94,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 
     CHECK (kind IN (
         'agent', 'llm_endpoint', 'mcp_server', 'tool',
-        'credential', 'sink', 'entry_point', 'guardrail'
+        'credential', 'sink', 'entry_point', 'guardrail',
+        'untrusted_source'
     )),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),

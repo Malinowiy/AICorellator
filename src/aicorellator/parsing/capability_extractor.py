@@ -45,10 +45,12 @@ from ..patterns import (
     ORM_WRITES_RULE,
     READS_ENV_RULE,
     READS_FILESYSTEM_RULE,
+    VALID_CAPABILITIES,
     WRITES_FILESYSTEM_RULE,
     SECRET_ENV_KEY_SUBSTRINGS,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
+    untrusted_source_match,
 )
 from ..patterns_registry import CallPattern, CapabilityRule, matches_any
 
@@ -209,7 +211,21 @@ def _credit(
 
     The rule's `reason` is the explanation a log reader gets; without it
     a classification is just a name.
+
+    The capability must be in `patterns.VALID_CAPABILITIES` (1.3a). This
+    is the one place a rule-credited capability is written, so it is the
+    one place the rule vocabulary can be closed: a rule with a mistyped
+    capability used to widen the graph silently, and a bad capability is
+    read by classification, by the prompt and by the trifecta voter — it
+    fails quietly, as a missing finding, not as an error.
     """
+    if capability not in VALID_CAPABILITIES:
+        raise ValueError(
+            f"unknown capability {capability!r} credited from {target!r} "
+            f"by a rule whose stated reason is {rule.reason!r}; add it to "
+            f"patterns.VALID_CAPABILITIES if the rule is intentional "
+            f"(known capabilities: {sorted(VALID_CAPABILITIES)})"
+        )
     caps.add(capability)
     log.debug("capability %s from %s: %s", capability, target, rule.reason)
 
@@ -314,6 +330,17 @@ def _classify_call(call: ast.Call) -> set[str]:
         _credit(
             caps, "invokes_mcp_tool", INVOKES_MCP_TOOL_RULE, target
         )
+
+    # untrusted sources (1.3a, ADR-0010)
+    # Last, and deliberately so: this is the only branch that credits a
+    # capability whose *node* is emitted by a later stage rather than by
+    # the extractor, and it overlaps no other branch — the source rules
+    # are disjoint from every rule above by construction (see the
+    # untrusted-source section in patterns.py for the three overlaps that
+    # were considered and rejected).
+    source_match = untrusted_source_match(target)
+    if source_match is not None:
+        _credit(caps, "reads_untrusted", source_match[1], target)
 
     return caps
 

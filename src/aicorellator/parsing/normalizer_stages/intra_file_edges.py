@@ -1,6 +1,6 @@
 """IntraFileEdgeStage — `provides_tool` and same-file `has_access_to`.
 
-Run order: 4 of 14 (see `normalizer_stages.STAGES`).
+Run order: 4 of 15 (see `normalizer_stages.STAGES`).
 
 C4: "**Intra-file edges** — `provides_tool` (MCP server to tool),
 `has_access_to` (tool to sink)."
@@ -8,9 +8,11 @@ C4: "**Intra-file edges** — `provides_tool` (MCP server to tool),
 Both edges are candidates, not calls: every tool in a file is linked to
 every sink in the same file, and the edge's `flow_kind` says whether the
 Flow Analyzer found the sink call inside the tool body and how the
-argument reaches it (ADR-0015). This is the only stage that runs an
-analyzer over source, through `ctx.functions_for` (one parse per file
-per scan).
+argument reaches it (ADR-0015). Source is read through
+`ctx.functions_for` (one parse per file per scan). Two other stages read
+source the same way — `untrusted_sources` (a call-site walk, 1.3a) and
+`body_attributes` (the tool/sink body analyzers, 1.2a.1); this is the
+only one that runs the Flow Analyzer.
 """
 
 from __future__ import annotations

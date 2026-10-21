@@ -1,6 +1,6 @@
 """FlowKindStage — `flow_kind` on every edge (ADR-0015).
 
-Run order: 10 of 14 (see `normalizer_stages.STAGES`).
+Run order: 11 of 15 (see `normalizer_stages.STAGES`).
 
 The graph carries two flow facts and they are not the same one:
 

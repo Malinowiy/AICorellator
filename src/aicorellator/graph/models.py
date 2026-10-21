@@ -27,6 +27,9 @@ VALID_NODE_KINDS = frozenset({
     "sink",
     "entry_point",
     "guardrail",
+    # Not an actor and not an action: the place untrusted content is
+    # read from (1.3a, ADR-0010). Chain groups hang off it in 1.3b.
+    "untrusted_source",
 })
 
 # Valid edge kinds. Mirrors the CHECK constraint in schema.sql.

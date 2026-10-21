@@ -162,6 +162,24 @@ def llm_endpoint_name(llm_ep) -> str:
     return llm_ep.provider
 
 
+def untrusted_source_id(
+    source_type: str,
+    call_target: str,
+    source_file: str,
+) -> str:
+    """Canonical ID for an `untrusted_source` node (1.3a, ADR-0010).
+
+    One node per read site: the source type (the family), the dotted
+    call as spelled in the code, and the file the read happens in. The
+    read site is the only identity available — the corpus path, the tool
+    name, the mailbox address are not arguments the call site reveals —
+    so two reads of the same store through the same spelling in the same
+    file collapse to one node, and two different spellings stay apart.
+    """
+    key = f"untrusted_source:{source_type}:{call_target}:{source_file}:{HOST_ID}"
+    return f"untrusted_source:{sha256(key)}"
+
+
 def node_from_class(
     symbol: TSASymbol,
     c: Classification,

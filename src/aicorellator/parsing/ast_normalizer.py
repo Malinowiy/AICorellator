@@ -7,7 +7,7 @@ One entry point:
 `ctx` is a `NormalizeContext` (`make_context` builds one): the manifest,
 TSA symbols, entry points, LLM configs, capabilities and detector output,
 plus the per-scan caches and the indexes the stages share. The pipeline
-itself is `normalizer_stages.STAGES` — fourteen stages, one per step of
+itself is `normalizer_stages.STAGES` — fifteen stages, one per step of
 the C4 L3 Phase 1 pipeline, each with an `apply(delta, ctx) -> delta`
 (`normalizer_stages.base.NormalizerStage`).
 
@@ -16,6 +16,7 @@ What the stages produce, in one place for orientation:
 Edges:
   - provides_tool  (mcp_server → tool)              flow_kind=data|control
   - has_access_to  (tool → sink)                    flow_kind=data|control
+  - has_access_to  (untrusted_source → reader)      flow_kind=data  (1.3a)
   - delegates_to   (entry_point → agent)            flow_kind=control
   - delegates_to   (agent → agent, orchestrator)    flow_kind=control
   - has_access_to  (agent → mcp_server)             flow_kind=control
@@ -26,15 +27,17 @@ Nodes:
   - tool, sink (from methods)
   - guardrail (from classification)
   - entry_point (from entry_points)
+  - untrusted_source (from call sites, 1.3a)
   - llm_endpoint (from llm_extractor configs)
   - framework-specific nodes (from framework detectors)
 
 Edges NOT derived here (require source analysis beyond TSA):
   - uses_model     (agent → llm_endpoint)
 
-Source beyond the TSA index is read by two stages — `intra_file_edges`
-(the Flow Analyzer for `has_access_to`, ADR-0015) and `body_attributes`
-(the tool/sink analyzers, 1.2a.1). Both go through the context's module
+Source beyond the TSA index is read by three stages — `intra_file_edges`
+(the Flow Analyzer for `has_access_to`, ADR-0015), `untrusted_sources`
+(the call-site walk for the source nodes, 1.3a) and `body_attributes`
+(the tool/sink analyzers, 1.2a.1). All go through the context's module
 cache, so a file is parsed at most once per scan.
 
 The helpers this module used to own — node constructors, id derivation,

@@ -36,7 +36,7 @@ flowchart TB
         EP[Entry Points Detector<br/>routes, agent calls,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
         FLOW["flow/ package<br/>arguments, edge_analyzer,<br/>sink_analyzer, tool_analyzer"]
-        NORM["AST Normalizer<br/>14 stages (normalizer_stages/)"]
+        NORM["AST Normalizer<br/>15 stages (normalizer_stages/)"]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
     end
@@ -133,11 +133,13 @@ flowchart TB
 - `FileCapabilities.symbols: list[SymbolCapabilities]`
 - `FileCapabilities.module_capabilities: set[str]`
 
-**Pattern registry.** The set of recognized call patterns is data, not code: `patterns.py` declares 14 `CapabilityRule` objects (198 `CallPattern` entries, each rule with a required `reason` string), and `patterns_registry.py` owns the matching semantics (`CallPattern.matches`, `matches_any`, the underscore and wildcard rules, the two validation invariants). Wildcards are not a concept in the matcher — `repo.get*` is `CallPattern("repo", "get", verb_family=True)`.
+**Pattern registry.** The set of recognized call patterns is data, not code: `patterns.py` declares 17 `CapabilityRule` objects (217 `CallPattern` entries, each rule with a required `reason` string), and `patterns_registry.py` owns the matching semantics (`CallPattern.matches`, `matches_any`, the underscore and wildcard rules, the two validation invariants). Wildcards are not a concept in the matcher — `repo.get*` is `CallPattern("repo", "get", verb_family=True)`.
 
-**Capabilities emitted:** `executes_code`, `executes_shell`, `reads_filesystem`, `writes_filesystem`, `reads_db`, `writes_db`, `http_egress`, `reads_env`, `reads_secrets`, `calls_llm`, `invokes_mcp_tool`.
+**Capabilities emitted:** `executes_code`, `executes_shell`, `reads_filesystem`, `writes_filesystem`, `reads_db`, `writes_db`, `http_egress`, `reads_env`, `reads_secrets`, `calls_llm`, `invokes_mcp_tool`, `reads_untrusted`.
 
-**Not emitted:** `reads_untrusted` (requires untrusted-source detection, ADR-0010, deferred), `http_ingress` (entry points are detected by kind, not capability).
+`reads_untrusted` is credited from three rule families — RAG corpora (vector store / retriever / loader returns), MCP tool descriptions (`list_tools` on a client, `list_tools` on a server), and mailbox reads. It is credited on the **reader** (the function or method whose body makes the call), never on the `untrusted_source` node the read points at: the source is a place, not an actor.
+
+**Not emitted:** `http_ingress` (entry points are detected by kind, not capability).
 
 **Design:** call-site based, not dataflow. False positives are accepted; they are better than no signal. The LLM in Phase 3 explains and prioritizes. Every credit is logged at DEBUG with the rule's `reason`: `capability <x> from <call>: <reason>`.
 
@@ -283,7 +285,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 
 ---
 
-### 10. AST Normalizer (14-stage pipeline)
+### 10. AST Normalizer (15-stage pipeline)
 
 **Responsibility:** The central merge component. Takes all Phase 1 outputs and produces a single `GraphDelta` of nodes and edges.
 
@@ -294,9 +296,9 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 - `GraphDelta.edges: list[Edge]`
 - `make_context(manifest, tsa_output, entry_points=None, llm_output=None, capabilities=None, framework_detection=None, host_id="localhost") -> NormalizeContext`
 
-`normalize` is a 135-line loop over `STAGES`; the work is in 14 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
+`normalize` is a 135-line loop over `STAGES`; the work is in 15 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
 
-**The 14 stages, in order:**
+**The 15 stages, in order:**
 
 | # | Stage | Responsibility |
 |---|---|---|
@@ -305,15 +307,16 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 | 3 | `method_nodes` | Method nodes; also fills `ctx.tools_by_file`, `ctx.sinks_by_file`. |
 | 4 | `intra_file_edges` | `provides_tool` (MCP server → tool), `has_access_to` (tool → sink, same file). Sets `data_flow_confirmed` from the edge analyzer; leaves `flow_kind` at its default. |
 | 5 | `entry_points` | Entry point nodes (HTTP, CLI, Streamlit) from the entry points detector. |
-| 6 | `llm_endpoints` | LLM endpoint nodes from the LLM extractor. |
-| 7 | `delegation_edges` | `delegates_to` — entry → agent, agent → agent, agent → MCP server. |
-| 8 | `entry_to_sink` | `has_access_to` from entry points to sinks reachable through same-file calls. **Must run before `detector_merge`.** See the invariant below. |
-| 9 | `detector_merge` | Detector nodes authoritative for kind; capability preservation; id remap; edge re-point; duplicate-id collapse. `flow_kind` and `data_flow_confirmed` preserved across the merge. |
-| 10 | `flow_kind` | The single place calling `flow_kind_for`. Reads `data_flow_confirmed` from each edge (an explicit `FlowDecision` re-validation), sets `flow_kind`. Structural edges skipped. |
-| 11 | `cross_file_resolution` | `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1). |
-| 12 | `mcp_entry_synthesis` | Virtual MCP entry point per framework-detected server + `delegates_to` to each tool whose `parent_server` matches (ADR-0013, Resolver 3). Carries the enrichment value from `tool_data_flow` through `flow_for_tool_node`. |
-| 13 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
-| 14 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
+| 6 | `untrusted_sources` | `untrusted_source` nodes — one per read site (RAG corpus, MCP tool description, mailbox) — plus `has_access_to` to the reader. Empty capabilities by design; sets `data_flow_confirmed = "call_result_match"` and leaves `flow_kind` to stage 11. **Must run after `entry_points` and before `detector_merge`.** See the invariants below. |
+| 7 | `llm_endpoints` | LLM endpoint nodes from the LLM extractor. |
+| 8 | `delegation_edges` | `delegates_to` — entry → agent, agent → agent, agent → MCP server. |
+| 9 | `entry_to_sink` | `has_access_to` from entry points to sinks reachable through same-file calls. **Must run before `detector_merge`.** See the invariant below. |
+| 10 | `detector_merge` | Detector nodes authoritative for kind; capability preservation; id remap; edge re-point; duplicate-id collapse. `flow_kind` and `data_flow_confirmed` preserved across the merge. |
+| 11 | `flow_kind` | The single place calling `flow_kind_for`. Reads `data_flow_confirmed` from each edge (an explicit `FlowDecision` re-validation), sets `flow_kind`. Structural edges skipped. |
+| 12 | `cross_file_resolution` | `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1). |
+| 13 | `mcp_entry_synthesis` | Virtual MCP entry point per framework-detected server + `delegates_to` to each tool whose `parent_server` matches (ADR-0013, Resolver 3). Carries the enrichment value from `tool_data_flow` through `flow_for_tool_node`. |
+| 14 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
+| 15 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
 
 **Key invariants:**
 
@@ -324,6 +327,9 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 - **Every edge carries `flow_kind`.** An edge without `flow_kind` is a construction bug, caught by tests.
 - **`structural` edges do not participate in `find_chains`.** `guards` describes a defensive control, not a path. `provides_tool` is `control` and is traversed.
 - **`entry_to_sink` runs before `detector_merge`.** The resolver reads the TSA-side `sinks_by_file` index and emits `has_access_to` edges to node ids that the merge may remove; running it after the merge produces dangling edges (measured: six on dvmcp) and a `FOREIGN KEY` failure at write time. The merge's id remap re-points those edges as it always did. The stage order is pinned by `tests/test_normalizer_stages/test_stage_order.py`.
+- **`untrusted_sources` runs after `entry_points` and before `detector_merge`.** It resolves each read to a reader node (`untrusted_source → has_access_to → reader`). A plain route handler is not classified as a tool, a sink or an agent, so the only node that can carry the edge is the `entry_point` node the previous stage creates — the stage resolves it through the entry point's `handler` attribute. Running before the merge means the merge's id remap re-points these edges too, for the same reason as `entry_to_sink`. A read whose reader resolves to no node still emits the source node, with no edge (observed on the corpora: reads inside plain helper functions and test functions).
+- **`untrusted_source` nodes carry no capabilities.** `reads_untrusted` is credited by the Capability Extractor on the reader — the component whose body makes the call. The source is a place, not an actor, so a reader-shaped capability on it would double-count the same fact.
+- **One `untrusted_source` node per read site per file**, named `<source_type>:<call_target>` and identified by `(source_type, call_target, source_file)`. Two services in different files that call the same API are two nodes; the file is what makes the read site concrete.
 - **`GraphDelta` lives in `parsing.ast_normalizer`.** It is a parsing-layer value type; `graph.models` holds `Node` / `Edge`. Stages import it under `TYPE_CHECKING` to avoid an import cycle. Moving it to `graph.models` is a future cleanup.
 
 ---
@@ -332,7 +338,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 
 **Responsibility:** Resolve edges that cannot be seen from a single file (ADR-0013).
 
-**Implemented in:** `framework_detectors/cross_file.py` (Resolver 1) and `normalizer_stages/` (Resolvers 2, 3, 4, as stages 8, 11, 12, 13 above).
+**Implemented in:** `framework_detectors/cross_file.py` (Resolver 1) and `normalizer_stages/` (Resolvers 2, 3, 4, as stages 9, 12, 13, 14 above).
 
 **Function:**
 
@@ -431,8 +437,8 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 16. **`provides_tool` is control because the access path is the attack path.** "The agent can reach a server that exposes `delete_file`" puts `delete_file` in the agent's reachable action set. Whether a particular request invokes it is a runtime question. Classifying the edge as a declaration would hide reachable dangerous actions whenever invocation is indirect — dispatched by the MCP framework, selected by the model, or triggered by a prompt — which are exactly the cases the analysis exists to evaluate. `guards` stays `structural`: a guardrail is a defensive control, and no data or control flows from it to the guarded component along that edge. Phase 2 runtime monitoring will separate exposure from invocation (ADR-0015, Deferred).
 17. **`data_flow_confirmed` is enrichable.** The generic `flow/` analyzers set it on `has_access_to`. Framework detectors set it on the edges they own (LangChain `uses_tool`/`uses_model`) and record `tool_data_flow` on tool nodes for the normalizer to copy onto the MCP edges it builds (1.2a.2). An explicit `"unknown"` in `EdgesRepository.upsert` currently overwrites an enriched value; no duplicate edge ids exist today (backlog 1.2a.2c).
 18. **`FlowDecision` is the one flow contract.** Every analyzer and enrichment helper returns `FlowDecision(kind, evidence, source)`. `flow_kind_for(decision)` is the single mapping to `flow_kind`. No second implementation, no per-caller copy. The decision's `kind` is what `data_flow_confirmed` stores.
-19. **Stage pipeline.** `normalize(ctx)` is a loop over 14 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `entry_to_sink` before `detector_merge`.
-20. **Pattern registry.** `patterns.py` is data (14 rules, 198 patterns, reasons, the `INTENTIONAL_OVERLAPS` allowlist); `patterns_registry.py` is matching semantics (`CallPattern.matches`, `matches_any`, the two validation invariants). Wildcards are not a concept in the matcher.
+19. **Stage pipeline.** `normalize(ctx)` is a loop over 15 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `untrusted_sources` after `entry_points` and `entry_to_sink` before `detector_merge`.
+20. **Pattern registry.** `patterns.py` is data (17 rules, 217 patterns, reasons, the `INTENTIONAL_OVERLAPS` allowlist); `patterns_registry.py` is matching semantics (`CallPattern.matches`, `matches_any`, the two validation invariants). Wildcards are not a concept in the matcher.
 
 ---
 

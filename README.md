@@ -207,8 +207,8 @@ The ensemble is configured explicitly — models, weights, timeouts, reasoning e
 | damn-vulnerable-llm-agent | 9 | 6 | 1 |
 | ai-goat | 10 | 7 | 7 |
 
-- **Working:** ingestion, parsing, framework detectors, capability extraction, cross-file resolution, MCP entry synthesis, CLI and Streamlit entry points, Phase 3 evaluation ensemble, report generation.
-- **Planned:** untrusted source detection, chain groups, guardrails, OpenAI Agents SDK detector, runtime enrichment.
+- **Working:** ingestion, parsing, framework detectors, capability extraction, cross-file resolution, MCP entry synthesis, untrusted-source reads (`untrusted_source` nodes + `reads_untrusted`), CLI and Streamlit entry points, Phase 3 evaluation ensemble, report generation.
+- **Planned:** chain groups (ADR-0010), guardrails, OpenAI Agents SDK detector, runtime enrichment.
 - **Deferred:** schema migrations, SCIP integration, standalone executables, Docker image.
 - **Backlog:** see `Documentation/BACKLOG.md`.
 

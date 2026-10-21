@@ -323,6 +323,6 @@ The prompt (v1.4.1, ADR-0015) receives per chain:
 ## Next
 
 - **Chain groups** (ADR-0010) — non-linear chains through untrusted sources.
-- **Lethal trifecta prioritization** (ADR-0009) — once `reads_untrusted` is available.
+- **Lethal trifecta prioritization** (ADR-0009) — `reads_untrusted` is available (1.3a); the combination and the node-level flag are not.
 - **Report tiers** (ADR-0004) — `--fast` / `--full`.
 - **SARIF output** (ADR-0004).

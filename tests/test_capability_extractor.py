@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from aicorellator import patterns
-from aicorellator.parsing.capability_extractor import _matches_any, extract
+from aicorellator.parsing.capability_extractor import (
+    _credit,
+    _matches_any,
+    extract,
+)
 from aicorellator.patterns import (
     CAPABILITY_DB_STATEMENT_CALLS,
     CAPABILITY_ORM_READS_DB,
@@ -16,6 +20,7 @@ from aicorellator.patterns import (
     CAPABILITY_WRITES_DB,
     ORM_COMMIT_CALLS,
 )
+from aicorellator.patterns_registry import ROUTING_CAPABILITIES
 
 
 def _write(tmp_path: Path, name: str, code: str) -> Path:
@@ -889,4 +894,87 @@ def test_client_get_is_not_registered() -> None:
     """The GET decision is pinned: a future item has to change it here."""
     for pattern in ("client.get", "session.get", "adapter.get"):
         assert pattern not in patterns.CAPABILITY_HTTP_EGRESS
+
+
+# ------------------------------------------------------------
+# Untrusted sources (1.3a)
+# ------------------------------------------------------------
+
+def test_reads_untrusted_is_credited_per_family(tmp_path: Path) -> None:
+    """One capability, three source families, one rule each."""
+    path = _write(tmp_path, "a.py", """
+import imaplib
+
+
+def read_docs(question):
+    return retriever.invoke(question)
+
+
+def catalogue():
+    return client.list_tools()
+
+
+def inbox():
+    imap = imaplib.IMAP4_SSL("imap.example.com")
+    return imap.search(None, "ALL")
+""")
+    result = extract(path, "a.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+
+    assert caps["read_docs"] == {"reads_untrusted"}
+    assert caps["catalogue"] == {"reads_untrusted"}
+    assert caps["inbox"] == {"reads_untrusted"}
+
+
+def test_reads_untrusted_folds_into_the_class(tmp_path: Path) -> None:
+    """A method's read is the class's capability, like every other."""
+    path = _write(tmp_path, "a.py", """
+class Tools:
+    def search(self, q):
+        return collection.query(q)
+""")
+    result = extract(path, "a.py")
+    by_name = {s.symbol_name: s.capabilities for s in result.symbols}
+
+    assert by_name["Tools"] == {"reads_untrusted"}
+    assert by_name["search"] == {"reads_untrusted"}
+
+
+def test_a_source_read_is_not_a_sink_capability() -> None:
+    """`reads_untrusted` is a source: it must not end a chain."""
+    assert "reads_untrusted" in patterns.VALID_CAPABILITIES
+    assert "reads_untrusted" not in patterns.SINK_CAPABILITIES
+    assert patterns.LETHAL_TRIFECTA_READ_CAPS == {"reads_untrusted"}
+
+
+def test_credit_rejects_an_unknown_capability() -> None:
+    """The vocabulary is closed at the one place a rule writes it."""
+    with pytest.raises(ValueError, match="unknown capability"):
+        _credit(
+            set(),
+            "reads_everything",
+            patterns.READS_UNTRUSTED_RAG_RULE,
+            "retriever.invoke",
+        )
+
+
+def test_credit_accepts_every_declared_capability() -> None:
+    """Every rule that credits a node capability is in the vocabulary.
+
+    Routing capabilities (`patterns_registry.ROUTING_CAPABILITIES`:
+    `db_statement`, `commit`) are exempt by design — they never land on
+    a node, so they are not in `VALID_CAPABILITIES` and `_credit` is
+    never called with one.
+    """
+    for rule in patterns.CALL_RULES:
+        if rule.capability in ROUTING_CAPABILITIES:
+            continue
+        if not rule.text_patterns:
+            # `http_ingress` is declared but has no pattern yet (see
+            # patterns.py): a rule with nothing to match credits nothing.
+            continue
+        caps: set[str] = set()
+        _credit(caps, rule.capability, rule, rule.text_patterns[0])
+
+        assert caps == {rule.capability}
 

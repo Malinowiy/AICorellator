@@ -26,6 +26,29 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ## Recently done
 
+### 2026-10-21 — Untrusted sources, part 1: node kind, capability, stage (1.3a)
+
+The read side of ADR-0010, end-to-end in Phase 1. Chain groups are **not** part of this item; they remain the rest of 1.3.
+
+- **Detector** (`parsing/untrusted_sources.py`): `find_untrusted_source_reads(module)` returns every call site that reads a known untrusted source, with the enclosing function/method and class. Three families, one capability: RAG corpora, MCP tool descriptions, mailbox reads (`patterns.UNTRUSTED_SOURCE_RULES` → `patterns.untrusted_source_match`, one table, one lookup).
+- **Capability `reads_untrusted`** (`capability_extractor`): credited on the **reader** — the function or method whose body makes the call. It reaches the reader's class node through the existing capability fold. It is in `VALID_CAPABILITIES` and in `LETHAL_TRIFECTA_READ_CAPS`, so 1.6 is unblocked on the read side; the combination itself is still not implemented.
+- **Node kind `untrusted_source`** (`graph/models.py`, `schema.sql`, `patterns.NODE_KINDS`): one node per read site per file, `id = sha256(source_type + call_target + source_file)`, `name = "<source_type>:<call_target>"`, attributes `source_type`/`call_target`/`source_file`/`line_start`/`reader_kind`/`reader`/`reader_container`. **Empty capabilities by design** — the source is a place, not an actor; `reads_untrusted` belongs on the component that reads.
+- **Stage `untrusted_sources`** (`normalizer_stages/untrusted_sources.py`, 6 of 15): emits the nodes and one `has_access_to` edge per read to the reader node. Reader precedence is method/tool node → entry point (via its `handler`) → class node; a reader that resolves to no node still emits the source node, with no edge. `flow_kind` is left to `FlowKindStage` (ADR-0015 decision 3); the edge carries `data_flow_confirmed = "call_result_match"` and is therefore `data`.
+- **Placement:** after `entry_points` (a plain route handler has no node of its own — the `entry_point` node is the reader) and before `detector_merge` (the merge's id remap re-points these edges, same rationale as `entry_to_sink`). Order pinned by `tests/test_normalizer_stages/test_stage_order.py` (15 stages).
+- **Tests:** 713 passed. New: `tests/test_untrusted_sources.py` (detector + table consistency), `tests/test_normalizer_stages/test_untrusted_sources.py` (stage shape, reader resolution, idempotency), `tests/test_pipeline.py::test_pipeline_produces_untrusted_source_nodes` (extractor → normalize → write → read, with `flow_kind = data`), a schema case for the new kind, and capability-extractor cases for crediting, the class fold, and the sink/read disjointness.
+- **Scans (fresh, post-implementation):**
+
+  | Target | nodes | edges | chains | data_edges_only |
+  |---|---|---|---|---|
+  | finbot-ctf | 384 | 153 | 647 | 0 |
+  | NMB | 26 | 26 | 16 | 0 |
+  | dvmcp | 33 | 47 | 39 | 24 |
+  | mcploitable | 76 | 46 | 19 | 6 |
+
+- **Delta vs baseline (381/152/647, 26/26/16, 33/47/39, 74/46/19):** FinBot +3 nodes, +1 edge; mcploitable +2 nodes, 0 edges; NMB and dvmcp byte-identical. The additions are exactly the 5 source nodes and the 1 edge that has a resolvable reader; no other node or edge changed, and no `flow_kind` flipped.
+- **Over-match:** 0. Five `list_tools` call sites across FinBot and mcploitable, all genuine tool-catalogue reads (`finbot/mcp/provider.py:71` — the only one with a reader node, `MCPToolProvider`; two FastAPI route helpers; mcploitable `examples/play.py:70` and `tests/test_servers.py:616`). The RAG and mailbox families fire nowhere on the four corpora. The four reads with no resolved reader are plain helper functions or test functions — the pre-existing "no node for a plain function" gap, not a new one.
+
+
 ### 2026-10-20 — ADR-0015 implementation (backlog item 1.2a)
 
 - **ADR-0015 accepted.** `flow_kind` on every edge (control | data | structural). `data_flow_confirmed` on `has_access_to` (six values). Structural edges (guards) excluded from `find_chains`. `provides_tool` is **control** (access path = attack path until runtime monitoring). `data_edges_only` parameter on `find_chains`. Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
@@ -250,7 +273,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
 **Priority:** High
-**Status:** Blocked by `reads_untrusted` and by 1.2a.1/1.2a.2 (needs `data` edges on real targets)
+**Status:** **Partially unblocked.** The read side of `reads_untrusted` landed in 1.3a (2026-10-21): the capability, the `untrusted_source` node kind, and the detector + normalizer stage. The chain-group half (write side, `find_chain_groups`, prioritization) is not started, and 1.2a.1/1.2a.2 remain open for real `data` edges.
 **Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Non-linear chains (chain groups, ADR-0010) require untrusted sources.
 **References:** ADR-0009, ADR-0010, ADR-0012.
 
@@ -276,7 +299,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### 1.6 — Lethal trifecta detection
 
 **Priority:** High
-**Status:** Blocked by 1.3 (needs `reads_untrusted`)
+**Status:** Not started. Its input on the read side now exists (`reads_untrusted`, 1.3a, 2026-10-21); the combination code and the node-level flag do not.
 
 ---
 
@@ -333,7 +356,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `reads_untrusted` capability
 
 **Priority:** High
-**Status:** Blocked by untrusted source detection. Goes with 1.3.
+**Status:** **Done** (1.3a, 2026-10-21) — credited on the reader from three rule families; in `VALID_CAPABILITIES` and `LETHAL_TRIFECTA_READ_CAPS`. The lethal-trifecta combination itself is 1.6.
 
 ### Dynamic chain selection
 
@@ -376,17 +399,17 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `untrusted_source` node kind
 
 **Priority:** High
-**Status:** Not started. Goes with 1.3.
+**Status:** **Done** (1.3a, 2026-10-21) — one node per read site per file, empty capabilities by design, `has_access_to` edge to the reader. The write side and chain groups are not part of this.
 
 ### Untrusted source detection
 
 **Priority:** High
-**Status:** Not started.
+**Status:** **Done** (1.3a, 2026-10-21) — `parsing/untrusted_sources.py` over `patterns.UNTRUSTED_SOURCE_RULES`; stage 6 of 15. Deliberately not a source in 1.3a: web scrapes (already `http_egress`), user uploads (no call shape), `session.list_tools` (ORM overlap).
 
 ### `find_chain_groups` operation
 
 **Priority:** High
-**Status:** Not started.
+**Status:** Not started. Next in 1.3 — needs a writer side for the source nodes, which 1.3a does not build.
 
 ---
 

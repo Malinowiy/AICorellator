@@ -1,11 +1,15 @@
 """The pipeline order is part of the contract, so it is asserted.
 
-The order encodes three facts that are easy to lose in a refactor:
+The order encodes four facts that are easy to lose in a refactor:
 
   - node stages run before the edge stages that index their output;
   - `entry_to_sink` runs *before* the detector merge, because the merge
     invalidates the TSA node ids it links to (see
     `normalizer_stages.entry_to_sink`);
+  - `untrusted_sources` runs after `entry_points` (a read inside a route
+    handler resolves to the entry point node) and before the merge, for
+    the same id reason as `entry_to_sink` (see
+    `normalizer_stages.untrusted_sources`);
   - `body_attributes` runs last, because the merge replaces nodes and
     the replacement is what the graph keeps.
 """
@@ -21,6 +25,7 @@ EXPECTED = (
     "method_nodes",
     "intra_file_edges",
     "entry_points",
+    "untrusted_sources",
     "llm_endpoints",
     "delegation_edges",
     "entry_to_sink",
@@ -35,6 +40,11 @@ EXPECTED = (
 
 def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
+
+
+def test_stage_count_is_fifteen() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 15`)."""
+    assert len(STAGES) == 15
 
 
 def test_every_stage_satisfies_the_protocol() -> None:

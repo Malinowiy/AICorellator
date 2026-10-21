@@ -63,13 +63,13 @@ class NormalizeContext:
     host_id: str = "localhost"
 
     # --- Caches (was: closures in normalize()) ---
-    # Two consumers read source beyond the TSA index: the Flow Analyzer
-    # for `has_access_to` and the tool/sink body analyzers (1.2a.1).
-    # Both go through this cache, so a file is read and parsed at most
-    # once per scan. A missing file, an unreadable file or a syntax
-    # error yields None — unit tests build manifests whose abs_path does
-    # not exist on disk, so the fallback is a normal path, not an error
-    # path.
+    # Three consumers read source beyond the TSA index: the Flow Analyzer
+    # for `has_access_to`, the tool/sink body analyzers (1.2a.1), and the
+    # `untrusted_source` reader index (1.3a). All go through this cache, so
+    # a file is read and parsed at most once per scan. A missing file, an
+    # unreadable file or a syntax error yields None — unit tests build
+    # manifests whose abs_path does not exist on disk, so the fallback is a
+    # normal path, not an error path.
     module_cache: dict[str, ast.Module | None] = field(default_factory=dict)
     functions_cache: dict[
         str, dict[tuple[str, int], FunctionNode]

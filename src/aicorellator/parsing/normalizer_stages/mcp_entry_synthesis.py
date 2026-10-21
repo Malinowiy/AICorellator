@@ -1,6 +1,6 @@
 """McpEntrySynthesisStage — virtual MCP entry (Resolver 3).
 
-Run order: 12 of 14 (see `normalizer_stages.STAGES`).
+Run order: 13 of 15 (see `normalizer_stages.STAGES`).
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """OrphanEntryStage — entry points with no delegation (Resolver 2).
 
-Run order: 13 of 14 (see `normalizer_stages.STAGES`).
+Run order: 14 of 15 (see `normalizer_stages.STAGES`).
 """
 
 from __future__ import annotations
