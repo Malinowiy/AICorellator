@@ -18,7 +18,7 @@ The phase has three classification layers (ADR-0009, ADR-0011):
 
 Every edge produced in Phase 1 carries `flow_kind` — `control`, `data`, or `structural` (ADR-0015). Cross-file edges and MCP entry synthesis are resolved by the normalizer after detector merge (ADR-0013).
 
-**Architectural repair (v0.2.0-dev).** The parsing layer was refactored in four steps: `FlowDecision` type (one flow-decision contract, one `flow_kind_for` mapping), `flow/` split (one module per analyzer question), `patterns_registry.py` (matching semantics separated from data), and `normalizer_stages/` (14 explicitly ordered `NormalizerStage` objects). The component descriptions below reflect the post-repair layout.
+**Architectural repair (v0.2.0-dev).** The parsing layer was refactored in four steps: `FlowDecision` type (one flow-decision contract, one `flow_kind_for` mapping), `flow/` split (one module per analyzer question), `patterns_registry.py` (matching semantics separated from data), and `normalizer_stages/` (17 explicitly ordered `NormalizerStage` objects). The component descriptions below reflect the post-repair layout.
 
 ---
 
@@ -36,7 +36,7 @@ flowchart TB
         EP[Entry Points Detector<br/>routes, agent calls,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
         FLOW["flow/ package<br/>arguments, edge_analyzer,<br/>sink_analyzer, tool_analyzer"]
-        NORM["AST Normalizer<br/>16 stages (normalizer_stages/)"]
+        NORM["AST Normalizer<br/>17 stages (normalizer_stages/)"]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
     end
@@ -285,7 +285,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 
 ---
 
-### 10. AST Normalizer (16-stage pipeline)
+### 10. AST Normalizer (17-stage pipeline)
 
 **Responsibility:** The central merge component. Takes all Phase 1 outputs and produces a single `GraphDelta` of nodes and edges.
 
@@ -296,9 +296,9 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 - `GraphDelta.edges: list[Edge]`
 - `make_context(manifest, tsa_output, entry_points=None, llm_output=None, capabilities=None, framework_detection=None, host_id="localhost") -> NormalizeContext`
 
-`normalize` is a 135-line loop over `STAGES`; the work is in 16 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
+`normalize` is a 135-line loop over `STAGES`; the work is in 17 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
 
-**The 16 stages, in order:**
+**The 17 stages, in order:**
 
 | # | Stage | Responsibility |
 |---|---|---|
@@ -312,12 +312,13 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 | 8 | `delegation_edges` | `delegates_to` — entry → agent, agent → agent, agent → MCP server. |
 | 9 | `entry_to_sink` | `has_access_to` from entry points to sinks reachable through same-file calls. **Must run before `detector_merge`.** See the invariant below. |
 | 10 | `detector_merge` | Detector nodes authoritative for kind; capability preservation; id remap; edge re-point; duplicate-id collapse. `flow_kind` and `data_flow_confirmed` preserved across the merge. |
-| 11 | `untrusted_source_writers` | `writes_to` — `mcp_server → untrusted_source` (1.3a.1, ADR-0010). The write half of the chain-group channel: a server declares the tool catalogue it produces. `mcp_tool_description` sources only; sets `data_flow_confirmed = "unknown"` and leaves `flow_kind` to stage 12. **Must run after `detector_merge`** (framework-detected servers exist only then) **and before `flow_kind`.** See the invariants below. |
+| 11 | `untrusted_source_writers` | `writes_to` — `mcp_server → untrusted_source` (1.3a.1, ADR-0010). The write half of the chain-group channel: a server declares the tool catalogue it produces. Four anchors, unioned: `parent_server`, the server's own file, the `mcp/servers/<name>/` directory, and a literal factory module path in the source's file (1.3a.1.2, FinBot's `_SERVER_INTROSPECTORS`). `mcp_tool_description` sources only; sets `data_flow_confirmed = "unknown"` and leaves `flow_kind` to stage 12. **Must run after `detector_merge`** (framework-detected servers exist only then) **and before `flow_kind`.** See the invariants below. |
 | 12 | `flow_kind` | The single place calling `flow_kind_for`. Reads `data_flow_confirmed` from each edge (an explicit `FlowDecision` re-validation), sets `flow_kind`. Structural edges skipped. |
-| 13 | `cross_file_resolution` | `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1). |
-| 14 | `mcp_entry_synthesis` | Virtual MCP entry point per framework-detected server + `delegates_to` to each tool whose `parent_server` matches (ADR-0013, Resolver 3). Carries the enrichment value from `tool_data_flow` through `flow_for_tool_node`. |
-| 15 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
-| 16 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
+| 13 | `dynamic_mcp_invocation` | `uses_tool` — `agent → tool` for every tool of every server that writes a catalogue the agent reads, and that reads it (1.3a.1.2, ADR-0010). The agent's `call_tool(name)` is a runtime value, so the hop from the catalogue reader to the tools the catalogue describes is a rule, not a resolution: "can invoke" is the candidate attack path, the same trade-off `provides_tool` makes. `mcp_tool_description` sources only; passes `CONTROL_FLOW`. **Must run after `untrusted_source_writers`** (it walks the `writes_to` edges that stage emits) **and after `flow_kind`** (it is a resolver and passes the mapping's output, like the three resolvers below). See the invariants below. |
+| 14 | `cross_file_resolution` | `uses_tool` edges from agent modules to tool modules they import (ADR-0013, Resolver 1). |
+| 15 | `mcp_entry_synthesis` | Virtual MCP entry point per framework-detected server + `delegates_to` to each tool whose `parent_server` matches (ADR-0013, Resolver 3). Carries the enrichment value from `tool_data_flow` through `flow_for_tool_node`. |
+| 16 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
+| 17 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
 
 **Key invariants:**
 
@@ -329,7 +330,8 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 - **`structural` edges do not participate in `find_chains`.** `guards` describes a defensive control, not a path. `provides_tool` is `control` and is traversed.
 - **`entry_to_sink` runs before `detector_merge`.** The resolver reads the TSA-side `sinks_by_file` index and emits `has_access_to` edges to node ids that the merge may remove; running it after the merge produces dangling edges (measured: six on dvmcp) and a `FOREIGN KEY` failure at write time. The merge's id remap re-points those edges as it always did. The stage order is pinned by `tests/test_normalizer_stages/test_stage_order.py`.
 - **`untrusted_sources` runs after `entry_points` and before `detector_merge`.** It resolves each read to a reader node (`untrusted_source → has_access_to → reader`). A plain route handler is not classified as a tool, a sink or an agent, so the only node that can carry the edge is the `entry_point` node the previous stage creates — the stage resolves it through the entry point's `handler` attribute. Running before the merge means the merge's id remap re-points these edges too, for the same reason as `entry_to_sink`. A read whose reader resolves to no node still emits the source node, with no edge (observed on the corpora: reads inside plain helper functions and test functions).
-- **`untrusted_source_writers` runs after `detector_merge` and before `flow_kind`.** It emits `writes_to` from every `mcp_server` node visible from a `mcp_tool_description` source's file — the precise anchor when the source carries `parent_server`, the server's own `source_file` otherwise, and the `mcp/servers/<name>/` directory for a path-heuristic server, which has no file. The merge has to have run first: framework-detected server nodes (dvmcp, mcploitable) exist only then, and they are the ones that carry the file the rule matches on. Running before `flow_kind` keeps ADR-0015 decision 3 as the single derivation. The stage creates no nodes, and a source no server is visible from gets no edge (measured: all four corpora, 1.3a.1's report).
+- **`untrusted_source_writers` runs after `detector_merge` and before `flow_kind`.** It emits `writes_to` from every `mcp_server` node visible from a `mcp_tool_description` source's file — the precise anchor when the source carries `parent_server`, the server's own `source_file` otherwise, the `mcp/servers/<name>/` directory for a path-heuristic server, which has no file, and a literal factory module path (`...mcp.servers.<name>.server.create_<name>_server`) the source's own file spells out, which is the anchor that reaches a writer in another file. The merge has to have run first: framework-detected server nodes (dvmcp, mcploitable) exist only then, and they are the ones that carry the file the rule matches on. Running before `flow_kind` keeps ADR-0015 decision 3 as the single derivation. The stage creates no nodes, and a source no server is visible from gets no edge (measured: all four corpora, 1.3a.1's report; FinBot gains ten edges from the literal anchor, 1.3a.1.2's report).
+- **`dynamic_mcp_invocation` runs after `untrusted_source_writers` and after `flow_kind`.** It emits `agent → uses_tool → tool` for every tool of every server that writes a catalogue the agent both reads (`source → agent`, stage 6) and has the `reads_untrusted` capability for. It needs the `writes_to` edges stage 11 emits, and it is a resolver, so it runs with `cross_file_resolution`, `mcp_entry_synthesis` and `orphan_entry` and passes `CONTROL_FLOW` the same way they do. It reads the delta only, creates no nodes, and skips an edge id the delta already has. On the four corpora it emits nothing: FinBot's catalogue reader reads `finbot/mcp/provider.py`, and the factory-path literals are in the two route files, so the writer edges land on *their* sources — whose reader is a plain helper function with no node — while the reader's own source has no writer (measured: 10 `writes_to`, 0 `uses_tool`, 0 groups, 1.3a.1.2's report).
 - **`untrusted_source` nodes carry no capabilities.** `reads_untrusted` is credited by the Capability Extractor on the reader — the component whose body makes the call. The source is a place, not an actor, so a reader-shaped capability on it would double-count the same fact.
 - **One `untrusted_source` node per read site per file**, named `<source_type>:<call_target>` and identified by `(source_type, call_target, source_file)`. Two services in different files that call the same API are two nodes; the file is what makes the read site concrete.
 - **`GraphDelta` lives in `parsing.ast_normalizer`.** It is a parsing-layer value type; `graph.models` holds `Node` / `Edge`. Stages import it under `TYPE_CHECKING` to avoid an import cycle. Moving it to `graph.models` is a future cleanup.
@@ -340,7 +342,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 
 **Responsibility:** Resolve edges that cannot be seen from a single file (ADR-0013).
 
-**Implemented in:** `framework_detectors/cross_file.py` (Resolver 1) and `normalizer_stages/` (Resolvers 2, 3, 4, as stages 9, 13, 14, 15 above).
+**Implemented in:** `framework_detectors/cross_file.py` (Resolver 1) and `normalizer_stages/` (Resolvers 2, 3, 4, as stages 9, 14, 15, 16 above).
 
 **Function:**
 
@@ -439,7 +441,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 16. **`provides_tool` is control because the access path is the attack path.** "The agent can reach a server that exposes `delete_file`" puts `delete_file` in the agent's reachable action set. Whether a particular request invokes it is a runtime question. Classifying the edge as a declaration would hide reachable dangerous actions whenever invocation is indirect — dispatched by the MCP framework, selected by the model, or triggered by a prompt — which are exactly the cases the analysis exists to evaluate. `guards` stays `structural`: a guardrail is a defensive control, and no data or control flows from it to the guarded component along that edge. Phase 2 runtime monitoring will separate exposure from invocation (ADR-0015, Deferred).
 17. **`data_flow_confirmed` is enrichable.** The generic `flow/` analyzers set it on `has_access_to`. Framework detectors set it on the edges they own (LangChain `uses_tool`/`uses_model`) and record `tool_data_flow` on tool nodes for the normalizer to copy onto the MCP edges it builds (1.2a.2). An explicit `"unknown"` in `EdgesRepository.upsert` currently overwrites an enriched value; no duplicate edge ids exist today (backlog 1.2a.2c).
 18. **`FlowDecision` is the one flow contract.** Every analyzer and enrichment helper returns `FlowDecision(kind, evidence, source)`. `flow_kind_for(decision)` is the single mapping to `flow_kind`. No second implementation, no per-caller copy. The decision's `kind` is what `data_flow_confirmed` stores.
-19. **Stage pipeline.** `normalize(ctx)` is a loop over 16 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `untrusted_sources` after `entry_points`, `entry_to_sink` before `detector_merge`, and `untrusted_source_writers` between `detector_merge` and `flow_kind`.
+19. **Stage pipeline.** `normalize(ctx)` is a loop over 17 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `untrusted_sources` after `entry_points`, `entry_to_sink` before `detector_merge`, `untrusted_source_writers` between `detector_merge` and `flow_kind`, and `dynamic_mcp_invocation` after `untrusted_source_writers` and `flow_kind`.
 20. **Pattern registry.** `patterns.py` is data (17 rules, 217 patterns, reasons, the `INTENTIONAL_OVERLAPS` allowlist); `patterns_registry.py` is matching semantics (`CallPattern.matches`, `matches_any`, the two validation invariants). Wildcards are not a concept in the matcher.
 
 ---

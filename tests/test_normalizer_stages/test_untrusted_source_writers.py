@@ -3,18 +3,24 @@
 The stage is the write half of ADR-0010's channel: 1.3a's
 `untrusted_sources` emits `source → reader`, and this one emits
 `mcp_server → writes_to → source` so `find_chain_groups` has an
-incoming edge to walk. These tests cover the three ways a server is
-visible from a source, the source-family gate, the flow attributes, and
-the two absences (no server in the file; a server but not for this
-family).
+incoming edge to walk. These tests cover the four ways a server is
+visible from a source — `parent_server`, the same file, the
+`mcp/servers/<name>/` directory, and a literal factory module path
+(1.3a.1.2), which is the anchor that reaches a server in another file —
+plus the source-family gate, the flow attributes, and the absences.
 """
 
 from __future__ import annotations
+
+import ast
 
 from aicorellator.graph.models import Node
 from aicorellator.parsing.normalizer_stages import (
     FlowKindStage,
     UntrustedSourceWriterStage,
+)
+from aicorellator.parsing.normalizer_stages.untrusted_source_writers import (
+    declared_server_names,
 )
 
 
@@ -239,3 +245,215 @@ def test_no_server_nodes_means_no_work(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+
+
+# ============================================================
+# The literal factory path (1.3a.1.2)
+# ============================================================
+
+INTROSPECTORS = '''\
+"""Route helpers -- server introspection."""
+import importlib
+
+_SERVER_INTROSPECTORS = {
+    "finmail": "finbot.mcp.servers.finmail.server.create_finmail_server",
+    "findrive": "finbot.mcp.servers.findrive.server.create_findrive_server",
+}
+
+
+async def _get_default_tool_definitions(server_type):
+    """Introspect a server's FastMCP instance."""
+    factory_path = _SERVER_INTROSPECTORS.get(server_type)
+    module = importlib.import_module(factory_path.rsplit(".", 1)[0])
+    return await module.list_tools()
+'''
+
+
+def _server_modules(*names: str) -> dict[str, str]:
+    """Manifest entries for the server modules a literal names."""
+    return {f"mcp/servers/{name}/server.py": "" for name in names}
+
+
+def test_a_literal_factory_path_names_its_server(project) -> None:
+    """FinBot's `_SERVER_INTROSPECTORS`: the route file names its servers.
+
+    No server is visible from the route file — none is in it, and its
+    path is not under `mcp/servers/` — so the literal is the anchor. The
+    named server's own module lives elsewhere, which is the point.
+    """
+    p = project(files={
+        "apps/routes/api.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:findrive", "untrusted_source:1"),
+        ("writes_to", "mcp_server:finmail", "untrusted_source:1"),
+    ]
+    assert {e.flow_kind for e in delta.edges} == {"control"}
+    assert {e.data_flow_confirmed for e in delta.edges} == {"unknown"}
+
+
+def test_a_literal_whose_module_is_not_in_the_manifest_writes_nothing(
+    project,
+) -> None:
+    """A typo or a missing package names no server this scan can reach."""
+    p = project(files={
+        "apps/routes/api.py": INTROSPECTORS,
+        **_server_modules("finmail"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["mcp_server:finmail"]
+
+
+def test_a_literal_that_names_no_server_node_writes_nothing(project) -> None:
+    """The module exists, but the graph has no node for the server."""
+    p = project(files={
+        "apps/routes/api.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("taxcalc", server_name="taxcalc"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+
+def test_a_literal_in_another_file_is_not_an_anchor(project) -> None:
+    """The literal is read from the source's own file, not the project."""
+    p = project(files={
+        "apps/routes/api.py": "def read():\n    return server.list_tools()\n",
+        "other.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_literal_path_naming_a_different_factory_is_ignored(project) -> None:
+    """`servers/finmail/server.py` must hold `create_finmail_server`.
+
+    A path whose two halves disagree names two servers, and the rule
+    picks the module — the same name twice, or nothing.
+    """
+    mismatched = INTROSPECTORS.replace(
+        "finbot.mcp.servers.finmail.server.create_finmail_server",
+        "finbot.mcp.servers.finmail.server.create_taxcalc_server",
+    )
+    p = project(files={
+        "apps/routes/api.py": mismatched,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["mcp_server:findrive"]
+
+
+def test_a_path_quoted_in_a_docstring_is_not_evidence(project) -> None:
+    """A sentence is not a value: the rule reads literals the code uses."""
+    p = project(files={
+        "apps/routes/api.py": (
+            '"""See finbot.mcp.servers.finmail.server.'
+            'create_finmail_server."""\n'
+        ),
+        **_server_modules("finmail"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_literal_does_not_anchor_a_non_catalogue_source(project) -> None:
+    """The family gate is first: a corpus in that file is still no match."""
+    p = project(files={
+        "apps/routes/api.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_source(
+        source_type="rag_corpus", file_path="apps/routes/api.py",
+    ))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_the_literal_writers_join_the_structurally_visible_one(
+    project,
+) -> None:
+    """A file inside a server directory that also names another server.
+
+    The anchors are independent pieces of evidence, so the edges are a
+    union: `knowledge` owns the file, and the literal names `finmail`.
+    """
+    p = project(files={
+        "mcp/servers/knowledge/server.py": INTROSPECTORS,
+        **_server_modules("finmail"),
+    })
+    p.delta.nodes.append(_server("knowledge", server_name="knowledge"))
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(
+        _source(file_path="mcp/servers/knowledge/server.py")
+    )
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == [
+        "mcp_server:finmail", "mcp_server:knowledge",
+    ]
+
+
+def test_declared_server_names_reads_the_path_not_the_key() -> None:
+    """One name per server, in source order, from the module path."""
+    module = ast.parse(
+        '_SERVER_INTROSPECTORS = {\n'
+        '    "label-a": "pkg.mcp.servers.finmail.server.'
+        'create_finmail_server",\n'
+        '    "label-b": "pkg.mcp.servers.findrive.server.'
+        'create_findrive_server",\n'
+        '    "again": "pkg.mcp.servers.finmail.server.'
+        'create_finmail_server",\n'
+        '}\n'
+    )
+
+    assert declared_server_names(module) == ["finmail", "findrive"]
+
+
+def test_declared_server_names_ignores_a_non_factory_literal() -> None:
+    """A module path that is not a server factory names no server."""
+    module = ast.parse(
+        'PATH = "pkg.mcp.servers.finmail.server.serve"\n'
+        'URL = "http://example.test/tools"\n'
+        'BARE = "finmail"\n'
+        'ONE = "mcp.servers.finmail.server.create_finmail_server"\n'
+    )
+
+    assert declared_server_names(module) == ["finmail"]
+

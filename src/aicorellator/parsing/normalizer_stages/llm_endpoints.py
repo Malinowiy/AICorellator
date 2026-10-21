@@ -1,6 +1,6 @@
 """LlmEndpointStage — `llm_endpoint` nodes from LLM configs.
 
-Run order: 7 of 16 (see `normalizer_stages.STAGES`).
+Run order: 7 of 17 (see `normalizer_stages.STAGES`).
 
 C4: "**LLM endpoint nodes** — from the LLM extractor."
 

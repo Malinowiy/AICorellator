@@ -588,6 +588,78 @@ def test_find_chain_groups_traverses_a_control_write_edge(
     ]
 
 
+def test_find_chain_groups_with_the_dynamic_invocation_edge(
+    store: GraphStore,
+) -> None:
+    """The 1.3a.1.2 shape: the reader reaches the tools it can invoke.
+
+    Both sides of ADR-0010's channel, with the edge the dynamic
+    invocation stage adds:
+
+        entry --delegates_to--> agent --has_access_to--> server
+              --writes_to--> source
+        source --has_access_to(data)--> agent --uses_tool--> tool
+              --has_access_to--> sink
+
+    Before this stage the read chain stopped at the agent: the catalogue
+    read and the `call_tool(name)` dispatch are two calls, and only the
+    first had an edge. Here the agent is on both sides of the anchor,
+    which is the FinBot shape — the component that reads the catalogue
+    is the component that can invoke what it describes.
+    """
+    ids = {
+        "entry": "entry_point:" + "e" * 16,
+        "agent": "agent:" + "a" * 16,
+        "server": "mcp_server:" + "m" * 16,
+        "source": "untrusted_source:" + "u" * 16,
+        "tool": "tool:" + "t" * 16,
+        "sink": "sink:" + "s" * 16,
+        "e_a": "edge:" + "1" * 16,
+        "a_m": "edge:" + "2" * 16,
+        "m_u": "edge:" + "3" * 16,
+        "u_a": "edge:" + "4" * 16,
+        "a_t": "edge:" + "5" * 16,
+        "t_k": "edge:" + "6" * 16,
+    }
+    _put(store, ids["entry"], "entry_point", "POST /chat")
+    _put(
+        store, ids["agent"], "agent", "MCPToolProvider",
+        capabilities=["invokes_mcp_tool", "reads_untrusted"],
+    )
+    _put(store, ids["server"], "mcp_server", "finstripe")
+    _put(
+        store, ids["source"], "untrusted_source",
+        "mcp_tool_description:client.list_tools",
+    )
+    _put(store, ids["tool"], "tool", "get_account_balance")
+    _put(store, ids["sink"], "sink", "run_shell")
+    _link(
+        store, ids["e_a"], ids["entry"], ids["agent"],
+        kind="delegates_to",
+    )
+    _link(store, ids["a_m"], ids["agent"], ids["server"])
+    _link(
+        store, ids["m_u"], ids["server"], ids["source"],
+        kind="writes_to",
+    )
+    _link(store, ids["u_a"], ids["source"], ids["agent"], flow_kind="data")
+    _link(
+        store, ids["a_t"], ids["agent"], ids["tool"], kind="uses_tool",
+    )
+    _link(store, ids["t_k"], ids["tool"], ids["sink"])
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].untrusted_source_id == ids["source"]
+    assert groups[0].write_chains == [
+        [ids["entry"], ids["agent"], ids["server"], ids["source"]]
+    ]
+    assert groups[0].read_chains == [
+        [ids["source"], ids["agent"], ids["tool"], ids["sink"]]
+    ]
+
+
 def test_find_chain_groups_ids_are_pinned_and_prefixed(
     store: GraphStore,
 ) -> None:

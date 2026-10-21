@@ -1,6 +1,6 @@
 """DetectorMergeStage — framework detector nodes are authoritative.
 
-Run order: 10 of 16 (see `normalizer_stages.STAGES`).
+Run order: 10 of 17 (see `normalizer_stages.STAGES`).
 
 C4: "**Detector node merge** — detector nodes are authoritative for
 kind. When a detector node and a TSA node share name and source file,

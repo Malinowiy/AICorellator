@@ -6,9 +6,9 @@ straight through:
     for stage in STAGES:
         delta = stage.apply(delta, ctx)
 
-The order is the C4 L3 Phase 1 order — the fifteen rows of the AST
-Normalizer stage table in `C4_L3_Phase1.md`, which lists these stages in
-this order:
+The order is the C4 L3 Phase 1 order — the rows of the AST Normalizer
+stage table in `C4_L3_Phase1.md`, which lists these stages in this
+order:
 
      1  mcp_server_nodes       mcp_server nodes from paths
      2  class_nodes            class nodes (classification + capabilities)
@@ -22,10 +22,11 @@ this order:
     10  detector_merge         detector nodes authoritative; id remap
     11  untrusted_source_writers  server → writes_to → source (1.3a.1)
     12  flow_kind              flow_kind on every edge (ADR-0015)
-    13  cross_file_resolution  uses_tool across modules (Resolver 1)
-    14  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
-    15  orphan_entry           orphan entry → single agent (Resolver 2)
-    16  body_attributes        sink_data_flow / returns_data backfill
+    13  dynamic_mcp_invocation agent → uses_tool → tool (1.3a.1.2)
+    14  cross_file_resolution  uses_tool across modules (Resolver 1)
+    15  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
+    16  orphan_entry           orphan entry → single agent (Resolver 2)
+    17  body_attributes        sink_data_flow / returns_data backfill
 
 Note on the order:
 
@@ -48,6 +49,10 @@ Note on the order:
     the file the rule matches on — only exists once `detector_merge` has
     run. It runs before `flow_kind` so the one derivation classifies the
     edge it emits.
+  - `dynamic_mcp_invocation` (1.3a.1.2) runs after both: it walks the
+    `writes_to` edges stage 11 emitted, and it is a resolver, so it sits
+    with the other post-`flow_kind` resolvers and passes `CONTROL_FLOW`
+    the way they do.
   - `BodyAttributeStage` runs last, not at node construction. Its
     *position* is load-bearing for the same kind of reason: the merge can
     replace a TSA node with a detector node that arrives without the
@@ -62,6 +67,7 @@ from .class_nodes import ClassNodeStage
 from .cross_file_resolution import CrossFileResolutionStage
 from .delegation_edges import DelegationEdgeStage
 from .detector_merge import DetectorMergeStage
+from .dynamic_mcp_invocation import DynamicMcpInvocationStage
 from .entry_points import EntryPointStage
 from .entry_to_sink import EntryToSinkStage
 from .flow_kind import FlowKindStage
@@ -93,6 +99,7 @@ STAGES: tuple[NormalizerStage, ...] = (
     DetectorMergeStage(),
     UntrustedSourceWriterStage(),
     FlowKindStage(),
+    DynamicMcpInvocationStage(),
     CrossFileResolutionStage(),
     McpEntrySynthesisStage(),
     OrphanEntryStage(),

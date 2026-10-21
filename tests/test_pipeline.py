@@ -616,7 +616,219 @@ def test_pipeline_writer_edge_reaches_the_store(
         )
         assert store.edges.list(target_id=rag.id) == []
 
+        # The dynamic invocation stage finds nothing to link: the project
+        # has no agent node at all (the `*Server` class is an
+        # `mcp_server`, and the catalogue readers are a method and a
+        # plain function), so no reader has the `reads_untrusted`
+        # capability the rule gates on.
+        assert store.nodes.list(kind="agent") == []
+        assert store.edges.list(kind="uses_tool") == []
+
         # The write side alone is not a group (ADR-0010): no entry point
         # reaches a server, and the project has no sink for a read chain
         # to terminate at.
         assert store.query.find_chain_groups() == []
+
+
+# ============================================================
+# Dynamic MCP invocation (1.3a.1.2)
+# ============================================================
+
+DYNAMIC_FILES: dict[str, str] = {
+    # Path-heuristic server: the directory names it, its class exposes a
+    # tool, and the tool reaches a shell sink in the same file.
+    "mcp/servers/knowledge/server.py": '''\
+"""Knowledge MCP server -- a retrieval tool over a shell sink."""
+import subprocess
+
+
+class KnowledgeServer:
+    """MCP server exposing a retrieval tool."""
+
+    def get_documents(self, query: str) -> list:
+        return vectorstore.similarity_search(query)
+
+    def execute_script(self, script: str) -> str:
+        return subprocess.run(
+            script, shell=True, capture_output=True
+        ).stdout.decode()
+''',
+
+    # The reader. FinBot's shape in three steps: a literal factory path
+    # for the server it talks to (the writer anchor), a
+    # `create_mcp_server("knowledge")` call in an `agents/` module (the
+    # agent → server edge), and a catalogue read inside the agent class
+    # (the `reads_untrusted` capability, and the read edge whose target
+    # is the agent node).
+    "agents/tool_provider.py": '''\
+"""The agent that reads the MCP tool catalogue and invokes its tools."""
+from app.services.mcp import create_mcp_server
+
+_SERVER_INTROSPECTORS = {
+    "knowledge": "app.mcp.servers.knowledge.server.create_knowledge_server",
+}
+
+
+class ToolProviderAgent:
+    """Discovers the tools of the MCP servers it connects to."""
+
+    def __init__(self):
+        self.servers = {}
+
+    def connect_servers(self):
+        self.servers["knowledge"] = create_mcp_server("knowledge")
+
+    async def connect(self, client):
+        """Read a server's tool catalogue."""
+        return await client.list_tools()
+''',
+
+    # The route, in a file that is not an `agents/` module: that is what
+    # makes the call an entry → agent delegation rather than an
+    # agent → agent one.
+    "apps/api.py": '''\
+"""HTTP API."""
+from fastapi import APIRouter
+
+from app.agents.tool_provider import ToolProviderAgent
+
+router = APIRouter()
+
+
+@router.get("/chat")
+async def chat():
+    """Start an agent run."""
+    agent = ToolProviderAgent()
+    agent.connect_servers()
+    return {"agent": agent}
+''',
+}
+
+
+@pytest.fixture
+def dynamic_target(tmp_path: Path) -> Path:
+    """A three-file project with both halves of ADR-0010's channel."""
+    root = tmp_path / "dynamic"
+    for rel_path, content in DYNAMIC_FILES.items():
+        full = root / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+    return root
+
+
+
+def _normalized_dynamic(target: Path):
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    detection = run_detectors(manifest)
+    return normalize(make_context(
+        manifest, tsa, ep, llm,
+        capabilities=capabilities, framework_detection=detection,
+    ))
+
+
+def test_pipeline_chain_group_through_dynamic_invocation(
+    dynamic_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """1.3a.1.2 end to end: a group forms on a FinBot-shaped project.
+
+    Every hop is a rule landed in 1.3, and each one is asserted on its
+    own so a failure says which rule broke:
+
+        literal factory path    knowledge → writes_to → catalogue
+        catalogue read          catalogue → has_access_to → agent
+        dynamic invocation      agent → uses_tool → get_documents
+        same-file edges         knowledge → provides_tool →
+                                get_documents
+                                get_documents → has_access_to →
+                                execute_script (the sink)
+        delegation              GET /chat → delegates_to → agent
+                                agent → has_access_to → knowledge
+
+    The chains the enumerator pairs are then
+
+        write   GET /chat → agent → knowledge → catalogue
+        read    catalogue → agent → get_documents → execute_script
+
+    and a second read chain goes through the server instead of straight
+    to the tool (`catalogue → agent → knowledge → get_documents →
+    execute_script`), because `provides_tool` is control and therefore
+    traversable. Two groups, one per read chain — collapsing or ranking
+    the longer path is ADR-0012's prioritization, which is 1.3c and is
+    not implemented.
+    """
+    target = ingest(dynamic_target, kind="folder")
+    delta = _normalized_dynamic(target)
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        nodes = {n.id: n for n in store.nodes.list()}
+        agent = next(
+            n for n in nodes.values() if n.name == "ToolProviderAgent"
+        )
+        server = next(n for n in nodes.values() if n.name == "knowledge")
+        catalogue = next(
+            n for n in nodes.values()
+            if n.name == "mcp_tool_description:client.list_tools"
+        )
+        tool = next(n for n in nodes.values() if n.name == "get_documents")
+
+        # The reader is the gate, and `reads_untrusted` is on it.
+        assert "reads_untrusted" in agent.capabilities
+
+        # The anchor that makes the write side reachable (1.3a.1.2).
+        assert [
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in store.edges.list(kind="writes_to")
+        ] == [("knowledge", "mcp_tool_description:client.list_tools")]
+
+        # The rule that closes the read side (1.3a.1.2).
+        invocations = store.edges.list(kind="uses_tool")
+        assert [
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in invocations
+        ] == [("ToolProviderAgent", "get_documents")]
+        assert {e.flow_kind for e in invocations} == {"control"}
+        assert {e.data_flow_confirmed for e in invocations} == {"unknown"}
+
+        # The two edges the invocation rule walks.
+        assert store.edges.list(
+            source_id=catalogue.id, kind="has_access_to"
+        )[0].target_id == agent.id
+        assert store.edges.list(
+            source_id=server.id, kind="provides_tool"
+        )[0].target_id == tool.id
+
+        groups = store.query.find_chain_groups()
+
+        assert len(groups) == 2
+        assert {
+            tuple(nodes[n].name for n in chain) for chain in
+            (c for g in groups for c in g.read_chains)
+        } == {
+            (
+                "mcp_tool_description:client.list_tools",
+                "ToolProviderAgent", "get_documents", "execute_script",
+            ),
+            (
+                "mcp_tool_description:client.list_tools",
+                "ToolProviderAgent", "knowledge", "get_documents",
+                "execute_script",
+            ),
+        }
+        assert {
+            tuple(nodes[n].name for n in chain) for chain in
+            (c for g in groups for c in g.write_chains)
+        } == {(
+            "GET /chat", "ToolProviderAgent", "knowledge",
+            "mcp_tool_description:client.list_tools",
+        )}

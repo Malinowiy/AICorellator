@@ -15,6 +15,10 @@ The order encodes four facts that are easy to lose in a refactor:
     once `detector_merge` has run, and before `flow_kind`, so the one
     derivation classifies the edge it emits (see
     `normalizer_stages.untrusted_source_writers`);
+  - `dynamic_mcp_invocation` runs after `untrusted_source_writers` (it
+    walks the `writes_to` edges that stage emits) and after `flow_kind`,
+    with the resolver group that passes `CONTROL_FLOW` (see
+    `normalizer_stages.dynamic_mcp_invocation`);
   - `body_attributes` runs last, because the merge replaces nodes and
     the replacement is what the graph keeps.
 """
@@ -37,6 +41,7 @@ EXPECTED = (
     "detector_merge",
     "untrusted_source_writers",
     "flow_kind",
+    "dynamic_mcp_invocation",
     "cross_file_resolution",
     "mcp_entry_synthesis",
     "orphan_entry",
@@ -48,9 +53,9 @@ def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
 
 
-def test_stage_count_is_sixteen() -> None:
-    """The count is quoted in the per-stage docstrings (`N of 16`)."""
-    assert len(STAGES) == 16
+def test_stage_count_is_seventeen() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 17`)."""
+    assert len(STAGES) == 17
 
 
 def test_every_stage_satisfies_the_protocol() -> None:
@@ -84,4 +89,21 @@ def test_writer_stage_follows_the_merge_and_precedes_flow_kind() -> None:
         names.index("detector_merge")
         < names.index("untrusted_source_writers")
         < names.index("flow_kind")
+    )
+
+
+def test_dynamic_invocation_precedes_cross_file_resolution() -> None:
+    """Both emit `uses_tool`, and each skips an id the delta already has.
+
+    `dynamic_mcp_invocation` walks `writes_to` (stage 11) and runs with
+    the post-`flow_kind` resolvers; `cross_file_resolution` is the
+    resolver that resolves the same edge kind across modules, so it must
+    be able to see — and skip — what this stage emitted.
+    """
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("untrusted_source_writers")
+        < names.index("flow_kind")
+        < names.index("dynamic_mcp_invocation")
+        < names.index("cross_file_resolution")
     )
