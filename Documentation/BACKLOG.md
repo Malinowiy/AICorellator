@@ -2,7 +2,7 @@
 
 Single registry of deferred, in-progress, and planned work. Complements the ADRs (which record *decisions*) with a working list of *what to do next*.
 
-**Last updated:** 2026-10-20
+**Last updated:** 2026-10-22
 
 **Priority legend:**
 
@@ -26,45 +26,41 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ## Recently done
 
+### 2026-10-22 — Chain groups, end to end (1.3b, 1.3c, 1.3c.1, 1.3d, 1.3e)
+
+The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 lethal-trifecta enrichment.
+
+- **1.3a.1** — writer-side edges (`writes_to`, control/unknown). 1.3a built `source → reader`; 1.3a.1 added `writer → source`. Zero on the four corpora without a writer; the mechanism is in place.
+- **1.3a.1.2** — dynamic MCP invocation + literal factory paths. `agent` with `reads_untrusted` on a catalogue gains `uses_tool` to every tool of every server that writes that catalogue; `_SERVER_INTROSPECTORS` literal factory paths anchor the writer.
+- **1.3a.1.3** — project-level literal factory anchor. A server named by any factory-path literal anywhere in the project writes any catalogue read anywhere in the project. FinBot: 15 `writes_to`, 38 `uses_tool`, 1000 groups (cap) / 2920 uncapped.
+- **1.3b** — `find_chain_groups`: write chains (`entry → … → source`) × read chains (`source → … → sink`) around every `untrusted_source`. Pure enumerator, no `chain_groups` writes, no writer→source producer.
+- **1.3c** — `prioritize_chain_groups`: ADR-0012 deterministic scoring (lethal trifecta +5, `executes_*` +4, `writes_filesystem` / `http_egress` / `writes_db` +3, user-writable source +2, user-readable source +1, short chain +1, stale −2), ranking, top-N selection, storage in `chain_groups`. New `ChainGroupsRepository`.
+- **1.3c.1** — ADR-0012 revision: `writes_db` weight +3 (parallel `writes_filesystem`), `min_score_to_evaluate` 5 → 3. FinBot: 1000 groups / 2920 uncapped, 100 selected (score 4, priority low), 100 rows written.
+- **1.3d** — `lethal_trifecta` node attribute (stage 18, last). `True` / `False` on every node; recomputed, not guarded; explicit `False` so absence means "not computed". Zero flagged on the four corpora (honest, mechanism ready). `patterns.lethal_trifecta_caps` is the one definition; the scorer reads the attribute with a capability fallback for pre-1.3d graphs.
+- **1.3e** — `evaluate_chain_groups`: LLM ensemble extension of Phase 3 to chain groups. Prompt v1.5.0 (`GROUP_SYSTEM_PROMPT`, `build_group_prompt`: pair framing, scoring outside `[UNTRUSTED_DATA]` as a hint, `lethal_trifecta` inside). Layer 3 validation (every edge exists, every cited edge in the group's own set, every hop resolved). `chain_groups.verdict` / `confidence` / `reasoning` / `validated` persisted. Report section `## Chain groups (Phase 3)`; `chain_groups.json` in the bundle; `run_eval.py --groups --max-groups`.
+- **Tests:** 905 passed (up from 344 at the start of 1.3).
+- **FinBot (real LLM, `qwen3.6-35b-a3b` in fast role, config outside the repo):** 5 evaluated, 4 validated, 5 not_exploitable, 0 exploitable, ~5 min/group. One group rejected by Layer 3 (edge outside the pair) — the evidence gate firing on genuine model output. Model reasoning: not exploitable because `mcp_tool_description` is user-readable only.
+- **FinBot (mock, 100-group pass):** 100 evaluated, 100 validated, 0.07 s. `_chain_edges` reproduced all 100 chain ids with zero warnings.
+
 ### 2026-10-21 — Untrusted sources, part 1: node kind, capability, stage (1.3a)
 
-The read side of ADR-0010, end-to-end in Phase 1. Chain groups are **not** part of this item; they remain the rest of 1.3.
+The read side of ADR-0010, end-to-end in Phase 1. Chain groups are **not** part of this item; they remained the rest of 1.3 and landed on 2026-10-22.
 
-- **Detector** (`parsing/untrusted_sources.py`): `find_untrusted_source_reads(module)` returns every call site that reads a known untrusted source, with the enclosing function/method and class. Three families, one capability: RAG corpora, MCP tool descriptions, mailbox reads (`patterns.UNTRUSTED_SOURCE_RULES` → `patterns.untrusted_source_match`, one table, one lookup).
-- **Capability `reads_untrusted`** (`capability_extractor`): credited on the **reader** — the function or method whose body makes the call. It reaches the reader's class node through the existing capability fold. It is in `VALID_CAPABILITIES` and in `LETHAL_TRIFECTA_READ_CAPS`, so 1.6 is unblocked on the read side; the combination itself is still not implemented.
-- **Node kind `untrusted_source`** (`graph/models.py`, `schema.sql`, `patterns.NODE_KINDS`): one node per read site per file, `id = sha256(source_type + call_target + source_file)`, `name = "<source_type>:<call_target>"`, attributes `source_type`/`call_target`/`source_file`/`line_start`/`reader_kind`/`reader`/`reader_container`. **Empty capabilities by design** — the source is a place, not an actor; `reads_untrusted` belongs on the component that reads.
-- **Stage `untrusted_sources`** (`normalizer_stages/untrusted_sources.py`, 6 of 15): emits the nodes and one `has_access_to` edge per read to the reader node. Reader precedence is method/tool node → entry point (via its `handler`) → class node; a reader that resolves to no node still emits the source node, with no edge. `flow_kind` is left to `FlowKindStage` (ADR-0015 decision 3); the edge carries `data_flow_confirmed = "call_result_match"` and is therefore `data`.
-- **Placement:** after `entry_points` (a plain route handler has no node of its own — the `entry_point` node is the reader) and before `detector_merge` (the merge's id remap re-points these edges, same rationale as `entry_to_sink`). Order pinned by `tests/test_normalizer_stages/test_stage_order.py` (15 stages).
-- **Tests:** 713 passed. New: `tests/test_untrusted_sources.py` (detector + table consistency), `tests/test_normalizer_stages/test_untrusted_sources.py` (stage shape, reader resolution, idempotency), `tests/test_pipeline.py::test_pipeline_produces_untrusted_source_nodes` (extractor → normalize → write → read, with `flow_kind = data`), a schema case for the new kind, and capability-extractor cases for crediting, the class fold, and the sink/read disjointness.
-- **Scans (fresh, post-implementation):**
-
-  | Target | nodes | edges | chains | data_edges_only |
-  |---|---|---|---|---|
-  | finbot-ctf | 384 | 153 | 647 | 0 |
-  | NMB | 26 | 26 | 16 | 0 |
-  | dvmcp | 33 | 47 | 39 | 24 |
-  | mcploitable | 76 | 46 | 19 | 6 |
-
-- **Delta vs baseline (381/152/647, 26/26/16, 33/47/39, 74/46/19):** FinBot +3 nodes, +1 edge; mcploitable +2 nodes, 0 edges; NMB and dvmcp byte-identical. The additions are exactly the 5 source nodes and the 1 edge that has a resolvable reader; no other node or edge changed, and no `flow_kind` flipped.
-- **Over-match:** 0. Five `list_tools` call sites across FinBot and mcploitable, all genuine tool-catalogue reads (`finbot/mcp/provider.py:71` — the only one with a reader node, `MCPToolProvider`; two FastAPI route helpers; mcploitable `examples/play.py:70` and `tests/test_servers.py:616`). The RAG and mailbox families fire nowhere on the four corpora. The four reads with no resolved reader are plain helper functions or test functions — the pre-existing "no node for a plain function" gap, not a new one.
-
+- **Detector** (`parsing/untrusted_sources.py`): `find_untrusted_source_reads(module)` returns every call site that reads a known untrusted source, with the enclosing function/method and class. Three families, one capability: RAG corpora, MCP tool descriptions, mailbox reads (`patterns.UNTRUSTED_SOURCE_RULES` → `patterns.untrusted_source_match`).
+- **Capability `reads_untrusted`** (`capability_extractor`): credited on the **reader** — the function or method whose body makes the call. In `VALID_CAPABILITIES` and in `LETHAL_TRIFECTA_READ_CAPS`.
+- **Node kind `untrusted_source`** (`graph/models.py`, `schema.sql`, `patterns.NODE_KINDS`): one node per read site per file, `id = sha256(source_type + call_target + source_file)`, `name = "<source_type>:<call_target>"`. **Empty capabilities by design.**
+- **Stage `untrusted_sources`** (`normalizer_stages/untrusted_sources.py`, 6 of 18): emits the nodes and one `has_access_to` edge per read to the reader node. `data_flow_confirmed = "call_result_match"`, therefore `data`.
+- **Placement:** after `entry_points` and before `detector_merge`. Order pinned by `tests/test_normalizer_stages/test_stage_order.py`.
+- **Scans:** FinBot 384/153/647, NMB 26/26/16, dvmcp 33/47/39, mcploitable 76/46/19. Five source nodes, one edge with a resolvable reader.
 
 ### 2026-10-20 — ADR-0015 implementation (backlog item 1.2a)
 
-- **ADR-0015 accepted.** `flow_kind` on every edge (control | data | structural). `data_flow_confirmed` on `has_access_to` (six values). Structural edges (guards) excluded from `find_chains`. `provides_tool` is **control** (access path = attack path until runtime monitoring). `data_edges_only` parameter on `find_chains`. Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
-- **Flow Analyzer** (`parsing/flow_analyzer.py`): name-based argument matching, non-linear ranking, `literal_only` requires all literals.
+- **ADR-0015 accepted.** `flow_kind` on every edge (control | data | structural). `data_flow_confirmed` on `has_access_to` (six values). Structural edges (guards) excluded from `find_chains`. `provides_tool` is **control**. `data_edges_only` parameter on `find_chains`. Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
+- **Flow Analyzer** (`parsing/flow/`): `FlowDecision` (kind, evidence, source), `flow_kind_for`, name-based argument matching, non-linear ranking, `literal_only` requires all literals.
 - **Normalizer:** per-scan module cache; every edge carries `flow_kind`; `id_remap` preserves flow fields.
-- **Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four validation corpora (FinBot, NMB, dvmcp, mcploitable). The generic analyzer finds no direct call from a tool to a sink in these projects — all four are colocation-only. `data_edges_only = 0` everywhere. Two follow-ups recorded as 1.2a.1 and 1.2a.2.
+- **Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four corpora. `data_edges_only = 0` everywhere. Two follow-ups: 1.2a.1 and 1.2a.2 (1.2a.2 done 2026-10-20).
 - **TSA fix:** `tsa_worker.py` pins `uvx --python 3.14` (tree-sitter-analyzer 2.2.0 → cachebox 5.2.3 → PyO3 0.27.1 does not support Python 3.15).
-- **Tests:** 344 passed.
-- **Scans (fresh, post-implementation):**
-
-  | Target | nodes | edges | chains | data_edges_only |
-  |---|---|---|---|---|
-  | finbot-ctf | 283 | 93 | 182 | 0 |
-  | NMB | 26 | 26 | 16 | 0 |
-  | dvmcp | 33 | 47 | 39 | 0 |
-  | mcploitable | 74 | 45 | 17 | 0 |
+- **Tests:** 344 passed at the time; the Flow Analyzer split and the normalizer stage pipeline later raised this to 687 before 1.3.
 
 ### 2026-10-20 — ADR-0015 design and documentation
 
@@ -74,14 +70,14 @@ The read side of ADR-0010, end-to-end in Phase 1. Chain groups are **not** part 
 
 ### 2026-10-14 — TSA investigation (item 1.1)
 
-- **TSA `--structure --format json` provides symbols only.** No call edges, no type information, no argument information. `TSAOutput.call_edges` will never be populated from TSA. Flow-kind determination is our own AST analysis.
+- **TSA `--structure --format json` provides symbols only.** No call edges, no type information, no argument information. `TSAOutput.call_edges` will never be populated from TSA.
 
 ### 2026-10-14 — P0/P2 review fixes (commit 2263fa7)
 
 - `exploitable` must be a real JSON boolean; non-boolean rejected as invalid.
 - Per-judge `temperature`/`max_tokens` overrides honored.
 - Node/edge serialization includes capabilities and precision; evidence validated against the candidate chain.
-- `PROMPT_VERSION` v1.1.0 → v1.2.0; calibration rules for FinBot FP root cause.
+- `PROMPT_VERSION` v1.1.0 → v1.2.0.
 
 ### Earlier
 
@@ -92,8 +88,8 @@ The read side of ADR-0010, end-to-end in Phase 1. Chain groups are **not** part 
 
 ### Deferred from the P0/P2 review
 
-- **Judge determinism.** The judge runs with `temperature=0.6`. Deterministic verdicts require `0.0`. Priority: Low. Configuration choice, not a code default.
-- **Raw voter response persistence.** ADR-0005 asks for provenance; `evaluator.py` drops `raw` before persistence. Decision needed: store or not. Priority: Medium.
+- **Judge determinism.** The judge runs with `temperature=0.6`. Deterministic verdicts require `0.0`. Priority: Low.
+- **Raw voter response persistence.** ADR-0005 asks for provenance; `evaluator.py` drops `raw` before persistence. Priority: Medium.
 
 ---
 
@@ -122,34 +118,30 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 **Priority:** High
 **Status:** **Done** (2026-10-20) — code in place, tests green, scans run.
-**Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four corpora. `data_edges_only = 0`. Follow-ups: 1.2a.1 and 1.2a.2.
+**Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four corpora. `data_edges_only = 0`. Follow-ups: 1.2a.1 and 1.2a.2 (1.2a.2 done).
 
 ### 1.2a.1 — Analyzer asks the right question
 
 **Priority:** High
 **Status:** Not started
 **Rationale:** The generic Flow Analyzer asks "does this tool call a function named like the sink?" On real code, the sink node is the **definition** of the dangerous operation, not a call site. The interesting question for FinBot-style layouts is: "how does data reach the dangerous call **inside the sink method's own body**?" (`delete_file(file_id)` → `self.db.delete(f)` → `parameter_match`).
-**Approach:** Add a second analyzer pass that inspects the body of each sink function and asks whether tool arguments reach the dangerous call inside it. Keep the existing `has_access_to` analyzer as-is (it correctly reports "no direct call" for colocation layouts).
+**Approach:** Add a second analyzer pass that inspects the body of each sink function and asks whether tool arguments reach the dangerous call inside it. Keep the existing `has_access_to` analyzer as-is.
 **References:** Step 6 report; ADR-0015 Deferred.
 
 ### 1.2a.2 — Detector enrichment of `data_flow_confirmed`
 
 **Priority:** High
 **Status:** **Done** (2026-10-20)
-**Result:** `enrichment.py` with three pure helpers. LangChain: `uses_tool` → `parameter_match` if the tool is named in the system prompt; `uses_model` → `literal_only` / `parameter_match` / `unknown`. FastMCP and MCP Python: `tool_data_flow` on tool nodes (`parameter_match` / `no_args`). Normalizer copies `tool_data_flow` at two waived sites (`provides_tool` loop, `_link_mcp_entries_to_tools`). Shape unchanged on all four corpora. Prompt version stays v1.4.1.
-**Results:** dvmcp `data_edges_only` 0 → 24; mcploitable 0 → 6; NMB 0 (uses_model enriched but not on a path); FinBot 0 (path-heuristic servers, no `framework` attribute; `provides_tool` site wired but dormant, unit-tested). **Step 6 caveat closed**: `data_edges_only > 0` for the first time on a real corpus.
-**Gaps (follow-ups):**
-- FinBot: `_node_from_method` / `_body_attributes` would need to set `tool_data_flow` → new item 1.2a.2a.
-- NMB `uses_tool`: `cross_file.py` resolver does not read the system prompt → new item 1.2a.2b.
-- LangChain `Tool(...)` instances: no function node, no signature.
-- Latent upsert hazard: an explicit `"unknown"` overwrites an enriched `"data"`; no duplicate ids today → new item 1.2a.2c if needed.
+**Result:** `enrichment.py` with three pure helpers. LangChain: `uses_tool` → `parameter_match` if the tool is named in the system prompt; `uses_model` → `literal_only` / `parameter_match` / `unknown`. FastMCP and MCP Python: `tool_data_flow` on tool nodes. Normalizer copies `tool_data_flow` at two waived sites.
+**Results:** dvmcp `data_edges_only` 0 → 24; mcploitable 0 → 6. **Step 6 caveat closed.**
+**Gaps (follow-ups):** 1.2a.2a, 1.2a.2b, 1.2a.2c.
 
 ### 1.2a.2a — FinBot-style MCP tool enrichment
 
 **Priority:** Medium
 **Status:** Not started
-**Rationale:** FinBot's MCP servers are path-heuristic (no `framework` attribute) and tool nodes are normalizer-created from TSA symbols. `tool_data_flow` never reaches them, so the `provides_tool` enrichment site is dormant. Closing the gap requires normalizer-side enrichment of tool nodes.
-**Approach:** In `_node_from_method` (or `_body_attributes`), set `tool_data_flow` on normalizer-created tool nodes by analysing the TSA method body (`os.remove(param)` etc.). Reuses the same rules as the detector enrichment.
+**Rationale:** FinBot's MCP servers are path-heuristic (no `framework` attribute); `tool_data_flow` never reaches them. The `provides_tool` enrichment site is wired but dormant.
+**Approach:** In `_node_from_method` (or `_body_attributes`), set `tool_data_flow` on normalizer-created tool nodes by analysing the TSA method body. Reuses the detector enrichment rules.
 **References:** 1.2a.2 report, gap 1.
 
 ### 1.2a.2b — Cross-file `uses_tool` enrichment
@@ -157,165 +149,152 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Priority:** Low
 **Status:** Not started
 **Rationale:** NMB's 9 `uses_tool` edges are built by `cross_file.py` (import-driven) and never read the system prompt, so they stay `control/unknown`.
-**Approach:** Extend `resolve_agent_tool_edges` to read the agent's system prompt from the same file and enrich per tool named there. Same helper as LangChain.
+**Approach:** Extend `resolve_agent_tool_edges` to read the agent's system prompt from the same file and enrich per tool named there.
 **References:** 1.2a.2 report, gap 2.
 
 ### 1.2a.2c — Upsert enrichment precedence
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** `EdgesRepository.upsert` lets a later explicit `"unknown"` overwrite an enriched `data_flow_confirmed` (only `NULL` falls back). `flow_kind` is safe (`data` wins). No duplicate edge ids today, but the hazard is latent.
-**Approach:** Change `upsert` to prefer non-`"unknown"` over `"unknown"` on `data_flow_confirmed`, mirroring the `flow_kind` rule. Verify against the four corpora for shape stability.
+**Rationale:** `EdgesRepository.upsert` lets a later explicit `"unknown"` overwrite an enriched `data_flow_confirmed`. `flow_kind` is safe (`data` wins).
+**Approach:** Change `upsert` to prefer non-`"unknown"` over `"unknown"` on `data_flow_confirmed`, mirroring the `flow_kind` rule.
 **References:** 1.2a.2 report, gap 5.
 
 ### 1.2a.3 — ORM call sites in capability patterns
 
 **Priority:** High
-**Status:** Not started
-**Rationale:** On FinBot, 7 of 8 sink nodes are `unknown` because they use ORM session calls (`self.db.delete(f)`, `self.db.commit()`, `session.add(...)`, `repo.*`) that are not in `CAPABILITY_WRITES_DB`. Same root cause as the Step 6 `unknown` — one level deeper. Adding these call sites to the capability patterns lets the sink analyzer fire on the common ORM layout.
-**Approach:** Extend `patterns.CAPABILITY_WRITES_DB` (and `CAPABILITY_READS_DB` where relevant) with the ORM patterns: `*.db.delete`, `*.db.add`, `*.db.commit`, `*.session.delete`, `*.session.add`, `*.session.commit`, `*.session.query`. Keep the list narrow (well-known ORM method names) so the false-positive rate stays controlled (ADR-0009).
-**References:** Step 7 report, limitation 1.
+**Status:** **Done** — covered by 1.2a.3b/c/e/f/g (see below).
 
 ### 1.2a.4 — Constant collection rule
 
 **Priority:** Medium
-**Status:** Not started
-**Rationale:** `subprocess.run(["docker", "info"])` classifies as `unknown`, not `literal_only`, because `_classify_argument` only treats `ast.Constant` as a literal. Constant collections (`ast.List`, `ast.Tuple`, `ast.Dict`, `ast.Set` whose elements are all constants) are equivalent to literals for the sink analyzer. FinBot's `check_docker` and `check_redis` are in this class.
-**Approach:** In `_classify_argument`, treat a collection whose elements are all constants as `literal_only`. Nested collections recurse. Empty collections count as literal.
-**References:** Step 7 report, limitation 2.
+**Status:** **Done** (2026-10-20) — see 1.2a.3g for the composite classifier; the constant-collection case is part of the same change.
 
 ### 1.2a.5 — Class-body sink analyzer
 
 **Priority:** Medium
 **Status:** **Done** (2026-10-20)
-**Result:** `analyze_sink_class` inspects every direct method of the class plus class-level statements (nested classes excluded; nested functions inside methods count). Class sink = container of callable entry points; the dangerous call receives the caller's data in the method the caller invokes, not in `__init__`.
-**Results:** FinBot `sink_data_flow` 81/2/31 → 101/2/11 (20 of 21 class sinks → `parameter_match`). dvmcp 4/4/4 → 6/4/2. mcploitable 4/1/3 → 5/1/2. NMB unchanged (no class sinks). Shape untouched everywhere; function-kind sinks unchanged.
-**Remaining `unknown` on FinBot (11):** `VulnerableChatAssistant` (f-string/dict arguments, ADR-0001 name-based limits → 1.2a.3g); `TestLabsGuardrailConfigRepository` (no-argument `delete_config`, 1.2a.3c rule); class nodes with no dangerous call in any method or at class level.
+**Result:** `analyze_sink_class` inspects every direct method plus class-level statements. FinBot `sink_data_flow` 81/2/31 → 101/2/11. dvmcp 4/4/4 → 6/4/2. mcploitable 4/1/3 → 5/1/2.
 
 ### 1.2a.3b — repo.<verb>_<noun> handling
 
 **Priority:** Medium
-**Status:** **Done** (2026-10-20)
-**Result:** Option B (trailing-* verb families). `_matches_any` recognises patterns ending in `*`; `_matches_prefix` requires the qualifier segment to match exactly and the trailing segment to start with the verb. FinBot: 10 new sink nodes, 41 new chains (all pre-existing 605 preserved), sink_data_flow 35/65/2 → 43/69/2. NMB/dvmcp/mcploitable unchanged. Over-match measured as 0 in all four corpora.
-**Deferred:** a word-boundary variant of `_matches_prefix` (rejects `repo.getter` while accepting `repo.get_file`) is a one-line change if a real over-match appears. Mid-pattern stars (`repo.*_file`) are not supported.
+**Status:** **Done** (2026-10-20) — see the previous report for numbers.
 
 ### 1.2a.3c — db.commit()-only sinks
 
 **Priority:** Medium
-**Status:** **Done** (2026-10-20)
-**Result:** A bare `db.commit()` / `session.commit()` / `repo.commit()` / `conn.commit()` in a sink body is `parameter_match`. Exception lives in `analyze_sink_body`, not in `_dangerous_calls`. `ORM_COMMIT_CALLS` in `patterns.py` (not merged into `CAPABILITY_ORM_WRITES_DB`). Edge case: parameterless sink with commit-only body stays `unknown`.
-**FinBot:** 43/69/2 → 81/31/2 (38 sinks changed, all `unknown → parameter_match`, 0 shape change). NMB/dvmcp/mcploitable unchanged.
-**Follow-ups:** 1.2a.3e (leading-underscore qualifier), 1.2a.3f (function resolution by `(name, line_start)`), 1.2a.3g (attribute-based dangerous calls). Class-kind sinks are 1.2a.5.
+**Status:** **Done** (2026-10-20) — see the previous report for numbers.
 
 ### 1.2a.3d — Test-file sinks
 
 **Priority:** Low
-**Status:** **Done** (2026-10-20)
-**Result:** Voter, solo, and judge system prompts note that test-file nodes are not production entry points. `PROMPT_VERSION` v1.4.1. No new attributes, no discovery change; the LLM uses `source_file` in node attributes.
-**Rationale:** 22 of FinBot's 114 sinks come from `tests/`. Excluding tests would hide real test-file vulnerabilities; a prompt note lets the LLM discount them without losing signal.
+**Status:** **Done** (2026-10-20) — prompt note in voter, solo, judge.
 
 ### 1.2a.3e — Leading-underscore qualifier normalization
 
 **Priority:** Medium
-**Status:** **Done** (2026-10-20)
-**Rationale:** `_conn.commit()`, `_db.commit()`, `_session.commit()`, `_repo.get()` — leading underscore defeats exact-qualifier matching. mcploitable uses `_conn.commit()` throughout and shows no delta on 1.2a.3c because of it. Also `cur.execute(...)` vs `cursor.execute(...)` (abbreviated qualifier).
-**Approach:** Normalize a leading `_` off the qualifier segment inside `_matches_prefix` / `_matches_any`. Touches capability extraction, so it must be verified against all four corpora for over-match. Optionally add `cur.execute` / `cur.executemany` / `cur.fetchone` / `cur.fetchall` to the DB statement call patterns.
-**References:** 1.2a.3c report, finding 1.
+**Status:** **Done** (2026-10-20) — qualifier segments strip leading underscores; `cur.execute` / `cur.executemany` added.
 
 ### 1.2a.3f — Function resolution by (name, line_start)
 
 **Priority:** Low
-**Status:** **Done** (2026-10-20)
-**Result:** `_index_functions` / `_index_classes` keyed by `(name, line_start)`, every definition kept. `_body_attributes` resolves to the definition containing the node's `line_start` (exact, then containing, then closest preceding, then name fallback). Detector nodes (`line_start = None`) take the name fallback, preserving old behaviour. Edge loop uses the same resolver; verified edge-neutral.
-**Results:** FinBot 101/2/11 → 100/2/12. One sink changed: `toggle_enabled` @ `:1426` was reading the `:664` body (`parameter_match` artifact), now reads its own parameterless commit-only body (`unknown`, per 1.2a.3c). NMB/dvmcp/mcploitable unchanged.
-**Not taken:** "closest following" rule — never fires on the four corpora; defensive only.
+**Status:** **Done** (2026-10-20) — `_index_functions` / `_index_classes` keyed by `(name, line_start)`.
 
 ### 1.2a.3g — Attribute, f-string, and composite argument classification
 
 **Priority:** Medium
-**Status:** **Done** (2026-10-20)
-**Result:** `_classify_argument` now recognises: `self.X` assigned from a parameter or local in the same body (fixpoint), f-strings with a parameter-derived component, and Dict/List/Tuple/Set with a parameter-derived element. Composite returns the component's own kind (`local_var_match`, `parameter_match`, ...); the sink analyzer collapses to `parameter_match`. Mixed collections are now `parameter_match` (was `unknown`) — a deliberate loosening of ADR-0015, documented in-code: the body under analysis built the collection and the parameter is inside the value. Unresolved parts still block promotion.
-**Results:** dvmcp 6/4/2 → 8/4/0; mcploitable 5/1/2 → 6/1/1; FinBot, NMB unchanged (FinBot has zero `self.X` attribute hits in sink bodies, measured). Shape unchanged on all four.
-**Decision 8 (not flipped):** an f-string with only a local (literal-derived) interpolation returns `local_var_match`, consistent with `os.remove(local)`. Parameter-only would be an arbitrary cutoff.
-**Deferred:** `param.attr` (`file_data.filename`, `session_context.current_user.id`) is still `unknown`. The 5 arguments in FinBot `create_vendor_file` are the visible false-negative family. New item 1.2a.3j.
+**Status:** **Done** (2026-10-20) — see the previous report.
 
 ### 1.2a.3h — Cursor fetch reads
 
 **Priority:** Low
-**Status:** **Done** (2026-10-20)
-**Result:** `cur.fetchone` / `fetchall` / `fetchmany` and `cursor.*` added to `CAPABILITY_ORM_READS_DB`. Fetch-only bodies are not sinks (`reads_db` is not in `SINK_CAPABILITIES`); a sink with `execute('INSERT ...')` + `fetchall()` now carries both capabilities.
-**Results:** dvmcp 7 → 11 `reads_db` nodes; mcploitable 3 → 4. FinBot, NMB unchanged. Over-match 0 (19 genuine call sites, 0 false positives).
-**Not taken:** `c.fetchall()` (NMB single-letter qualifier — too broad); chained calls (`connection.execute(...).fetchone()`, receiver is a Call — out of scope).
+**Status:** **Done** (2026-10-20) — `cur.fetchone` / `fetchall` / `fetchmany` and `cursor.*` in `CAPABILITY_ORM_READS_DB`.
 
 ### 1.2a.3i — Adapter attribute capability patterns
 
 **Priority:** Low
-**Status:** **Done** (2026-10-20)
-**Result:** Two-segment adapter patterns added: `CAPABILITY_EXECUTES_CODE` (`shell.run`, `adapter.execute`, `adapter.spawn`, ...), `CAPABILITY_HTTP_EGRESS` (`client.post`, `client.put`, `client.patch`, `client.delete`, `adapter.post`, `session.post`, `session.request`, ...), `CAPABILITY_CALLS_LLM` (`llm.invoke`, `llm.chat`, `llm.complete`, `llm.generate`, `model.invoke`, `model.chat`, `model.complete`). Bare verbs, `self.run` / `self.post` not added. `client.get` deliberately not added (GET is a read; `requests.get` / `httpx.get` cover the idiom; pinned in 3 tests). Shell adapters not put in `CAPABILITY_EXECUTES_SHELL_EXPLICIT` (shell semantics unknowable; `executes_code` already sink).
-**Results:** FinBot 379/151/646 → 381/152/647, `sink_data_flow` 101/2/11 → 104/2/11 (`GuardrailHookService`, `invoke`, `push_event`). NMB / dvmcp / mcploitable unchanged. Over-match 0 (2 `client.post` call sites, both true positives). Kind flip `GuardrailHookService`: `guardrail → sink` (ADR-0009 capability override; body POSTs to webhook; `guards` edge emission is 1.2a.5x).
+**Status:** **Done** (2026-10-20) — `client.post`, `llm.invoke`, `adapter.execute`, etc. `client.get` deliberately not added.
 
 ### 1.2a.3j — Parameter attribute arguments
 
 **Priority:** Medium
-**Status:** **Done** (2026-10-20)
-**Result:** `param.X` and `local.X` (attribute on a parameter or body-local) → `parameter_match`, any depth as long as the base name is a parameter or local. Module-level base (`obj.X`) stays `unknown`. `local.X` is `parameter_match` (consistent with `self.q = <local>` from 1.2a.3g; value-blind over-approximation for literal-derived locals, ADR-0001). Opt-in gate `parameter_attributes=False` by default; only `analyze_sink_body` opts in — `_classify_argument` is shared with the edge analyzer, and the ungated variant would change edge values. Measured ungated: byte-identical on all four corpora today, so the gate costs nothing empirically.
-**Results:** FinBot 100/2/12 → 101/2/11 (`create_vendor_file` 5 args → `parameter_match`). mcploitable 6/1/1 → 7/1/0 (`main`: `open(args.log, 'w')` with `args` from `ap.parse_args()`). NMB, dvmcp unchanged. Over-match 0 (12 args newly classified, 0 module-level base).
-**Not taken:** `self.q.name` (base is `self`, not the derived attribute — third-level indirection); `fetch().path` (base is a Call — no call tracking, ADR-0001).
+**Status:** **Done** (2026-10-20) — `param.X` / `local.X` → `parameter_match`. Opt-in gate `parameter_attributes=False` by default; only `analyze_sink_body` opts in.
 
 ### 1.2a.3k — Dev script discovery
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** `scripts/test_websocket.py` (FinBot) contributes a sink `push_event` and a chain edge. This is not a false positive — the script really does POST — but it is low-value noise from a non-production directory. 1.2a.3d covers `tests/` via a prompt note; `scripts/` is not test, but dev tooling.
-**Approach:** Either an `is_dev_code: true` node attribute (mirroring the test-file note) or a discovery exclusion for `scripts/`. The attribute is the softer option; the exclusion is cleaner if scripts are never production. Decide on the corpus evidence.
-**References:** 1.2a.3i report, review item 3.
+**Rationale:** `scripts/test_websocket.py` (FinBot) contributes a sink `push_event` and a chain edge — low-value noise.
+**Approach:** `is_dev_code: true` node attribute, or discovery exclusion for `scripts/`.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
 **Priority:** High
-**Status:** **Partially unblocked.** The read side of `reads_untrusted` landed in 1.3a (2026-10-21): the capability, the `untrusted_source` node kind, and the detector + normalizer stage. The chain-group half (write side, `find_chain_groups`, prioritization) is not started, and 1.2a.1/1.2a.2 remain open for real `data` edges.
-**Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Non-linear chains (chain groups, ADR-0010) require untrusted sources.
-**References:** ADR-0009, ADR-0010, ADR-0012.
+**Status:** **Done** (2026-10-22). The whole chain-group half landed: 1.3a (read side), 1.3a.1/1.3a.1.2/1.3a.1.3 (write side + dynamic invocation), 1.3b (enumerator), 1.3c/1.3c.1 (prioritization), 1.3d (lethal trifecta attribute), 1.3e (LLM evaluation).
+**Result:** FinBot: 1000 groups (cap) / 2920 uncapped, 100 selected (score 4, priority low), 5 evaluated by real LLM (4 validated, 5 not exploitable), 100 evaluated by mock (100 validated). Report section renders. `data_edges_only` still 0 — 1.2a.1 is the missing half for real `data` edges.
+**Follow-ups:** 1.3c.2 (any-node semantics), 1.3d.1 (corpus with lethal-trifecta node), 1.3e.1 (provenance columns), 1.3e.2 (linear prompt v1.6.0).
 
 ### 1.3a — Architecture and data-model review
 
 **Priority:** High
-**Status:** Blocked by 1.3
-**Rationale:** Introducing capability-based taint and non-linear chains changes the data model further (taint sources, chain groups table usage).
-**Deliverables:** Data-model review, Python model review, query layer review, normalizer review, prompt contract review, ADR updates, C4 updates, test plan.
+**Status:** Not started. Its original scope (data-model review for taint sources) was absorbed by the incremental 1.3a/1.3a.1/1.3b design passes; revisit if a structural change to `chain_groups` or `untrusted_source` is needed.
 
 ### 1.3c.2 — Any-node semantics for impact sink capabilities
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** `_score_read_sinks` walks only the last node of a read chain; `_score_read_writes_db` credits any node. The three impact rows are inconsistent. On FinBot the inconsistency is invisible (0 mid-chain hits across 2920 groups), but the code paths differ and the ADR's "reading chain reaches" wording is ambiguous.
-**Approach:** Either widen `dangerous_sink` / `exfil_or_write` to any-node (matches `writes_db`), or narrow `writes_db` to terminal-only (matches the other two). Prefer widening: a dangerous call mid-chain is still dangerous. No-op on the four corpora; correctness fix. Also clarify the ADR-0012 table wording.
+**Rationale:** `_score_read_sinks` walks only the last node of a read chain; `_score_read_writes_db` credits any node. Inconsistent on paper; no-op on the four corpora (0 mid-chain hits across 2920 FinBot groups).
+**Approach:** Widen `dangerous_sink` / `exfil_or_write` to any-node, or narrow `writes_db` to terminal-only. Prefer widening. Clarify the ADR-0012 table wording.
 **References:** 1.3c.1 report, §4.
 
 ### 1.3d.1 — Corpus with lethal-trifecta node
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** The `lethal_trifecta` attribute is `False` on all four validation corpora; the scorer's attribute path is exercised by unit tests only. A corpus with a node that carries `reads_untrusted` + secrets + egress would distinguish "read the flag" from "walk the capabilities" end to end.
-**Approach:** Find or build a target where one node (e.g. a RAG retriever with secrets and an outbound HTTP client) satisfies the combination. Run 1.3c.1 + 1.3d on it; confirm the +5 fires from the attribute, not the fallback.
-**References:** 1.3d report, observation.
+**Rationale:** The `lethal_trifecta` attribute is `False` on all four corpora; the scorer's attribute path is exercised by unit tests only. A corpus with a node that carries `reads_untrusted` + secrets + egress would distinguish the attribute path from the fallback end to end.
+**Approach:** Find or build a target where one node satisfies the combination. Confirm the +5 fires from the attribute, not the fallback.
+**References:** 1.3d report.
+
+### 1.3e.1 — Chain group evaluation follow-ups
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** 1.3e landed the evaluator, prompt v1.5.0, Layer 3 validation, report section, and storage. Five small gaps surfaced; none blocks usage.
+**Sub-items:**
+
+1. **`chain_groups.prompt_version` column.** A group verdict cannot be traced to prompt v1.5.0 in storage, unlike `chains.prompt_version`. Schema change; DB recreated per scan, no migration.
+2. **`chain_groups.voter_outputs` column.** Per-voter provenance is logged, not stored. Schema change.
+3. **`chain_groups.lethal_trifecta` writer.** 1.3d writes the per-node attribute; nothing projects it onto the group row. One line in `_evaluate_one_group`: `group.lethal_trifecta = any(read_chain_node.attributes.get("lethal_trifecta"))`. No schema change.
+4. **Group `name` disambiguation.** `f"{source_name}:{w}x{r}"` collides for groups on the same source with the same hop counts. Append a short id suffix.
+5. **Pre-1.3d graph fallback for the prompt flag.** `_lethal_trifecta_flag` falls back to `patterns.lethal_trifecta_caps(node.capabilities) != ()` when the attribute is absent.
+
+**References:** 1.3e report, "Flagged, not fixed".
+
+### 1.3e.2 — Linear-chain prompt v1.6.0 (open question)
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** The group prompt (v1.5.0) and the linear prompt (v1.4.1) diverge. The group prompt frames our scoring as "a hint, not evidence"; the linear prompt does not. If the linear prompt gains a scoring section, the divergence is fine; otherwise two prompts encode two different instruction sets.
+**Approach:** Compare line by line; either lift the group's "OUR SCORING" framing into the linear prompt (v1.6.0) or document the divergence.
+**References:** 1.3e report, decision 2.
 
 ### 1.4 — Prompt engineering: grounded evaluation
 
 **Priority:** High
-**Status:** **Partially done** (P0/P2 v1.2.0 calibration; v1.3.0 flow_kind instructions). Full version blocked by 1.3a.
+**Status:** **Partially done** (P0/P2 v1.2.0 calibration; v1.3.0 flow_kind instructions; v1.5.0 group prompt). Full version blocked by 1.2a.1.
 **Remaining:** `uncertain` verdict with concrete criteria; explicit production-vs-test entry point distinction; prompt regression tests.
 
 ### 1.5 — Graph densification
 
 **Priority:** Medium
-**Status:** Deferred until 1.2a.1, 1.2a.2, and 1.3 design are in place.
+**Status:** Deferred until 1.2a.1 and 1.3 are in place.
 **Rationale:** The graph is sparse (FinBot: 283 nodes, 93 edges — ratio 0.33). Adding call-graph edges without taint would worsen false positives.
 
 ### 1.6 — Lethal trifecta detection
 
 **Priority:** High
-**Status:** Not started. Its input on the read side now exists (`reads_untrusted`, 1.3a, 2026-10-21); the combination code and the node-level flag do not.
+**Status:** **Done** (1.3d, 2026-10-22) — node attribute `lethal_trifecta`. Zero flagged on the four corpora; mechanism ready. 1.3d.1 is the corpus unblocker.
 
 ---
 
@@ -325,20 +304,19 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** `has_access_to` (tool → sink) is built only within a single file. In mcploitable and dvmcp, sink nodes with no incoming edges exist because tools that reach them live in other files.
-**Approach:** Extend the call graph to span imports. Populate `flow_kind` and `data_flow_confirmed` on the resulting edges (ADR-0015).
+**Rationale:** `has_access_to` (tool → sink) is built only within a single file.
+**Approach:** Extend the call graph to span imports. Populate `flow_kind` and `data_flow_confirmed`.
 
 ### `openai_agents.py` detector
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Last detector in ADR-0011 implementation order. The OpenAI Agents SDK is a rising framework; targets using it currently produce an empty graph.
+**Rationale:** Last detector in ADR-0011 implementation order.
 
 ### TSAOutput cleanup
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** `TSAOutput.call_edges` and `TSAOutput.precision` are unused and will never be populated from TSA.
 
 ### Additional TSA modules for non-Python languages
 
@@ -362,17 +340,17 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### Chain groups (ADR-0010)
 
 **Priority:** High
-**Status:** Not started. Goes with 1.3.
+**Status:** **Done** (1.3b + 1.3e, 2026-10-22). `find_chain_groups` enumerator; `evaluate_chain_groups` LLM evaluation with Layer 3 validation; `chain_groups` rows carry verdict/confidence/reasoning/validated; report section `## Chain groups (Phase 3)`.
 
 ### Chain group prioritization (ADR-0012)
 
 **Priority:** High
-**Status:** Not started. Goes with chain groups.
+**Status:** **Done** (1.3c + 1.3c.1, 2026-10-22). Deterministic scoring, ranking, top-N, storage. FinBot: 1000 groups / 2920 uncapped, 100 selected.
 
 ### `reads_untrusted` capability
 
 **Priority:** High
-**Status:** **Done** (1.3a, 2026-10-21) — credited on the reader from three rule families; in `VALID_CAPABILITIES` and `LETHAL_TRIFECTA_READ_CAPS`. The lethal-trifecta combination itself is 1.6.
+**Status:** **Done** (1.3a, 2026-10-21).
 
 ### Dynamic chain selection
 
@@ -391,7 +369,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `guards` edge emission
 
 **Priority:** High
-**Status:** Partially done (node kind only). When emitted, the edge carries `flow_kind = "structural"`.
+**Status:** Partially done (node kind only). Edge carries `flow_kind = "structural"`.
 
 ### Guardrail attributes
 
@@ -415,17 +393,22 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `untrusted_source` node kind
 
 **Priority:** High
-**Status:** **Done** (1.3a, 2026-10-21) — one node per read site per file, empty capabilities by design, `has_access_to` edge to the reader. The write side and chain groups are not part of this.
+**Status:** **Done** (1.3a, 2026-10-21).
 
 ### Untrusted source detection
 
 **Priority:** High
-**Status:** **Done** (1.3a, 2026-10-21) — `parsing/untrusted_sources.py` over `patterns.UNTRUSTED_SOURCE_RULES`; stage 6 of 15. Deliberately not a source in 1.3a: web scrapes (already `http_egress`), user uploads (no call shape), `session.list_tools` (ORM overlap).
+**Status:** **Done** (1.3a, 2026-10-21).
 
 ### `find_chain_groups` operation
 
 **Priority:** High
-**Status:** Not started. Next in 1.3 — needs a writer side for the source nodes, which 1.3a does not build.
+**Status:** **Done** (1.3b, 2026-10-22). Enumerator live; 1000 groups on FinBot (cap) / 2920 uncapped. Non-linear chains through an untrusted source.
+
+### `writes_to` writer edges
+
+**Priority:** High
+**Status:** **Done** (1.3a.1 + 1.3a.1.2 + 1.3a.1.3, 2026-10-22). `writes_to` edge kind; three anchors (parent_server, same file, same directory, literal factory path); project-level literal widening. FinBot: 15 `writes_to`, 38 `uses_tool`.
 
 ---
 
