@@ -415,3 +415,61 @@ def test_pipeline_produces_untrusted_source_nodes(
         assert [e.target_id for e in store.edges.list(
             source_id=catalogue.id
         )] == [n.id for n in entry if n.name == "GET /tools"]
+
+
+def test_pipeline_finds_no_chain_groups_yet(
+    untrusted_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """1.3b: the enumerator runs end to end and finds nothing, for two
+    recorded reasons — neither of which is papered over here.
+
+    1. **No write side exists.** 1.3a emits `source → reader` only;
+       nothing emits `writer → source`, so no source node has an
+       incoming edge and `_write_chains_to` has nothing to walk. That
+       is 1.3a.1, and it is a *detection* question (which source node
+       does a writer write into?), not an enumeration one.
+    2. **No read side reaches a sink.** The corpus read lands on
+       `get_documents`, a tool with no capabilities, and the catalogue
+       read lands on an entry point; the project has no sink at all, so
+       no read chain terminates.
+
+    The assertions below pin both absences explicitly, so this test
+    fails the moment either side appears: it is a statement about the
+    graph, not a tolerance of zero. Do not add a write side to
+    `UNTRUSTED_FILES` to make this green — a fabricated writer would
+    test the fixture, not the pipeline.
+    """
+    target = ingest(untrusted_target, kind="folder")
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    delta = normalize(
+        make_context(manifest, tsa, ep, llm, capabilities=capabilities)
+    )
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        sources = store.nodes.list(kind="untrusted_source")
+        assert len(sources) == 2
+
+        # The read side is real: both sources have an outgoing edge.
+        for source in sources:
+            assert store.edges.list(source_id=source.id)
+
+        # The write side is absent: no edge ends at a source.
+        for source in sources:
+            assert store.edges.list(target_id=source.id) == []
+
+        # And no sink exists anywhere for a read chain to reach.
+        assert store.nodes.list(kind="sink") == []
+        assert store.query.find_chains() == []
+
+        assert store.query.find_chain_groups() == []

@@ -10,7 +10,7 @@ from .models import (
     TaskCounter,
     utcnow,
 )
-from .query import CandidateChain, GraphSlice, QueryLayer
+from .query import CandidateChain, ChainGroup, GraphSlice, QueryLayer
 from .store import GraphStore
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "TaskCounter",
     "utcnow",
     "CandidateChain",
+    "ChainGroup",
     "GraphSlice",
     "QueryLayer",
 ]

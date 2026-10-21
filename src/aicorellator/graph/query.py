@@ -5,15 +5,18 @@ multiple repositories. Analysis and Reporting go through it;
 they do not issue raw SQL.
 
 Key methods:
-  find_chains      — Layer 1 deterministic enumeration (ADR-0006)
-  validate_edges   — Layer 3 deterministic validation (ADR-0006)
-  get_neighbors    — graph traversal for a single node
-  get_subgraph     — slice by kind
+  find_chains       — Layer 1 deterministic enumeration (ADR-0006)
+  find_chain_groups — Layer 1 enumeration of groups through an
+                      untrusted source (ADR-0010, 1.3b)
+  validate_edges    — Layer 3 deterministic validation (ADR-0006)
+  get_neighbors     — graph traversal for a single node
+  get_subgraph      — slice by kind
 
 find_chains traverses control and data flow only. Structural edges
 (`guards`) are declarations, not paths, and are skipped (ADR-0015,
 decision 5). `provides_tool` is control: the access path is the
-candidate attack path.
+candidate attack path. `find_chain_groups` traverses the same kinds,
+for the same reason.
 """
 
 from __future__ import annotations
@@ -52,6 +55,50 @@ class CandidateChain:
             "nodes": self.nodes,
             "edges": self.edges,
             "length": self.length,
+        }
+
+
+@dataclass
+class ChainGroup:
+    """Chains that meet through one untrusted source (ADR-0010, 1.3b).
+
+    A group is an *anchor* — the `untrusted_source` node — plus the
+    paths that write into it and the paths that read from it. Neither
+    side is dangerous alone; together they are indirect prompt
+    injection (ADR-0010). Minimum viable group: one write chain and one
+    read chain (ADR-0012), which is what `find_chain_groups` emits
+    today — pairs only, `max_chain_group_size = 2` hard-coded until
+    1.3c makes it configurable.
+
+    `write_chain_ids[i]` is the id of `write_chains[i]`, and the same
+    for reads: the ids are recomputable from the node sequence with the
+    same function that names `find_chains` results
+    (`QueryLayer._chain_id`), so a group is auditable without the
+    matching `CandidateChain`.
+
+    Produced by `find_chain_groups`. Not stored: the `chain_groups`
+    table carries evaluation results (`verdict`, `score`,
+    `lethal_trifecta`) that belong to 1.3c-1.3e, and half-filled rows
+    would need a migration to finish (1.3b deliberately writes nothing).
+    """
+
+    group_id: str
+    untrusted_source_id: str
+    untrusted_source_name: str
+    write_chain_ids: list[str]
+    read_chain_ids: list[str]
+    write_chains: list[list[str]] = field(default_factory=list)
+    read_chains: list[list[str]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "untrusted_source_id": self.untrusted_source_id,
+            "untrusted_source_name": self.untrusted_source_name,
+            "write_chain_ids": self.write_chain_ids,
+            "read_chain_ids": self.read_chain_ids,
+            "write_chains": self.write_chains,
+            "read_chains": self.read_chains,
         }
 
 
@@ -361,6 +408,319 @@ class QueryLayer:
         )
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         return f"chain:{digest[:16]}"
+
+    # --------------------------------------------------------
+    # find_chain_groups — Layer 1 enumeration of groups (ADR-0010)
+    # --------------------------------------------------------
+
+    def find_chain_groups(
+        self,
+        max_hops: int = 6,
+        max_write_chains_per_source: int = 100,
+        max_read_chains_per_source: int = 100,
+        max_groups: int = 1000,
+    ) -> list[ChainGroup]:
+        """Enumerate write/read chain pairs around each untrusted source.
+
+        Direct attacks are linear (`find_chains`). Indirect prompt
+        injection is not: one path **writes** attacker content into an
+        untrusted channel and another **reads** it on its way to a sink.
+        Neither path is dangerous alone (ADR-0010). So the enumeration
+        is anchored on the channel — every active `untrusted_source`
+        node — and pairs
+
+            write chains   entry_point → ... → S      (paths into S)
+            read chains    S → reader → ... → sink    (paths out of S)
+
+        into one group per (source, write, read) triple. Pairs only:
+        `max_chain_group_size` is 2, hard-coded until 1.3c makes it
+        configurable, because a pair is the canonical shape (ADR-0012)
+        and larger groups are where the combinatorics bite.
+
+        S is an **anchor, not a hop**. A write chain ends at S and a
+        read chain starts at S; the visited-set rule that keeps a path
+        acyclic also keeps either side from passing *through* S, which
+        would double-count the channel. The first hop of every read
+        chain is the `source → reader` edge 1.3a emits.
+
+        **The write side has no producer yet.** Write chains are
+        whatever the graph contains: this method walks the edges that
+        point at S, in reverse, and reports the paths that start at an
+        entry point. Nothing in 1.3a emits `writer → source` edges — it
+        emits `source → reader` only — so on today's graphs the write
+        side is empty and this returns no groups. The enumerator is
+        complete regardless: it reads the graph, it does not produce
+        edges, exactly like `find_chains`. Landing the write side is
+        1.3a.1, and it is a *detection* question — which source node
+        does a writer write into? — not an enumeration one.
+
+        Deterministic and bounded: no LLM, ids derived from content,
+        groups ordered by source id, then write chain id, then read
+        chain id; each side bounded by its cap, the total by
+        `max_groups`, each path by `max_hops`. Cycle-safe: a path never
+        revisits a node (the `_dfs_paths` discipline).
+        """
+        if max_hops < 1:
+            raise ValueError("max_hops must be >= 1")
+        for name, value in (
+            ("max_write_chains_per_source", max_write_chains_per_source),
+            ("max_read_chains_per_source", max_read_chains_per_source),
+            ("max_groups", max_groups),
+        ):
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0")
+
+        sources = self._conn.execute(
+            """
+            SELECT id, name FROM nodes
+            WHERE kind = 'untrusted_source' AND status = 'active'
+            ORDER BY id
+            """
+        ).fetchall()
+        if not sources:
+            return []
+
+        # Entries and sinks, as in find_chains: a sink is a node of kind
+        # "sink" or a node with a dangerous capability (ADR-0009).
+        entry_ids: set[str] = {
+            r["id"]
+            for r in self._conn.execute(
+                """
+                SELECT id FROM nodes
+                WHERE kind = 'entry_point' AND status = 'active'
+                ORDER BY id
+                """
+            ).fetchall()
+        }
+        sink_ids: set[str] = {
+            r["id"]
+            for r in self._conn.execute(
+                "SELECT id FROM nodes WHERE kind = 'sink' AND status = 'active'"
+            ).fetchall()
+        }
+        sink_ids.update(self._nodes_with_sink_capabilities())
+
+        groups: list[ChainGroup] = []
+        for row in sources:
+            if len(groups) >= max_groups:
+                break
+
+            source_id = row["id"]
+            write_chains = self._write_chains_to(
+                source_id, entry_ids, max_hops, max_write_chains_per_source
+            )
+            read_chains = self._read_chains_from(
+                source_id, sink_ids, max_hops, max_read_chains_per_source
+            )
+
+            for write_id, write_nodes in write_chains:
+                for read_id, read_nodes in read_chains:
+                    if len(groups) >= max_groups:
+                        break
+                    groups.append(
+                        ChainGroup(
+                            group_id=self._chain_group_id(
+                                source_id, [write_id], [read_id]
+                            ),
+                            untrusted_source_id=source_id,
+                            untrusted_source_name=row["name"],
+                            write_chain_ids=[write_id],
+                            read_chain_ids=[read_id],
+                            write_chains=[write_nodes],
+                            read_chains=[read_nodes],
+                        )
+                    )
+
+        return groups
+
+    def _write_chains_to(
+        self,
+        source_id: str,
+        entry_ids: set[str],
+        max_hops: int,
+        max_chains: int,
+    ) -> list[tuple[str, list[str]]]:
+        """Paths `entry_point → ... → source_id`, as (chain_id, nodes).
+
+        Walked **in reverse** — from the anchor along the edges that
+        point at it — because that is the direction the graph stores: a
+        writer's edge ends at the source. Each path is then reversed to
+        read entry-first, which is the orientation the chain is *about*
+        and the one its `chain_id` is computed in, so a write chain that
+        happens to share a node sequence with a `find_chains` chain
+        shares its id.
+
+        A path is reported when it starts at an entry point and has at
+        least one hop. Traversal continues *past* an entry point rather
+        than stopping there: the node upstream of it starts a longer
+        path that also begins at an entry point, and `max_hops` bounds
+        both. No `entry_kinds` parameter, unlike `find_chains`: a write
+        chain starts where a request arrives, and the anchor is the
+        source, so the two ends are not symmetric.
+
+        Order is by chain id, so the caller's nested loop is
+        deterministic whatever order the stack happened to produce.
+        """
+        if max_chains == 0 or not entry_ids:
+            return []
+
+        found: list[tuple[str, list[str]]] = []
+        seen: set[str] = set()
+
+        # stack entries: (current_node, path_nodes, path_edges)
+        stack: list[tuple[str, list[str], list[str]]] = [
+            (source_id, [source_id], [])
+        ]
+
+        while stack:
+            if len(found) >= max_chains:
+                break
+
+            current, path_nodes, path_edges = stack.pop()
+
+            if path_edges and current in entry_ids:
+                nodes = list(reversed(path_nodes))
+                chain_id = self._chain_id(nodes, list(reversed(path_edges)))
+                if chain_id not in seen:
+                    seen.add(chain_id)
+                    found.append((chain_id, nodes))
+                continue
+
+            if len(path_edges) >= max_hops:
+                continue
+
+            rows = self._conn.execute(
+                """
+                SELECT * FROM edges
+                WHERE target_id = ? AND status = 'active'
+                ORDER BY id
+                """,
+                (current,),
+            ).fetchall()
+
+            # Push in reverse so the first edge is explored first.
+            for row in reversed(rows):
+                edge = Edge.from_row(row)
+                # Structural edges are declarations, not paths.
+                if edge.flow_kind not in TRAVERSABLE_FLOW_KINDS:
+                    continue
+                previous = edge.source_id
+                # Cycle guard: do not revisit a node in the same path.
+                if previous in path_nodes:
+                    continue
+                stack.append(
+                    (
+                        previous,
+                        path_nodes + [previous],
+                        path_edges + [edge.id],
+                    )
+                )
+
+        found.sort(key=lambda item: item[0])
+        return found
+
+    def _read_chains_from(
+        self,
+        source_id: str,
+        sink_ids: set[str],
+        max_hops: int,
+        max_chains: int,
+    ) -> list[tuple[str, list[str]]]:
+        """Paths `source_id → ... → sink`, as (chain_id, nodes).
+
+        Forward from the anchor, which is the direction 1.3a built: the
+        source's `has_access_to` edge to the reader is the first hop, so
+        a read chain is a chain in which the attacker's content is in
+        context all the way to a sink.
+
+        A sink terminates a path — it is not extended past one, the same
+        rule `_dfs_paths` applies — and a path needs at least one hop,
+        so the anchor itself is never a chain. Cycle guard as in
+        `_dfs_paths`: a path never revisits a node, which is also what
+        stops a read chain from doubling back through its own anchor.
+
+        Order is by chain id.
+        """
+        if max_chains == 0 or not sink_ids:
+            return []
+
+        found: list[tuple[str, list[str]]] = []
+        seen: set[str] = set()
+
+        stack: list[tuple[str, list[str], list[str]]] = [
+            (source_id, [source_id], [])
+        ]
+
+        while stack:
+            if len(found) >= max_chains:
+                break
+
+            current, path_nodes, path_edges = stack.pop()
+
+            if path_edges and current in sink_ids:
+                chain_id = self._chain_id(path_nodes, path_edges)
+                if chain_id not in seen:
+                    seen.add(chain_id)
+                    found.append((chain_id, list(path_nodes)))
+                continue
+
+            if len(path_edges) >= max_hops:
+                continue
+
+            rows = self._conn.execute(
+                """
+                SELECT * FROM edges
+                WHERE source_id = ? AND status = 'active'
+                ORDER BY id
+                """,
+                (current,),
+            ).fetchall()
+
+            for row in reversed(rows):
+                edge = Edge.from_row(row)
+                if edge.flow_kind not in TRAVERSABLE_FLOW_KINDS:
+                    continue
+                next_node = edge.target_id
+                if next_node in path_nodes:
+                    continue
+                stack.append(
+                    (
+                        next_node,
+                        path_nodes + [next_node],
+                        path_edges + [edge.id],
+                    )
+                )
+
+        found.sort(key=lambda item: item[0])
+        return found
+
+    @staticmethod
+    def _chain_group_id(
+        source_id: str,
+        write_chain_ids: list[str],
+        read_chain_ids: list[str],
+    ) -> str:
+        """Deterministic group ID: `chain_group:` + first 16 hex of sha256.
+
+        Over the anchor and the two id sets, sorted, so an id depends on
+        the group's membership and not on the order pairs were
+        enumerated in: the same graph always yields the same ids. The
+        payload is canonical JSON — the convention `_chain_id` uses —
+        rather than the parts concatenated with a separator, because
+        JSON delimits and types the fields, and no two distinct groups
+        can then collide by running together.
+        """
+        payload = json.dumps(
+            {
+                "source": source_id,
+                "write": sorted(write_chain_ids),
+                "read": sorted(read_chain_ids),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return f"chain_group:{digest[:16]}"
 
     # --------------------------------------------------------
     # validate_edges — Layer 3 deterministic validation (ADR-0006)
