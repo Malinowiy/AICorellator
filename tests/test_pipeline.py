@@ -905,6 +905,11 @@ def test_pipeline_chain_groups_persist_and_prioritize(
     which is the caller's job because the Query Layer does not write.
     A second pass over the same graph is idempotent — same ids, same
     scores, one row each — and does not disturb the evaluation columns.
+
+    1.3d's node flag is asserted here too, at zero: this fixture has no
+    node with all three halves of the trifecta, and it is not bent to
+    produce one. What is asserted is the mechanism's shape — every node
+    carries the attribute, and every value is `False`.
     """
     target = ingest(dynamic_target, kind="folder")
     delta = _normalized_dynamic(target)
@@ -934,6 +939,13 @@ def test_pipeline_chain_groups_persist_and_prioritize(
         # chain writes to a database, so the revision's row stays 0.
         assert all(r.score_components["dangerous_sink"] == 4 for r in rows)
         assert all(r.score_components["writes_db"] == 0 for r in rows)
+        # 1.3d: the stage visits every node, so the attribute is present
+        # on all of them; none of them has the trifecta (this fixture's
+        # `MCPToolProvider`-shaped reader reads untrusted input, but it
+        # does not also read secrets and get data out).
+        nodes = store.nodes.list()
+        assert all("lethal_trifecta" in n.attributes for n in nodes)
+        assert not any(n.attributes["lethal_trifecta"] for n in nodes)
         # 1.3d/1.3e columns are untouched by prioritization.
         assert all(r.verdict is None and r.lethal_trifecta is False
                    for r in rows)

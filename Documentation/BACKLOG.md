@@ -284,6 +284,22 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 **Rationale:** Introducing capability-based taint and non-linear chains changes the data model further (taint sources, chain groups table usage).
 **Deliverables:** Data-model review, Python model review, query layer review, normalizer review, prompt contract review, ADR updates, C4 updates, test plan.
 
+### 1.3c.2 — Any-node semantics for impact sink capabilities
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `_score_read_sinks` walks only the last node of a read chain; `_score_read_writes_db` credits any node. The three impact rows are inconsistent. On FinBot the inconsistency is invisible (0 mid-chain hits across 2920 groups), but the code paths differ and the ADR's "reading chain reaches" wording is ambiguous.
+**Approach:** Either widen `dangerous_sink` / `exfil_or_write` to any-node (matches `writes_db`), or narrow `writes_db` to terminal-only (matches the other two). Prefer widening: a dangerous call mid-chain is still dangerous. No-op on the four corpora; correctness fix. Also clarify the ADR-0012 table wording.
+**References:** 1.3c.1 report, §4.
+
+### 1.3d.1 — Corpus with lethal-trifecta node
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** The `lethal_trifecta` attribute is `False` on all four validation corpora; the scorer's attribute path is exercised by unit tests only. A corpus with a node that carries `reads_untrusted` + secrets + egress would distinguish "read the flag" from "walk the capabilities" end to end.
+**Approach:** Find or build a target where one node (e.g. a RAG retriever with secrets and an outbound HTTP client) satisfies the combination. Run 1.3c.1 + 1.3d on it; confirm the +5 fires from the attribute, not the fallback.
+**References:** 1.3d report, observation.
+
 ### 1.4 — Prompt engineering: grounded evaluation
 
 **Priority:** High

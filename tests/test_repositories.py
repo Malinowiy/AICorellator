@@ -36,6 +36,29 @@ def test_node_upsert_merges_attributes(store: GraphStore) -> None:
     assert fetched.attributes == {"a": 1, "b": 99, "c": 3}
 
 
+def test_node_roundtrips_the_lethal_trifecta_attribute(
+    store: GraphStore,
+) -> None:
+    """The 1.3d flag survives SQLite as a boolean.
+
+    It rides inside the `attributes` JSON column — no schema change — so
+    what is worth pinning is the type: `json.loads` gives back a `bool`,
+    not `1` or `"true"`, and `False` survives as a stored value rather
+    than disappearing (1.3d stores the negative; see the stage).
+    """
+    store.nodes.add(Node(
+        id="n:1", kind="tool", name="t", host_id="localhost",
+        attributes={"lethal_trifecta": True},
+    ))
+    store.nodes.add(Node(
+        id="n:2", kind="tool", name="u", host_id="localhost",
+        attributes={"lethal_trifecta": False},
+    ))
+
+    assert store.nodes.get("n:1").attributes["lethal_trifecta"] is True
+    assert store.nodes.get("n:2").attributes["lethal_trifecta"] is False
+
+
 def test_node_update_confidence(store: GraphStore) -> None:
     store.nodes.add(Node(
         id="n:1", kind="agent", name="A", host_id="localhost",

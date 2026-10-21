@@ -101,3 +101,47 @@ def test_agent_capabilities_subset_of_llm_or_mcp() -> None:
         | patterns.TOOL_CAPABILITIES
     )
     assert patterns.AGENT_CAPABILITIES == expected
+
+
+def test_lethal_trifecta_caps_needs_all_three_sets() -> None:
+    """The combination, not any one half (ADR-0009, 1.3d)."""
+    assert patterns.lethal_trifecta_caps(
+        ["reads_untrusted", "reads_env", "executes_shell"]
+    ) == ("executes_shell", "reads_env", "reads_untrusted")
+
+    for caps in (
+        [],
+        ["reads_untrusted"],
+        ["reads_untrusted", "reads_env"],
+        ["reads_untrusted", "executes_shell"],
+        ["reads_env", "executes_shell"],
+    ):
+        assert patterns.lethal_trifecta_caps(caps) == ()
+
+
+def test_lethal_trifecta_caps_returns_sorted_members_of_the_sets() -> None:
+    """Every returned capability comes from one of the three sets."""
+    caps = [
+        "reads_untrusted",
+        "reads_secrets",
+        "reads_env",
+        "http_egress",
+        "writes_filesystem",
+        "executes_shell",
+        "executes_code",
+        "reads_filesystem",  # neither half
+    ]
+
+    matched = patterns.lethal_trifecta_caps(caps)
+
+    assert list(matched) == sorted(matched)
+    assert "reads_filesystem" not in matched
+    assert set(matched) == set(caps) - {"reads_filesystem"}
+
+
+def test_lethal_trifecta_caps_accepts_every_egress_capability() -> None:
+    """The egress half is the constant, all four of it."""
+    for egress in patterns.LETHAL_TRIFECTA_EGRESS_CAPS:
+        assert patterns.lethal_trifecta_caps(
+            ["reads_untrusted", "reads_env", egress]
+        )

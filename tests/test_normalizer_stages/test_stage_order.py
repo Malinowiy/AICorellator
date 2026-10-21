@@ -19,8 +19,12 @@ The order encodes four facts that are easy to lose in a refactor:
     walks the `writes_to` edges that stage emits) and after `flow_kind`,
     with the resolver group that passes `CONTROL_FLOW` (see
     `normalizer_stages.dynamic_mcp_invocation`);
-  - `body_attributes` runs last, because the merge replaces nodes and
-    the replacement is what the graph keeps.
+  - `body_attributes` runs last but one, because the merge replaces
+    nodes and the replacement is what the graph keeps;
+  - `lethal_trifecta` runs last: it shares the "after the merge"
+    constraint and has no other, and it reads capabilities rather than
+    source, which is why it is not a branch inside `body_attributes`
+    (see `normalizer_stages.lethal_trifecta`).
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ EXPECTED = (
     "mcp_entry_synthesis",
     "orphan_entry",
     "body_attributes",
+    "lethal_trifecta",
 )
 
 
@@ -53,9 +58,9 @@ def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
 
 
-def test_stage_count_is_seventeen() -> None:
-    """The count is quoted in the per-stage docstrings (`N of 17`)."""
-    assert len(STAGES) == 17
+def test_stage_count_is_eighteen() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 18`)."""
+    assert len(STAGES) == 18
 
 
 def test_every_stage_satisfies_the_protocol() -> None:
@@ -70,9 +75,21 @@ def test_stage_names_are_unique() -> None:
     assert len(names) == len(set(names))
 
 
-def test_body_attributes_runs_last() -> None:
-    """The merge replaces nodes; the replacement needs the backfill."""
-    assert STAGES[-1].name == "body_attributes"
+def test_lethal_trifecta_runs_last() -> None:
+    """Last of the pipeline: the node set is final there, and 1.3d reads
+    capabilities rather than source, so it has no constraint that would
+    place it earlier."""
+    assert STAGES[-1].name == "lethal_trifecta"
+
+
+def test_body_attributes_precedes_lethal_trifecta() -> None:
+    """Both run after the merge; neither reads what the other writes."""
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("detector_merge")
+        < names.index("body_attributes")
+        < names.index("lethal_trifecta")
+    )
 
 
 def test_entry_to_sink_precedes_the_detector_merge() -> None:

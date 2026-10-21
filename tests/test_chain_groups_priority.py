@@ -84,6 +84,7 @@ def _pair(
     declare_type: bool = True,
     sink_caps: list[str] | None = None,
     reader_caps: list[str] | None = None,
+    reader_attributes: dict[str, object] | None = None,
     writer_caps: list[str] | None = None,
     write_hops: int = 2,
     read_hops: int = 2,
@@ -96,6 +97,9 @@ def _pair(
     `write_hops` / `read_hops` are hops, so the node count is one more.
     `reader_caps` land on the read side's intermediate nodes (the place
     a trifecta node would be), `sink_caps` on the terminal node.
+    `reader_attributes` land on those same intermediate nodes, which is
+    how a test says "1.3d flagged this node" without giving it the
+    capabilities the flag is derived from.
     """
     ids = _ids(key)
     _node(
@@ -118,7 +122,10 @@ def _pair(
     read_nodes = [ids["source"]]
     for i in range(max(0, read_hops - 1)):
         node_id = f"tool:{key}r{i}"
-        _node(store, node_id, "tool", f"reader_{i}", capabilities=reader_caps)
+        _node(
+            store, node_id, "tool", f"reader_{i}",
+            capabilities=reader_caps, attributes=reader_attributes,
+        )
         read_nodes.append(node_id)
     read_nodes.append(ids["sink"])
 
@@ -151,6 +158,12 @@ TRIFECTA = ["reads_untrusted", "reads_env", "executes_shell"]
 
 
 def test_lethal_trifecta_fires_on_a_read_side_node(store: GraphStore) -> None:
+    """The fallback path: nodes with capabilities and no 1.3d attribute.
+
+    The fixture writes nodes by hand, so none of them carries
+    `lethal_trifecta`. The scorer walks their capabilities instead —
+    which is what it has to do for a graph written before 1.3d.
+    """
     group = _pair(store, reader_caps=TRIFECTA)
 
     components = _score(store, group)
@@ -158,6 +171,47 @@ def test_lethal_trifecta_fires_on_a_read_side_node(store: GraphStore) -> None:
     assert components["lethal_trifecta"] == SCORE_LETHAL_TRIFECTA
     assert "reads_untrusted" in components["reasons"]["lethal_trifecta"]
     assert _ids()["reader"] in components["reasons"]["lethal_trifecta"]
+
+
+def test_lethal_trifecta_is_read_from_the_node_attribute(
+    store: GraphStore,
+) -> None:
+    """1.3d writes the flag; the scorer reads it, not the capabilities.
+
+    The reader carries no trifecta capability at all — only the
+    attribute `LethalTrifectaStage` writes — so a +5 here can come from
+    nothing but the attribute. A consumer of the flag and a consumer of
+    the score therefore agree about the node.
+    """
+    group = _pair(
+        store, reader_attributes={"lethal_trifecta": True},
+    )
+
+    components = _score(store, group)
+
+    assert components["lethal_trifecta"] == SCORE_LETHAL_TRIFECTA
+    assert _ids()["reader"] in components["reasons"]["lethal_trifecta"]
+
+
+def test_a_false_node_attribute_beats_the_capabilities(
+    store: GraphStore,
+) -> None:
+    """The attribute is authoritative — it is what the graph decided.
+
+    The reader *does* carry the trifecta, but a graph whose stage said
+    `False` is a graph that does not have the trifecta on that node. The
+    two can only disagree on a hand-built graph (the stage derives the
+    flag from these same capabilities), and the flag wins.
+    """
+    group = _pair(
+        store,
+        reader_caps=TRIFECTA,
+        reader_attributes={"lethal_trifecta": False},
+    )
+
+    components = _score(store, group)
+
+    assert components["lethal_trifecta"] == 0
 
 
 @pytest.mark.parametrize("missing", ["reads_untrusted", "reads_env",

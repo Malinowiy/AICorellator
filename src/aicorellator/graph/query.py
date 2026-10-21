@@ -31,11 +31,9 @@ from typing import Any
 
 from .models import ChainGroupRecord, Edge, Node
 from ..patterns import (
-    LETHAL_TRIFECTA_EGRESS_CAPS,
-    LETHAL_TRIFECTA_READ_CAPS,
-    LETHAL_TRIFECTA_SECRET_CAPS,
     SINK_CAPABILITIES,
     TRAVERSABLE_FLOW_KINDS,
+    lethal_trifecta_caps,
 )
 
 
@@ -1269,11 +1267,18 @@ class QueryLayer:
     ) -> None:
         """+5 when a node on the *reading* side has the trifecta.
 
-        The three sets come from `patterns.py` (ADR-0009): reads
-        untrusted input, can read secrets, can send data out. The
-        boolean is computed here and only here — no `lethal_trifecta`
-        node attribute is written (that is 1.3d), so the signal stays a
-        property of the score and not a new fact in the graph.
+        The definition is `patterns.lethal_trifecta_caps` (ADR-0009):
+        reads untrusted input, can read secrets, can get data out. The
+        answer is normally read off `node.attributes["lethal_trifecta"]`,
+        which `LethalTrifectaStage` (1.3d, stage 18) writes for every
+        node. The graph is therefore the authority, and a consumer of
+        the flag and this score cannot disagree about a node.
+
+        A node written before 1.3d carries no such attribute, and the
+        attribute is the only thing missing then: the fallback walks the
+        node's capabilities through the same function. The two paths
+        cannot disagree about a node the stage saw, because they run one
+        definition over the same capabilities.
 
         The writing side is not searched: the attacker's content enters
         through the read, and a trifecta node upstream of the write
@@ -1289,19 +1294,19 @@ class QueryLayer:
             if node is None:
                 continue
             caps = node.capabilities
-            if not LETHAL_TRIFECTA_READ_CAPS.intersection(caps):
+            marked = node.attributes.get("lethal_trifecta")
+            if marked is None:
+                # Pre-1.3d graph, or a node the stage never saw: the
+                # capability walk is the definition.
+                marked = bool(lethal_trifecta_caps(caps))
+            if not marked:
                 continue
-            if not LETHAL_TRIFECTA_SECRET_CAPS.intersection(caps):
-                continue
-            if not LETHAL_TRIFECTA_EGRESS_CAPS.intersection(caps):
-                continue
-            matched = (
-                self._matched_caps(caps, LETHAL_TRIFECTA_READ_CAPS)
-                + self._matched_caps(caps, LETHAL_TRIFECTA_SECRET_CAPS)
-                + self._matched_caps(caps, LETHAL_TRIFECTA_EGRESS_CAPS)
-            )
+            matched = lethal_trifecta_caps(caps)
             components["lethal_trifecta"] = SCORE_LETHAL_TRIFECTA
-            reasons["lethal_trifecta"] = f"{'+'.join(matched)} at {node_id}"
+            reasons["lethal_trifecta"] = (
+                f"{'+'.join(matched)} at {node_id}" if matched
+                else f"lethal_trifecta at {node_id}"
+            )
             return
 
         reasons["lethal_trifecta"] = (

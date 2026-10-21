@@ -1,6 +1,6 @@
 """EntryToSinkStage — entry point to same-file sink reachability.
 
-Run order: 9 of 17 (see `normalizer_stages.STAGES`).
+Run order: 9 of 18 (see `normalizer_stages.STAGES`).
 
 C4 lists this resolver as step 13 of the normalizer — after the detector
 merge. The code it was split from called it *before* the merge, and that

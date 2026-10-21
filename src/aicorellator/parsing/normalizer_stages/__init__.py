@@ -27,6 +27,7 @@ order:
     15  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
     16  orphan_entry           orphan entry → single agent (Resolver 2)
     17  body_attributes        sink_data_flow / returns_data backfill
+    18  lethal_trifecta        lethal trifecta as a node attribute (1.3d)
 
 Note on the order:
 
@@ -53,10 +54,15 @@ Note on the order:
     `writes_to` edges stage 11 emitted, and it is a resolver, so it sits
     with the other post-`flow_kind` resolvers and passes `CONTROL_FLOW`
     the way they do.
-  - `BodyAttributeStage` runs last, not at node construction. Its
+  - `BodyAttributeStage` runs late, not at node construction. Its
     *position* is load-bearing for the same kind of reason: the merge can
     replace a TSA node with a detector node that arrives without the
     attributes, and the replacement is what ends up in the graph.
+  - `LethalTrifectaStage` (1.3d) runs after it, and last. It shares the
+    "after the merge" constraint and has no other, so it takes the end
+    of the pipeline, where the node set is final. It reads capabilities
+    rather than source, which is why it is not a branch inside
+    `body_attributes` — see `normalizer_stages.lethal_trifecta`.
 """
 
 from __future__ import annotations
@@ -72,6 +78,7 @@ from .entry_points import EntryPointStage
 from .entry_to_sink import EntryToSinkStage
 from .flow_kind import FlowKindStage
 from .intra_file_edges import IntraFileEdgeStage
+from .lethal_trifecta import LethalTrifectaStage
 from .llm_endpoints import LlmEndpointStage
 from .mcp_entry_synthesis import McpEntrySynthesisStage
 from .mcp_server_nodes import McpServerNodeStage
@@ -104,4 +111,5 @@ STAGES: tuple[NormalizerStage, ...] = (
     McpEntrySynthesisStage(),
     OrphanEntryStage(),
     BodyAttributeStage(),
+    LethalTrifectaStage(),
 )

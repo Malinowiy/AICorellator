@@ -22,6 +22,12 @@ below is a `CallPattern` and every capability entry is a
 `CapabilityRule`. The types and the matching rules live in
 `patterns_registry.py`.
 
+The two exceptions are predicates that belong beside their table rather
+than in a consumer: `untrusted_source_match` with the
+`UNTRUSTED_SOURCE_*` tables, and `lethal_trifecta_caps` with the
+`LETHAL_TRIFECTA_*` sets. Both have more than one caller, and a
+definition shared by the graph and the score cannot drift.
+
 Each rule carries one sentence explaining why it exists
 (`CapabilityRule.reason`) — the registries are what a reviewer reads to
 decide whether a new pattern belongs, and a pattern without a reason is
@@ -1088,6 +1094,38 @@ LETHAL_TRIFECTA_EGRESS_CAPS: frozenset[str] = frozenset({
     "executes_shell",
     "executes_code",
 })
+
+
+def lethal_trifecta_caps(capabilities: list[str]) -> tuple[str, ...]:
+    """The capabilities that put a node in ADR-0009's lethal trifecta.
+
+    Non-empty exactly when the node reads untrusted input, can read
+    secrets, and can get data out — the three sets above. Sorted, so a
+    reason string built from it is deterministic across runs.
+
+    The definition lives here, next to the sets, for the same reason
+    `untrusted_source_match` lives next to its table: it has two
+    consumers — `normalizer_stages/lethal_trifecta.py`, which records
+    the answer as a node attribute (1.3d), and `graph/query.py`, which
+    scores it +5 (ADR-0012) — and one definition is what keeps the graph
+    and the score from disagreeing about the same node.
+
+    The return value is the matched capabilities, not a boolean, because
+    the scorer quotes them in `score_components["reasons"]`. Empty tuple
+    means "not a trifecta", so a caller can read it as a truth value.
+    """
+    matched: list[str] = []
+    for wanted in (
+        LETHAL_TRIFECTA_READ_CAPS,
+        LETHAL_TRIFECTA_SECRET_CAPS,
+        LETHAL_TRIFECTA_EGRESS_CAPS,
+    ):
+        hits = wanted.intersection(capabilities)
+        if not hits:
+            return ()
+        matched.extend(hits)
+    return tuple(sorted(matched))
+
 
 # --- Edge-level capabilities (ADR-0009) ---
 
