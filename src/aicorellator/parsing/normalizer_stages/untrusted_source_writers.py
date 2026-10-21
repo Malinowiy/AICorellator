@@ -40,12 +40,23 @@ guessed at").
 
 **Anchoring** is 1.3a's: the source node is one *read site*, so a writer
 cannot name it by what it writes. It can only be matched to a source
-that is visible from the same file — `_writers_for` states the four ways
-that happens. The fourth (1.3a.1.2) is the literal module path: a file
-that spells out `...mcp.servers.<name>.server.create_<name>_server` is
-naming the server it talks to, so the server is a writer of the
-catalogue that file reads even when the server's own module is
-elsewhere. That is FinBot's `_SERVER_INTROSPECTORS` shape.
+that is visible from it — `_writers_for` states the four ways that
+happens. The fourth is the literal module path: a file that spells out
+`...mcp.servers.<name>.server.create_<name>_server` is naming a server
+it talks to, so that server is a writer of a catalogue the file reads
+even when the server's own module is elsewhere. That is FinBot's
+`_SERVER_INTROSPECTORS` shape.
+
+1.3a.1.2 read that literal in the source's own file. 1.3a.1.3 reads it
+**project-wide**, because the two halves of the channel need not share a
+file: FinBot's two route files carry the literal and read the catalogue
+through a helper that has no node, while `mcp/provider.py` carries the
+reader (`MCPToolProvider`) and names no server at all. The evidence is
+the same literal; only its scope changes, and the scope is the project.
+That is deliberately wide — a server named in one file writes a
+catalogue read in another — so it over-matches by construction.
+`max_writer_edges` bounds the `servers × sources` product, and ADR-0012's
+prioritization (1.3c) is what prunes a wide group set.
 
 Side effects: none. The stage reads the delta only: it emits edges
 between nodes other stages created, and creates none.
@@ -54,6 +65,7 @@ between nodes other stages created, and creates none.
 from __future__ import annotations
 
 import ast
+import logging
 import re
 from typing import TYPE_CHECKING
 
@@ -63,6 +75,18 @@ from ..normalizer_helpers import edge_id, server_name_for_file
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..ast_normalizer import GraphDelta
+
+
+log = logging.getLogger(__name__)
+
+
+# Bound on the edges this stage emits per scan. The literal anchor is
+# project-wide (1.3a.1.3), so the worst case is a Cartesian product of
+# the servers a literal names and the catalogue sources the scan found.
+# The bound is on *emission*, not on the graph: past it the stage stops
+# and says so at DEBUG, which is the visible signal that a target's
+# project scope is wider than the rule expects.
+MAX_WRITER_EDGES: int = 1000
 
 
 # The source families a writer rule exists for. One entry, deliberately:
@@ -87,30 +111,49 @@ class UntrustedSourceWriterStage:
 
     name = "untrusted_source_writers"
 
+    def __init__(self, max_writer_edges: int = MAX_WRITER_EDGES) -> None:
+        """`max_writer_edges` bounds the edges this stage emits per scan.
+
+        The constant is the default; the argument is the test seam.
+        """
+        self.max_writer_edges = max_writer_edges
+
     def apply(
         self, delta: "GraphDelta", ctx: NormalizeContext
     ) -> "GraphDelta":
         servers = [n for n in delta.nodes if n.kind == "mcp_server"]
         if not servers:
             return delta
+        sources = [
+            node for node in delta.nodes
+            if node.kind == "untrusted_source"
+            and node.attributes.get("source_type") in WRITER_SOURCE_TYPES
+        ]
+        if not sources:
+            return delta
+
         by_file, by_name = _server_indexes(servers)
         manifest_paths = [entry.path for entry in ctx.manifest.files]
+        # One project pass, not one pass per source (1.3a.1.3): the
+        # literal is evidence about the project, and a source's own file
+        # need not carry it. The pass is O(files), and `ctx.module_for`
+        # keeps each file parsed at most once per scan.
+        declared = _project_declared_servers(ctx, by_name, manifest_paths)
+        writers = [by_name[name] for name in declared]
 
         emitted: set[str] = set()
-        for source in delta.nodes:
-            if source.kind != "untrusted_source":
-                continue
-            if source.attributes.get("source_type") not in WRITER_SOURCE_TYPES:
-                continue
-            declared = _declared_servers(
-                source, ctx, by_name, manifest_paths
-            )
-            for server in _writers_for(
-                source, by_file, by_name, declared
-            ):
+        for source in sources:
+            for server in _writers_for(source, by_file, by_name, writers):
                 edge = _write_edge(server, source, ctx)
                 if edge.id in emitted:
                     continue
+                if len(emitted) >= self.max_writer_edges:
+                    log.debug(
+                        "untrusted_source_writers: max_writer_edges (%d) "
+                        "reached; the remaining pairs are not emitted",
+                        self.max_writer_edges,
+                    )
+                    return delta
                 emitted.add(edge.id)
                 delta.edges.append(edge)
         return delta
@@ -174,21 +217,28 @@ def _writers_for(
        makes the server a *directory*-level node, so any file under it
        is the server's file; `server_name_for_file` is that rule, reused
        rather than re-implemented.
-    4. **A literal module path in the same file** (1.3a.1.2) — the file
-       spells out `...mcp.servers.<name>.server.create_<name>_server`,
-       naming the server whose catalogue it reads. This is the anchor
-       that reaches a writer in *another* file: FinBot's
-       `_SERVER_INTROSPECTORS` maps five server types to their factory
-       modules inside the route file that reads a catalogue, and no
-       server is otherwise visible from that file.
+    4. **A literal module path anywhere in the project** (1.3a.1.2 for
+       the same file, project-wide in 1.3a.1.3) — some file spells out
+       `...mcp.servers.<name>.server.create_<name>_server`, naming a
+       server it talks to, so that server is a writer of this catalogue.
+       This is the anchor that reaches a writer in *another* file:
+       FinBot's `_SERVER_INTROSPECTORS` maps five server types to their
+       factory modules inside the route files that read a catalogue, and
+       the client that reads the catalogue it describes
+       (`mcp/provider.py`) names no server at all. Deliberately wide —
+       the same literal read at project scope — so it over-matches by
+       construction; `max_writer_edges` bounds the product.
 
     2, 3 and 4 are unioned: they are three independent pieces of
     visibility evidence, and a file that both belongs to a server
-    directory and names another server's module talks to both. A source
-    visible from no server yields nothing — the honest result when the
-    writer is not in the file. No fallback matches a source to an
-    arbitrary server: that would fabricate the edge the enumerator is
-    supposed to find.
+    directory and names another server's module talks to both. 4 is
+    project-wide, so it contains the same-file literals it used to be
+    limited to — one edge per (server, source) pair either way, because
+    an anchor contributes a node, and a node already in `found` is not
+    added twice. A source visible from no server yields nothing — the
+    honest result when the writer is not in the project either. No
+    fallback matches a source to an arbitrary server: that would
+    fabricate the edge the enumerator is supposed to find.
     """
     parent = source.attributes.get("parent_server")
     if isinstance(parent, str):
@@ -211,43 +261,51 @@ def _writers_for(
     return sorted(found, key=lambda node: node.id)
 
 
-def _declared_servers(
-    source: Node,
+def _project_declared_servers(
     ctx: NormalizeContext,
     by_name: dict[str, Node],
     manifest_paths: list[str],
-) -> list[Node]:
-    """The servers the source's own file names by factory module path.
+) -> dict[str, list[str]]:
+    """`server name → [files that name it]`, one pass over the project.
 
-    Three gates, all of them evidence the detector reads rather than
-    guesses:
+    The literal anchor at project scope (1.3a.1.3). The stage calls this
+    once, and `ctx.module_for` keeps each manifest file parsed at most
+    once per scan, so the pass is O(files) rather than
+    O(sources × files). It is skipped entirely when the delta holds no
+    catalogue source, which is every scan of a target with no MCP client.
 
-      - the file must parse (`ctx.module_for` reads and parses each
-        manifest file at most once per scan);
+    Three gates per file, the ones the per-file form applied to the
+    source's own file, now applied to every file — all of them evidence
+    the detector reads rather than guesses:
+
+      - the file must parse;
       - the literal must name `<name>` and `create_<name>_server`
         consistently, and the module it spells must be a file this scan
         discovered — a typo or a missing package names no server the
         code can reach;
       - the named server must be an `mcp_server` node.
 
-    A literal that fails a gate yields nothing. Nothing here parses the
-    `importlib.import_module` call the path is handed to: the literal is
-    the evidence, and the call is not read.
+    A literal that fails a gate yields nothing. The value is the list of
+    files that named the server, in manifest order: it is the provenance
+    the edge rests on, and it is what makes the widening auditable
+    ("which file said `finmail`?"). The name is what resolves to the
+    node. Nothing here parses the `importlib.import_module` call the
+    path is handed to: the literal is the evidence, and the call is not
+    read.
     """
-    file_path = source.attributes.get("source_file")
-    if not isinstance(file_path, str):
-        return []
-    module = ctx.module_for(file_path)
-    if module is None:
-        return []
-
-    found: list[Node] = []
-    for name in declared_server_names(module):
-        if not _server_module_exists(name, manifest_paths):
+    found: dict[str, list[str]] = {}
+    for entry in ctx.manifest.files:
+        module = ctx.module_for(entry.path)
+        if module is None:
             continue
-        server = by_name.get(name)
-        if server is not None and server not in found:
-            found.append(server)
+        for name in declared_server_names(module):
+            if name not in by_name:
+                continue
+            if not _server_module_exists(name, manifest_paths):
+                continue
+            files = found.setdefault(name, [])
+            if entry.path not in files:
+                files.append(entry.path)
     return found
 
 
@@ -353,6 +411,7 @@ def _write_edge(
 
 
 __all__ = [
+    "MAX_WRITER_EDGES",
     "UntrustedSourceWriterStage",
     "WRITER_SOURCE_TYPES",
     "declared_server_names",

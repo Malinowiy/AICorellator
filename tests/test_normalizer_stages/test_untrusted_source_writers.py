@@ -6,8 +6,9 @@ The stage is the write half of ADR-0010's channel: 1.3a's
 incoming edge to walk. These tests cover the four ways a server is
 visible from a source — `parent_server`, the same file, the
 `mcp/servers/<name>/` directory, and a literal factory module path
-(1.3a.1.2), which is the anchor that reaches a server in another file —
-plus the source-family gate, the flow attributes, and the absences.
+(1.3a.1.2 in the source's own file, project-wide in 1.3a.1.3) — plus the
+source-family gate, the flow attributes, the emission cap, and the
+absences.
 """
 
 from __future__ import annotations
@@ -248,7 +249,7 @@ def test_no_server_nodes_means_no_work(project) -> None:
 
 
 # ============================================================
-# The literal factory path (1.3a.1.2)
+# The literal factory path (1.3a.1.2, project-wide in 1.3a.1.3)
 # ============================================================
 
 INTROSPECTORS = '''\
@@ -333,22 +334,6 @@ def test_a_literal_that_names_no_server_node_writes_nothing(project) -> None:
 
 
 
-def test_a_literal_in_another_file_is_not_an_anchor(project) -> None:
-    """The literal is read from the source's own file, not the project."""
-    p = project(files={
-        "apps/routes/api.py": "def read():\n    return server.list_tools()\n",
-        "other.py": INTROSPECTORS,
-        **_server_modules("finmail", "findrive"),
-    })
-    p.delta.nodes.append(_server("finmail", server_name="finmail"))
-    p.delta.nodes.append(_server("findrive", server_name="findrive"))
-    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
-
-    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
-
-    assert delta.edges == []
-
-
 def test_a_literal_path_naming_a_different_factory_is_ignored(project) -> None:
     """`servers/finmail/server.py` must hold `create_finmail_server`.
 
@@ -428,6 +413,132 @@ def test_the_literal_writers_join_the_structurally_visible_one(
     assert [e.source_id for e in delta.edges] == [
         "mcp_server:finmail", "mcp_server:knowledge",
     ]
+
+
+def test_a_literal_in_another_file_names_the_writer(project) -> None:
+    """The widening (1.3a.1.3): file A names the server, file B reads it.
+
+    The two halves of ADR-0010's channel need not share a file. FinBot's
+    route files carry `_SERVER_INTROSPECTORS` and no reader; its
+    `mcp/provider.py` carries the reader and no literal. Read per file,
+    neither half sees the other, and the group never forms — the
+    1.3a.1.2 measurement. At project scope the literal names the server
+    for any catalogue the project reads.
+    """
+    p = project(files={
+        "apps/routes/api.py": "def read():\n    return client.list_tools()\n",
+        "config/registry.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:findrive", "untrusted_source:1"),
+        ("writes_to", "mcp_server:finmail", "untrusted_source:1"),
+    ]
+    assert {e.flow_kind for e in delta.edges} == {"control"}
+    assert {e.data_flow_confirmed for e in delta.edges} == {"unknown"}
+
+
+def test_a_literal_in_the_same_file_is_one_edge_not_two(project) -> None:
+    """The project-wide anchor contains the same-file case (1.3a.1.2).
+
+    One literal is one piece of evidence however many anchors see it,
+    and the edge id is content-derived, so the same-file case emits one
+    edge — not one per anchor.
+    """
+    p = project(files={
+        "apps/routes/api.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert len(delta.edges) == 2
+    assert len({e.id for e in delta.edges}) == 2
+
+
+def test_two_files_naming_one_server_are_still_one_edge(project) -> None:
+    """Provenance is a list, the edge is one: the id dedupes the pair."""
+    p = project(files={
+        "apps/routes/api.py": "def read():\n    return client.list_tools()\n",
+        "config/one.py": INTROSPECTORS,
+        "config/two.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert len(delta.edges) == 2
+    assert [e.source_id for e in delta.edges] == [
+        "mcp_server:findrive", "mcp_server:finmail",
+    ]
+
+
+def test_a_project_literal_and_a_structural_anchor_are_unioned(
+    project,
+) -> None:
+    """Two independent anchors on one source: the union, in id order."""
+    p = project(files={
+        "apps/routes/api.py": "def read():\n    return client.list_tools()\n",
+        "config/registry.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(
+        _server("knowledge", "apps/routes/api.py", node_id="mcp_server:k")
+    )
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_source(file_path="apps/routes/api.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == [
+        "mcp_server:finmail", "mcp_server:k",
+    ]
+
+
+def test_max_writer_edges_caps_the_emission(project, caplog) -> None:
+    """The bound is on emission, and hitting it is visible at DEBUG.
+
+    Six pairs (two servers × three sources) with a cap of two: the stage
+    stops at the cap rather than walking the rest of the product.
+    """
+    p = project(files={
+        "apps/a.py": "def read():\n    return client.list_tools()\n",
+        "apps/b.py": "def read():\n    return client.list_tools()\n",
+        "apps/c.py": "def read():\n    return client.list_tools()\n",
+        "config/registry.py": INTROSPECTORS,
+        **_server_modules("finmail", "findrive"),
+    })
+    p.delta.nodes.append(_server("finmail", server_name="finmail"))
+    p.delta.nodes.append(_server("findrive", server_name="findrive"))
+    for index, path in enumerate(("apps/a.py", "apps/b.py", "apps/c.py")):
+        p.delta.nodes.append(_source(
+            file_path=path, node_id=f"untrusted_source:{index}",
+        ))
+
+    with caplog.at_level("DEBUG"):
+        delta = UntrustedSourceWriterStage(max_writer_edges=2).apply(
+            p.delta, p.ctx
+        )
+
+    assert len(delta.edges) == 2
+    assert [e.source_id for e in delta.edges] == [
+        "mcp_server:findrive", "mcp_server:finmail",
+    ]
+    assert "max_writer_edges" in caplog.text
 
 
 def test_declared_server_names_reads_the_path_not_the_key() -> None:

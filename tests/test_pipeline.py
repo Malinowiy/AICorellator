@@ -716,6 +716,54 @@ def dynamic_target(tmp_path: Path) -> Path:
     return root
 
 
+# The same project with the literal moved out of the reader's file — the
+# FinBot shape, and what 1.3a.1.3 exists for. `agents/tool_provider.py`
+# below is the `DYNAMIC_FILES` module with `_SERVER_INTROSPECTORS`
+# removed: it reads a catalogue and names no server at all.
+SPLIT_PROVIDER = '''\
+"""The agent that reads the MCP tool catalogue and invokes its tools."""
+from app.services.mcp import create_mcp_server
+
+
+class ToolProviderAgent:
+    """Discovers the tools of the MCP servers it connects to."""
+
+    def __init__(self):
+        self.servers = {}
+
+    def connect_servers(self):
+        self.servers["knowledge"] = create_mcp_server("knowledge")
+
+    async def connect(self, client):
+        """Read a server's tool catalogue."""
+        return await client.list_tools()
+'''
+
+SPLIT_REGISTRY = '''\
+"""Server registry -- which factory builds which server."""
+_SERVER_INTROSPECTORS = {
+    "knowledge": "app.mcp.servers.knowledge.server.create_knowledge_server",
+}
+'''
+
+SPLIT_FILES: dict[str, str] = {
+    **DYNAMIC_FILES,
+    "agents/tool_provider.py": SPLIT_PROVIDER,
+    "config/registry.py": SPLIT_REGISTRY,
+}
+
+
+@pytest.fixture
+def split_target(tmp_path: Path) -> Path:
+    """The dynamic project, with the literal in a file that reads nothing."""
+    root = tmp_path / "split"
+    for rel_path, content in SPLIT_FILES.items():
+        full = root / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+    return root
+
+
 
 def _normalized_dynamic(target: Path):
     manifest = discover(target)
@@ -807,6 +855,89 @@ def test_pipeline_chain_group_through_dynamic_invocation(
         assert store.edges.list(
             source_id=server.id, kind="provides_tool"
         )[0].target_id == tool.id
+
+        groups = store.query.find_chain_groups()
+
+        assert len(groups) == 2
+        assert {
+            tuple(nodes[n].name for n in chain) for chain in
+            (c for g in groups for c in g.read_chains)
+        } == {
+            (
+                "mcp_tool_description:client.list_tools",
+                "ToolProviderAgent", "get_documents", "execute_script",
+            ),
+            (
+                "mcp_tool_description:client.list_tools",
+                "ToolProviderAgent", "knowledge", "get_documents",
+                "execute_script",
+            ),
+        }
+        assert {
+            tuple(nodes[n].name for n in chain) for chain in
+            (c for g in groups for c in g.write_chains)
+        } == {(
+            "GET /chat", "ToolProviderAgent", "knowledge",
+            "mcp_tool_description:client.list_tools",
+        )}
+
+
+def test_pipeline_chain_group_survives_the_literal_moving_file(
+    split_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """1.3a.1.3 end to end: the literal and the reader are in two files.
+
+    The fixture is `DYNAMIC_FILES` with one change: the literal factory
+    path moves from the reader's module to `config/registry.py`, which
+    reads nothing. Everything else — the server, its tool, the sink, the
+    route, and `create_mcp_server("knowledge")` in the `agents/` module —
+    is unchanged.
+
+    On 1.3a.1.2's same-file anchor this graph had no write side at all:
+    `agents/tool_provider.py` names no server once the literal leaves,
+    and no server is visible from it, so `find_chain_groups` returned
+    nothing. At project scope the literal still names `knowledge`, so
+
+        write   GET /chat → ToolProviderAgent → knowledge → catalogue
+        read    catalogue → ToolProviderAgent → get_documents →
+                execute_script
+
+    and the group forms.
+    """
+    provider = SPLIT_FILES["agents/tool_provider.py"]
+    assert "_SERVER_INTROSPECTORS" not in provider
+    assert "_SERVER_INTROSPECTORS" in SPLIT_FILES["config/registry.py"]
+
+    target = ingest(split_target, kind="folder")
+    delta = _normalized_dynamic(target)
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        nodes = {n.id: n for n in store.nodes.list()}
+        catalogue = next(
+            n for n in nodes.values()
+            if n.name == "mcp_tool_description:client.list_tools"
+        )
+
+        # The catalogue's file is the reader's file...
+        assert catalogue.attributes["source_file"].endswith(
+            "agents/tool_provider.py"
+        )
+        # ...which names no server, so the writer edge comes from the
+        # project literal rather than from the file the read is in.
+        assert [
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in store.edges.list(kind="writes_to")
+        ] == [("knowledge", "mcp_tool_description:client.list_tools")]
+
+        # The read side is what it was (1.3a.1.2): the agent invokes the
+        # tool the catalogue describes.
+        assert [
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in store.edges.list(kind="uses_tool")
+        ] == [("ToolProviderAgent", "get_documents")]
 
         groups = store.query.find_chain_groups()
 

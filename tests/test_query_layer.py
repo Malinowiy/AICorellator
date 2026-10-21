@@ -660,6 +660,73 @@ def test_find_chain_groups_with_the_dynamic_invocation_edge(
     ]
 
 
+def test_find_chain_groups_with_the_project_level_writer_anchor(
+    store: GraphStore,
+) -> None:
+    """The 1.3a.1.3 shape: the writer is not the reader's server.
+
+    The project-wide literal anchor (1.3a.1.3) links a server to a
+    catalogue read in *another* file, so a group can pair a server that
+    writes a catalogue with a read chain that reaches a tool a
+    **different** server provides. The anchor is the source, not the
+    writer's tools, so the pair forms either way — and the two halves
+    share no server but the source:
+
+        entry --has_access_to--> finmail --writes_to--> source
+        source --has_access_to(data)--> MCPToolProvider
+               --uses_tool--> get_account_balance --has_access_to--> sink
+
+    Before the widening this graph was unreachable: the writer edge only
+    existed when the server was visible from the reader's file.
+    """
+    ids = {
+        "entry": "entry_point:" + "e" * 16,
+        "writer": "mcp_server:" + "w" * 16,
+        "source": "untrusted_source:" + "u" * 16,
+        "agent": "agent:" + "a" * 16,
+        "tool": "tool:" + "t" * 16,
+        "sink": "sink:" + "s" * 16,
+        "e_w": "edge:" + "1" * 16,
+        "w_s": "edge:" + "2" * 16,
+        "s_a": "edge:" + "3" * 16,
+        "a_t": "edge:" + "4" * 16,
+        "t_k": "edge:" + "5" * 16,
+    }
+    _put(store, ids["entry"], "entry_point", "POST /chat")
+    _put(store, ids["writer"], "mcp_server", "finmail")
+    _put(
+        store, ids["source"], "untrusted_source",
+        "mcp_tool_description:client.list_tools",
+    )
+    _put(
+        store, ids["agent"], "agent", "MCPToolProvider",
+        capabilities=["invokes_mcp_tool", "reads_untrusted"],
+    )
+    _put(store, ids["tool"], "tool", "get_account_balance")
+    _put(store, ids["sink"], "sink", "run_shell")
+    _link(store, ids["e_w"], ids["entry"], ids["writer"])
+    _link(
+        store, ids["w_s"], ids["writer"], ids["source"],
+        kind="writes_to",
+    )
+    _link(store, ids["s_a"], ids["source"], ids["agent"], flow_kind="data")
+    _link(
+        store, ids["a_t"], ids["agent"], ids["tool"], kind="uses_tool",
+    )
+    _link(store, ids["t_k"], ids["tool"], ids["sink"])
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].untrusted_source_id == ids["source"]
+    assert groups[0].write_chains == [
+        [ids["entry"], ids["writer"], ids["source"]]
+    ]
+    assert groups[0].read_chains == [
+        [ids["source"], ids["agent"], ids["tool"], ids["sink"]]
+    ]
+
+
 def test_find_chain_groups_ids_are_pinned_and_prefixed(
     store: GraphStore,
 ) -> None:
