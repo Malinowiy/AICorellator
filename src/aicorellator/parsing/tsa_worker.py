@@ -62,12 +62,24 @@ def _run_structure(file_path: Path, project_root: Path | None = None) -> dict | 
     outside the current working directory. Pass project_root to
     satisfy this requirement.
     """
-    cmd = [
+    """cmd = [
         "uvx", "--from", "tree-sitter-analyzer",
         "tree-sitter-analyzer",
         str(file_path),
         "--structure", "--format", "json",
+    ]"""
+    # `uvx` uses the newest available Python by default. As of 2026-10,
+    # tree-sitter-analyzer 2.2.0 depends on cachebox 5.2.3, which is a
+    # PyO3 extension that does not support Python 3.15. Pin to 3.14.
+    # If a future tree-sitter-analyzer release lifts this, remove the pin.
+    cmd = [
+        "uvx", "--python", "3.14",
+        "--from", "tree-sitter-analyzer",
+        "tree-sitter-analyzer",
+        str(file_path),
+        "--structure", "--format", "json",
     ]
+
     if project_root is not None:
         cmd.extend(["--project-root", str(project_root)])
 

@@ -147,3 +147,294 @@ def test_find_chains_sink_by_kind_still_works(
     """Existing kind='sink' behavior is preserved."""
     chains = store.query.find_chains()
     assert len(chains) == 1
+
+
+# ============================================================
+# ADR-0015 — structural edges and data_edges_only
+# ============================================================
+
+
+def _add_chain_graph(store: GraphStore) -> dict[str, str]:
+    """Build a graph with one control-only and one data-flow chain.
+
+        entry --control--> agent --control--> sink:ctl
+        entry --control--> agent --data---> sink:dat
+
+    Both paths share the entry -> agent edge; they diverge at the
+    agent, whose two out-edges differ only in flow_kind.
+    """
+    ids = {
+        "entry": "entry_point:" + "e" * 16,
+        "agent": "agent:" + "a" * 16,
+        "sink_ctl": "sink:" + "c" * 16,
+        "sink_dat": "sink:" + "d" * 16,
+        "e_entry": "edge:" + "0" * 16,
+        "e_ctl": "edge:" + "1" * 16,
+        "e_dat": "edge:" + "2" * 16,
+    }
+
+    store.nodes.upsert(Node(
+        id=ids["entry"], kind="entry_point", name="HTTP /chat",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["agent"], kind="agent", name="InvoiceAgent",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["sink_ctl"], kind="sink", name="control_sink",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["sink_dat"], kind="sink", name="data_sink",
+        host_id="localhost",
+    ))
+
+    store.edges.upsert(Edge(
+        id=ids["e_entry"], source_id=ids["entry"], target_id=ids["agent"],
+        kind="uses_model", host_id="localhost", flow_kind="control",
+    ))
+    store.edges.upsert(Edge(
+        id=ids["e_ctl"], source_id=ids["agent"], target_id=ids["sink_ctl"],
+        kind="has_access_to", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+    store.edges.upsert(Edge(
+        id=ids["e_dat"], source_id=ids["agent"], target_id=ids["sink_dat"],
+        kind="has_access_to", host_id="localhost", flow_kind="data",
+        data_flow_confirmed="parameter_match",
+    ))
+
+    return ids
+
+
+def test_find_chains_ignores_structural_edges(store: GraphStore) -> None:
+    """Structural edges are declarations, not paths (ADR-0015).
+
+    `guards` is the structural edge kind. No resolver emits it yet, so
+    the edge is constructed directly here — the traversal rule is what
+    is under test, not the resolver.
+    """
+    # entry --guards (structural)--> tool --has_access_to--> sink
+    # The only route to the sink runs through a structural edge, so
+    # no chain may be enumerated — even though every node and edge
+    # exists and the sink is reachable if flow_kind were ignored.
+    entry, tool, sink = (
+        "entry_point:" + "e" * 16,
+        "tool:" + "t" * 16,
+        "sink:" + "s" * 16,
+    )
+    structural_edge = "edge:" + "1" * 16
+
+    store.nodes.upsert(Node(
+        id=entry, kind="entry_point", name="POST /chat",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=tool, kind="tool", name="read_file", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=sink, kind="sink", name="shell", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id=structural_edge, source_id=entry, target_id=tool,
+        kind="guards", host_id="localhost", flow_kind="structural",
+    ))
+    store.edges.upsert(Edge(
+        id="edge:" + "2" * 16, source_id=tool, target_id=sink,
+        kind="has_access_to", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+
+    # Sanity: the graph is not empty, so the empty result comes from
+    # the structural edge, not from missing data.
+    assert store.nodes.count() == 3
+    assert store.edges.count() == 2
+
+    chains = store.query.find_chains()
+    assert chains == []
+
+    # The structural edge never appears in a chain, in either mode.
+    for chain in store.query.find_chains(data_edges_only=True):
+        assert structural_edge not in chain.edges
+
+
+def test_find_chains_traverses_provides_tool(store: GraphStore) -> None:
+    """provides_tool is control, so the access path is a chain (ADR-0015).
+
+    entry --delegates_to--> agent --has_access_to--> mcp_server
+          --provides_tool--> tool --has_access_to--> sink
+
+    The middle edges are control: the agent can reach the server, and
+    the server exposes the tool. Together they form the access path to
+    the sink — the thing the analysis is meant to evaluate. The final
+    edge carries confirmed data flow.
+    """
+    ids = {
+        "entry": "entry_point:" + "e" * 16,
+        "agent": "agent:" + "a" * 16,
+        "server": "mcp_server:" + "m" * 16,
+        "tool": "tool:" + "t" * 16,
+        "sink": "sink:" + "s" * 16,
+        "e1": "edge:" + "1" * 16,
+        "e2": "edge:" + "2" * 16,
+        "e3": "edge:" + "3" * 16,
+        "e4": "edge:" + "4" * 16,
+    }
+
+    store.nodes.upsert(Node(
+        id=ids["entry"], kind="entry_point", name="POST /chat",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["agent"], kind="agent", name="InvoiceAgent",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["server"], kind="mcp_server", name="systemutils",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["tool"], kind="tool", name="delete_file",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=ids["sink"], kind="sink", name="os.remove",
+        host_id="localhost",
+    ))
+
+    store.edges.upsert(Edge(
+        id=ids["e1"], source_id=ids["entry"], target_id=ids["agent"],
+        kind="delegates_to", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+    store.edges.upsert(Edge(
+        id=ids["e2"], source_id=ids["agent"], target_id=ids["server"],
+        kind="has_access_to", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+    store.edges.upsert(Edge(
+        id=ids["e3"], source_id=ids["server"], target_id=ids["tool"],
+        kind="provides_tool", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+    store.edges.upsert(Edge(
+        id=ids["e4"], source_id=ids["tool"], target_id=ids["sink"],
+        kind="has_access_to", host_id="localhost", flow_kind="data",
+        data_flow_confirmed="parameter_match",
+    ))
+
+    chains = store.query.find_chains()
+    assert len(chains) == 1
+    assert chains[0].nodes == [
+        ids["entry"], ids["agent"], ids["server"], ids["tool"], ids["sink"],
+    ]
+    assert chains[0].edges == [ids["e1"], ids["e2"], ids["e3"], ids["e4"]]
+
+    # The access path carries the data edge, so it survives the
+    # high-precision shortlist too.
+    assert len(store.query.find_chains(data_edges_only=True)) == 1
+
+
+def test_find_chains_default_keeps_control_only_chains(
+    store: GraphStore,
+) -> None:
+    """data_edges_only=False (default) returns control-only chains."""
+    ids = _add_chain_graph(store)
+
+    chains = store.query.find_chains()
+    assert len(chains) == 2
+
+    by_last_node = {c.nodes[-1]: c for c in chains}
+    assert set(by_last_node) == {ids["sink_ctl"], ids["sink_dat"]}
+
+    control_chain = by_last_node[ids["sink_ctl"]]
+    assert control_chain.edges == [ids["e_entry"], ids["e_ctl"]]
+
+
+def test_find_chains_data_edges_only_excludes_control_only(
+    store: GraphStore,
+) -> None:
+    """data_edges_only=True keeps only chains with a data edge."""
+    ids = _add_chain_graph(store)
+
+    chains = store.query.find_chains(data_edges_only=True)
+    assert len(chains) == 1
+
+    chain = chains[0]
+    assert chain.nodes == [ids["entry"], ids["agent"], ids["sink_dat"]]
+    assert chain.edges == [ids["e_entry"], ids["e_dat"]]
+
+
+def test_find_chains_data_edges_only_without_data_edges_is_empty(
+    store: GraphStore,
+) -> None:
+    """A control-only graph yields nothing when data_edges_only=True."""
+    # entry --uses_model--> agent --has_access_to--> sink, all control.
+    entry, agent, sink = (
+        "entry_point:" + "e" * 16,
+        "agent:" + "a" * 16,
+        "sink:" + "s" * 16,
+    )
+    store.nodes.upsert(Node(
+        id=entry, kind="entry_point", name="POST /chat",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=agent, kind="agent", name="InvoiceAgent", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=sink, kind="sink", name="shell", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="edge:" + "1" * 16, source_id=entry, target_id=agent,
+        kind="uses_model", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+    store.edges.upsert(Edge(
+        id="edge:" + "2" * 16, source_id=agent, target_id=sink,
+        kind="has_access_to", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+
+    # The control chain is enumerable by default...
+    assert len(store.query.find_chains()) == 1
+    # ...but not on the data-only shortlist.
+    assert store.query.find_chains(data_edges_only=True) == []
+
+
+def test_find_chains_data_edge_mid_path_qualifies(store: GraphStore) -> None:
+    """A data edge anywhere in the chain is enough (not just the last)."""
+    # entry --has_access_to (data)--> agent --uses_model (control)--> sink
+    entry, agent, sink = (
+        "entry_point:" + "e" * 16,
+        "agent:" + "a" * 16,
+        "sink:" + "s" * 16,
+    )
+    e_data = "edge:" + "1" * 16
+    e_control = "edge:" + "2" * 16
+    store.nodes.upsert(Node(
+        id=entry, kind="entry_point", name="POST /chat",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=agent, kind="agent", name="InvoiceAgent", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=sink, kind="sink", name="shell", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id=e_data, source_id=entry, target_id=agent,
+        kind="has_access_to", host_id="localhost", flow_kind="data",
+        data_flow_confirmed="parameter_match",
+    ))
+    store.edges.upsert(Edge(
+        id=e_control, source_id=agent, target_id=sink,
+        kind="uses_model", host_id="localhost", flow_kind="control",
+        data_flow_confirmed="unknown",
+    ))
+
+    chains = store.query.find_chains(data_edges_only=True)
+    assert len(chains) == 1
+    assert chains[0].edges == [e_data, e_control]
+

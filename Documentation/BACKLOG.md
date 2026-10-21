@@ -26,46 +26,57 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ## Recently done
 
+### 2026-10-20 — ADR-0015 implementation (backlog item 1.2a)
+
+- **ADR-0015 accepted.** `flow_kind` on every edge (control | data | structural). `data_flow_confirmed` on `has_access_to` (six values). Structural edges (guards) excluded from `find_chains`. `provides_tool` is **control** (access path = attack path until runtime monitoring). `data_edges_only` parameter on `find_chains`. Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
+- **Flow Analyzer** (`parsing/flow_analyzer.py`): name-based argument matching, non-linear ranking, `literal_only` requires all literals.
+- **Normalizer:** per-scan module cache; every edge carries `flow_kind`; `id_remap` preserves flow fields.
+- **Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four validation corpora (FinBot, NMB, dvmcp, mcploitable). The generic analyzer finds no direct call from a tool to a sink in these projects — all four are colocation-only. `data_edges_only = 0` everywhere. Two follow-ups recorded as 1.2a.1 and 1.2a.2.
+- **TSA fix:** `tsa_worker.py` pins `uvx --python 3.14` (tree-sitter-analyzer 2.2.0 → cachebox 5.2.3 → PyO3 0.27.1 does not support Python 3.15).
+- **Tests:** 344 passed.
+- **Scans (fresh, post-implementation):**
+
+  | Target | nodes | edges | chains | data_edges_only |
+  |---|---|---|---|---|
+  | finbot-ctf | 283 | 93 | 182 | 0 |
+  | NMB | 26 | 26 | 16 | 0 |
+  | dvmcp | 33 | 47 | 39 | 0 |
+  | mcploitable | 74 | 45 | 17 | 0 |
+
 ### 2026-10-20 — ADR-0015 design and documentation
 
-- **ADR-0015 accepted** (design). Control flow vs data flow: `flow_kind` on every edge, `data_flow_confirmed` on `has_access_to`, structural edges excluded from `find_chains`, `data_edges_only` parameter.
-- **ADR-0009 updated** — edge capabilities are orthogonal to `flow_kind`.
-- **ADR-0013 updated** — cross-file edges carry `flow_kind`.
-- **ADR-0007 updated** — `guards` edge carries `flow_kind = "structural"`.
-- **C4 L2 updated** — `flow_kind` lives in Graph Store; no container boundary change.
-- **C4 L3 Phase 1 updated** — Flow Analyzer component; `flow_kind` in normalizer pipeline.
-- **C4 L3 Phase 3 created** — Analysis and Reporting component view, including the prompt contract for `flow_kind`.
+- **ADR-0015 written and accepted** (design).
+- **ADR-0009, ADR-0013, ADR-0007 updated** to reference `flow_kind`.
+- **C4 L2, L3 Phase 1, L3 Phase 3 updated** — Flow Analyzer component; `flow_kind` in normalizer pipeline and prompt contract.
 
 ### 2026-10-14 — TSA investigation (item 1.1)
 
-- **TSA `--structure --format json` provides symbols only.** Classes, methods, fields, imports, annotations, line ranges. No call edges, no type information, no argument information.
-- **Implication:** `TSAOutput.call_edges` will never be populated. Flow-kind determination is our own AST analysis.
-- **Action:** `TSAOutput.call_edges` cleanup (see Parsing). Unblocks 1.2.
+- **TSA `--structure --format json` provides symbols only.** No call edges, no type information, no argument information. `TSAOutput.call_edges` will never be populated from TSA. Flow-kind determination is our own AST analysis.
 
 ### 2026-10-14 — P0/P2 review fixes (commit 2263fa7)
 
-- `voters.py` — `exploitable` must be a real JSON boolean; non-boolean rejected as invalid.
-- `judge.py` — per-judge `temperature`/`max_tokens` overrides honored.
-- `evaluator.py` — node/edge serialization includes capabilities and precision; evidence validated against the candidate chain (`evidence_valid` / `evidence_unknown`).
-- `prompts.py` — `PROMPT_VERSION` v1.1.0 → v1.2.0; calibration rules for FinBot FP root cause.
+- `exploitable` must be a real JSON boolean; non-boolean rejected as invalid.
+- Per-judge `temperature`/`max_tokens` overrides honored.
+- Node/edge serialization includes capabilities and precision; evidence validated against the candidate chain.
+- `PROMPT_VERSION` v1.1.0 → v1.2.0; calibration rules for FinBot FP root cause.
 
 ### Earlier
 
-- **CLI and Streamlit entry points** (commit fc266b0). `if __name__ == "__main__":` at module level; Streamlit `st.chat_input` / `st.button` / `st.form_submit_button` / `st.file_uploader`. Both marked with `entry_kind`.
-- **Project backlog created** (commit 8c78d15).
-- **README user manual** (commit 49f0cd9).
-- **PolyForm Noncommercial 1.0.0 license** (commit dd6da36).
+- CLI and Streamlit entry points (commit fc266b0).
+- Project backlog created (commit 8c78d15).
+- README user manual (commit 49f0cd9).
+- PolyForm Noncommercial 1.0.0 license (commit dd6da36).
 
 ### Deferred from the P0/P2 review
 
-- **Judge determinism.** The judge runs with `temperature=0.6` (from `models.yaml`). Deterministic verdicts require `0.0`. Priority: Low. Configuration choice, not a code default.
+- **Judge determinism.** The judge runs with `temperature=0.6`. Deterministic verdicts require `0.0`. Priority: Low. Configuration choice, not a code default.
 - **Raw voter response persistence.** ADR-0005 asks for provenance; `evaluator.py` drops `raw` before persistence. Decision needed: store or not. Priority: Medium.
 
 ---
 
 ## Flow Semantics and Chain Precision
 
-The graph mixes control flow and data flow, does not track taint, and produces chains whose verdicts depend on sampling noise rather than structure. On FinBot, ~160 of 180 chains are false positives. This category addresses the root cause. It sits at the top of the backlog because it is critical for MVP.
+The graph mixes control flow and data flow, does not track taint, and produces chains whose verdicts depend on sampling noise rather than structure. On FinBot, ~160 of 180 chains are false positives. This category addresses the root cause.
 
 **Reference:** `Documentation/Analysis/FP_TP_analysis.md`.
 
@@ -73,96 +84,199 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 **Priority:** High
 **Status:** **Done** (2026-10-13)
-**Result:** `Documentation/Analysis/FP_TP_analysis.md` — three FP examples, three TP examples, structural observations.
 
 ### 1.1 — Investigate what TSA can still provide
 
 **Priority:** High
 **Status:** **Done** (2026-10-14)
-**Finding:** TSA `--structure --format json` provides symbols only — classes (name, visibility, line_range), methods (name, visibility, line_range, class_name, is_method), fields, imports, annotations. No call edges, no type information, no argument information. `TSAOutput.call_edges` will never be populated from TSA.
-**Action taken:** Recorded in "Recently done". Unblocked 1.2. Triggers a cleanup item (Parsing / TSAOutput cleanup).
 
 ### 1.2 — ADR-0015: Control flow vs data flow
 
 **Priority:** High
-**Status:** **Design done** (2026-10-20). Implementation is 1.2a.
-**Result:** `Documentation/ADR/ADR_015.md` accepted. `flow_kind` on every edge (`control` | `data` | `structural`). `has_access_to` additionally carries `data_flow_confirmed` (six values). Structural edges are excluded from `find_chains`. `data_edges_only` parameter on `find_chains`. Prompt receives `flow_kind` and `data_flow_confirmed`. No hard calibration rules — the LLM decides confidence.
-**References:** ADR-0015, ADR-0009 (updated), ADR-0013 (updated), ADR-0007 (updated), C4 L2 (updated), C4 L3 Phase 1 (updated), C4 L3 Phase 3 (created).
+**Status:** **Done** (2026-10-20) — design and documentation.
 
 ### 1.2a — Implement ADR-0015
 
 **Priority:** High
-**Status:** Not started. Next item after documentation.
-**Rationale:** The design is accepted, but no code exists yet. Every edge in the graph is still missing `flow_kind`, and `data_flow_confirmed` is not computed. Until implementation, the FinBot FP rate is unchanged — the prompt calibration (P0/P2, v1.2.0) mitigates the symptom, but the payload still lacks the facts the LLM needs.
-**Approach:**
-1. **Schema** — `edges.flow_kind TEXT NOT NULL DEFAULT 'control'` with `CHECK`. `edges.data_flow_confirmed TEXT` (nullable) with `CHECK`. `graph/schema.sql`.
-2. **Models** — `Edge.flow_kind: str`, `Edge.data_flow_confirmed: str | None`. `graph/models.py`. `VALID_FLOW_KINDS`.
-3. **Patterns** — `FLOW_KINDS`, `STRUCTURAL_EDGE_KINDS`. `patterns.py`.
-4. **Flow Analyzer** — `_analyze_data_flow(tool_body, sink_call)` in `ast_normalizer.py` (or a dedicated `flow_analyzer.py`). Name-based argument matching: parameter, local variable, call result, literal, no args, unknown.
-5. **Normalizer** — set `flow_kind` on every edge. `structural` for `provides_tool` and `guards`. `control` for `uses_model`, `uses_tool`, `delegates_to`. `control` or `data` for `has_access_to`, based on `data_flow_confirmed`.
-6. **Query layer** — `find_chains` gains `data_edges_only: bool = False`. Traverses `control` and `data` edges only; `structural` edges are excluded.
-7. **Prompt** — `flow_kind` and `data_flow_confirmed` in the edge payload. `PROMPT_VERSION` → v1.3.0. Instructions: data chains are stronger evidence; structural edges on a chain path are a construction error; the LLM decides confidence.
-8. **Tests** — unit tests for the Flow Analyzer (all six values); integration tests for `find_chains` with `data_edges_only` true and false; regression on FinBot (expected chain count drop from ~180 to a few).
-9. **Update ADR-0015** — status `Accepted`, with a note that implementation is in place.
+**Status:** **Done** (2026-10-20) — code in place, tests green, scans run.
+**Known limitation:** `data_flow_confirmed = "unknown"` on all edges across all four corpora. `data_edges_only = 0`. Follow-ups: 1.2a.1 and 1.2a.2.
 
-**References:** ADR-0015.
+### 1.2a.1 — Analyzer asks the right question
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** The generic Flow Analyzer asks "does this tool call a function named like the sink?" On real code, the sink node is the **definition** of the dangerous operation, not a call site. The interesting question for FinBot-style layouts is: "how does data reach the dangerous call **inside the sink method's own body**?" (`delete_file(file_id)` → `self.db.delete(f)` → `parameter_match`).
+**Approach:** Add a second analyzer pass that inspects the body of each sink function and asks whether tool arguments reach the dangerous call inside it. Keep the existing `has_access_to` analyzer as-is (it correctly reports "no direct call" for colocation layouts).
+**References:** Step 6 report; ADR-0015 Deferred.
+
+### 1.2a.2 — Detector enrichment of `data_flow_confirmed`
+
+**Priority:** High
+**Status:** **Done** (2026-10-20)
+**Result:** `enrichment.py` with three pure helpers. LangChain: `uses_tool` → `parameter_match` if the tool is named in the system prompt; `uses_model` → `literal_only` / `parameter_match` / `unknown`. FastMCP and MCP Python: `tool_data_flow` on tool nodes (`parameter_match` / `no_args`). Normalizer copies `tool_data_flow` at two waived sites (`provides_tool` loop, `_link_mcp_entries_to_tools`). Shape unchanged on all four corpora. Prompt version stays v1.4.1.
+**Results:** dvmcp `data_edges_only` 0 → 24; mcploitable 0 → 6; NMB 0 (uses_model enriched but not on a path); FinBot 0 (path-heuristic servers, no `framework` attribute; `provides_tool` site wired but dormant, unit-tested). **Step 6 caveat closed**: `data_edges_only > 0` for the first time on a real corpus.
+**Gaps (follow-ups):**
+- FinBot: `_node_from_method` / `_body_attributes` would need to set `tool_data_flow` → new item 1.2a.2a.
+- NMB `uses_tool`: `cross_file.py` resolver does not read the system prompt → new item 1.2a.2b.
+- LangChain `Tool(...)` instances: no function node, no signature.
+- Latent upsert hazard: an explicit `"unknown"` overwrites an enriched `"data"`; no duplicate ids today → new item 1.2a.2c if needed.
+
+### 1.2a.2a — FinBot-style MCP tool enrichment
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** FinBot's MCP servers are path-heuristic (no `framework` attribute) and tool nodes are normalizer-created from TSA symbols. `tool_data_flow` never reaches them, so the `provides_tool` enrichment site is dormant. Closing the gap requires normalizer-side enrichment of tool nodes.
+**Approach:** In `_node_from_method` (or `_body_attributes`), set `tool_data_flow` on normalizer-created tool nodes by analysing the TSA method body (`os.remove(param)` etc.). Reuses the same rules as the detector enrichment.
+**References:** 1.2a.2 report, gap 1.
+
+### 1.2a.2b — Cross-file `uses_tool` enrichment
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** NMB's 9 `uses_tool` edges are built by `cross_file.py` (import-driven) and never read the system prompt, so they stay `control/unknown`.
+**Approach:** Extend `resolve_agent_tool_edges` to read the agent's system prompt from the same file and enrich per tool named there. Same helper as LangChain.
+**References:** 1.2a.2 report, gap 2.
+
+### 1.2a.2c — Upsert enrichment precedence
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `EdgesRepository.upsert` lets a later explicit `"unknown"` overwrite an enriched `data_flow_confirmed` (only `NULL` falls back). `flow_kind` is safe (`data` wins). No duplicate edge ids today, but the hazard is latent.
+**Approach:** Change `upsert` to prefer non-`"unknown"` over `"unknown"` on `data_flow_confirmed`, mirroring the `flow_kind` rule. Verify against the four corpora for shape stability.
+**References:** 1.2a.2 report, gap 5.
+
+### 1.2a.3 — ORM call sites in capability patterns
+
+**Priority:** High
+**Status:** Not started
+**Rationale:** On FinBot, 7 of 8 sink nodes are `unknown` because they use ORM session calls (`self.db.delete(f)`, `self.db.commit()`, `session.add(...)`, `repo.*`) that are not in `CAPABILITY_WRITES_DB`. Same root cause as the Step 6 `unknown` — one level deeper. Adding these call sites to the capability patterns lets the sink analyzer fire on the common ORM layout.
+**Approach:** Extend `patterns.CAPABILITY_WRITES_DB` (and `CAPABILITY_READS_DB` where relevant) with the ORM patterns: `*.db.delete`, `*.db.add`, `*.db.commit`, `*.session.delete`, `*.session.add`, `*.session.commit`, `*.session.query`. Keep the list narrow (well-known ORM method names) so the false-positive rate stays controlled (ADR-0009).
+**References:** Step 7 report, limitation 1.
+
+### 1.2a.4 — Constant collection rule
+
+**Priority:** Medium
+**Status:** Not started
+**Rationale:** `subprocess.run(["docker", "info"])` classifies as `unknown`, not `literal_only`, because `_classify_argument` only treats `ast.Constant` as a literal. Constant collections (`ast.List`, `ast.Tuple`, `ast.Dict`, `ast.Set` whose elements are all constants) are equivalent to literals for the sink analyzer. FinBot's `check_docker` and `check_redis` are in this class.
+**Approach:** In `_classify_argument`, treat a collection whose elements are all constants as `literal_only`. Nested collections recurse. Empty collections count as literal.
+**References:** Step 7 report, limitation 2.
+
+### 1.2a.5 — Class-body sink analyzer
+
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Result:** `analyze_sink_class` inspects every direct method of the class plus class-level statements (nested classes excluded; nested functions inside methods count). Class sink = container of callable entry points; the dangerous call receives the caller's data in the method the caller invokes, not in `__init__`.
+**Results:** FinBot `sink_data_flow` 81/2/31 → 101/2/11 (20 of 21 class sinks → `parameter_match`). dvmcp 4/4/4 → 6/4/2. mcploitable 4/1/3 → 5/1/2. NMB unchanged (no class sinks). Shape untouched everywhere; function-kind sinks unchanged.
+**Remaining `unknown` on FinBot (11):** `VulnerableChatAssistant` (f-string/dict arguments, ADR-0001 name-based limits → 1.2a.3g); `TestLabsGuardrailConfigRepository` (no-argument `delete_config`, 1.2a.3c rule); class nodes with no dangerous call in any method or at class level.
+
+### 1.2a.3b — repo.<verb>_<noun> handling
+
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Result:** Option B (trailing-* verb families). `_matches_any` recognises patterns ending in `*`; `_matches_prefix` requires the qualifier segment to match exactly and the trailing segment to start with the verb. FinBot: 10 new sink nodes, 41 new chains (all pre-existing 605 preserved), sink_data_flow 35/65/2 → 43/69/2. NMB/dvmcp/mcploitable unchanged. Over-match measured as 0 in all four corpora.
+**Deferred:** a word-boundary variant of `_matches_prefix` (rejects `repo.getter` while accepting `repo.get_file`) is a one-line change if a real over-match appears. Mid-pattern stars (`repo.*_file`) are not supported.
+
+### 1.2a.3c — db.commit()-only sinks
+
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Result:** A bare `db.commit()` / `session.commit()` / `repo.commit()` / `conn.commit()` in a sink body is `parameter_match`. Exception lives in `analyze_sink_body`, not in `_dangerous_calls`. `ORM_COMMIT_CALLS` in `patterns.py` (not merged into `CAPABILITY_ORM_WRITES_DB`). Edge case: parameterless sink with commit-only body stays `unknown`.
+**FinBot:** 43/69/2 → 81/31/2 (38 sinks changed, all `unknown → parameter_match`, 0 shape change). NMB/dvmcp/mcploitable unchanged.
+**Follow-ups:** 1.2a.3e (leading-underscore qualifier), 1.2a.3f (function resolution by `(name, line_start)`), 1.2a.3g (attribute-based dangerous calls). Class-kind sinks are 1.2a.5.
+
+### 1.2a.3d — Test-file sinks
+
+**Priority:** Low
+**Status:** **Done** (2026-10-20)
+**Result:** Voter, solo, and judge system prompts note that test-file nodes are not production entry points. `PROMPT_VERSION` v1.4.1. No new attributes, no discovery change; the LLM uses `source_file` in node attributes.
+**Rationale:** 22 of FinBot's 114 sinks come from `tests/`. Excluding tests would hide real test-file vulnerabilities; a prompt note lets the LLM discount them without losing signal.
+
+### 1.2a.3e — Leading-underscore qualifier normalization
+
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Rationale:** `_conn.commit()`, `_db.commit()`, `_session.commit()`, `_repo.get()` — leading underscore defeats exact-qualifier matching. mcploitable uses `_conn.commit()` throughout and shows no delta on 1.2a.3c because of it. Also `cur.execute(...)` vs `cursor.execute(...)` (abbreviated qualifier).
+**Approach:** Normalize a leading `_` off the qualifier segment inside `_matches_prefix` / `_matches_any`. Touches capability extraction, so it must be verified against all four corpora for over-match. Optionally add `cur.execute` / `cur.executemany` / `cur.fetchone` / `cur.fetchall` to the DB statement call patterns.
+**References:** 1.2a.3c report, finding 1.
+
+### 1.2a.3f — Function resolution by (name, line_start)
+
+**Priority:** Low
+**Status:** **Done** (2026-10-20)
+**Result:** `_index_functions` / `_index_classes` keyed by `(name, line_start)`, every definition kept. `_body_attributes` resolves to the definition containing the node's `line_start` (exact, then containing, then closest preceding, then name fallback). Detector nodes (`line_start = None`) take the name fallback, preserving old behaviour. Edge loop uses the same resolver; verified edge-neutral.
+**Results:** FinBot 101/2/11 → 100/2/12. One sink changed: `toggle_enabled` @ `:1426` was reading the `:664` body (`parameter_match` artifact), now reads its own parameterless commit-only body (`unknown`, per 1.2a.3c). NMB/dvmcp/mcploitable unchanged.
+**Not taken:** "closest following" rule — never fires on the four corpora; defensive only.
+
+### 1.2a.3g — Attribute, f-string, and composite argument classification
+
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Result:** `_classify_argument` now recognises: `self.X` assigned from a parameter or local in the same body (fixpoint), f-strings with a parameter-derived component, and Dict/List/Tuple/Set with a parameter-derived element. Composite returns the component's own kind (`local_var_match`, `parameter_match`, ...); the sink analyzer collapses to `parameter_match`. Mixed collections are now `parameter_match` (was `unknown`) — a deliberate loosening of ADR-0015, documented in-code: the body under analysis built the collection and the parameter is inside the value. Unresolved parts still block promotion.
+**Results:** dvmcp 6/4/2 → 8/4/0; mcploitable 5/1/2 → 6/1/1; FinBot, NMB unchanged (FinBot has zero `self.X` attribute hits in sink bodies, measured). Shape unchanged on all four.
+**Decision 8 (not flipped):** an f-string with only a local (literal-derived) interpolation returns `local_var_match`, consistent with `os.remove(local)`. Parameter-only would be an arbitrary cutoff.
+**Deferred:** `param.attr` (`file_data.filename`, `session_context.current_user.id`) is still `unknown`. The 5 arguments in FinBot `create_vendor_file` are the visible false-negative family. New item 1.2a.3j.
+
+### 1.2a.3h — Cursor fetch reads
+
+**Priority:** Low
+**Status:** **Done** (2026-10-20)
+**Result:** `cur.fetchone` / `fetchall` / `fetchmany` and `cursor.*` added to `CAPABILITY_ORM_READS_DB`. Fetch-only bodies are not sinks (`reads_db` is not in `SINK_CAPABILITIES`); a sink with `execute('INSERT ...')` + `fetchall()` now carries both capabilities.
+**Results:** dvmcp 7 → 11 `reads_db` nodes; mcploitable 3 → 4. FinBot, NMB unchanged. Over-match 0 (19 genuine call sites, 0 false positives).
+**Not taken:** `c.fetchall()` (NMB single-letter qualifier — too broad); chained calls (`connection.execute(...).fetchone()`, receiver is a Call — out of scope).
+
+### 1.2a.3i — Adapter attribute capability patterns
+
+**Priority:** Low
+**Status:** **Done** (2026-10-20)
+**Result:** Two-segment adapter patterns added: `CAPABILITY_EXECUTES_CODE` (`shell.run`, `adapter.execute`, `adapter.spawn`, ...), `CAPABILITY_HTTP_EGRESS` (`client.post`, `client.put`, `client.patch`, `client.delete`, `adapter.post`, `session.post`, `session.request`, ...), `CAPABILITY_CALLS_LLM` (`llm.invoke`, `llm.chat`, `llm.complete`, `llm.generate`, `model.invoke`, `model.chat`, `model.complete`). Bare verbs, `self.run` / `self.post` not added. `client.get` deliberately not added (GET is a read; `requests.get` / `httpx.get` cover the idiom; pinned in 3 tests). Shell adapters not put in `CAPABILITY_EXECUTES_SHELL_EXPLICIT` (shell semantics unknowable; `executes_code` already sink).
+**Results:** FinBot 379/151/646 → 381/152/647, `sink_data_flow` 101/2/11 → 104/2/11 (`GuardrailHookService`, `invoke`, `push_event`). NMB / dvmcp / mcploitable unchanged. Over-match 0 (2 `client.post` call sites, both true positives). Kind flip `GuardrailHookService`: `guardrail → sink` (ADR-0009 capability override; body POSTs to webhook; `guards` edge emission is 1.2a.5x).
+
+### 1.2a.3j — Parameter attribute arguments
+
+**Priority:** Medium
+**Status:** **Done** (2026-10-20)
+**Result:** `param.X` and `local.X` (attribute on a parameter or body-local) → `parameter_match`, any depth as long as the base name is a parameter or local. Module-level base (`obj.X`) stays `unknown`. `local.X` is `parameter_match` (consistent with `self.q = <local>` from 1.2a.3g; value-blind over-approximation for literal-derived locals, ADR-0001). Opt-in gate `parameter_attributes=False` by default; only `analyze_sink_body` opts in — `_classify_argument` is shared with the edge analyzer, and the ungated variant would change edge values. Measured ungated: byte-identical on all four corpora today, so the gate costs nothing empirically.
+**Results:** FinBot 100/2/12 → 101/2/11 (`create_vendor_file` 5 args → `parameter_match`). mcploitable 6/1/1 → 7/1/0 (`main`: `open(args.log, 'w')` with `args` from `ap.parse_args()`). NMB, dvmcp unchanged. Over-match 0 (12 args newly classified, 0 module-level base).
+**Not taken:** `self.q.name` (base is `self`, not the derived attribute — third-level indirection); `fetch().path` (base is a Call — no call tracking, ADR-0001).
+
+### 1.2a.3k — Dev script discovery
+
+**Priority:** Low
+**Status:** Not started
+**Rationale:** `scripts/test_websocket.py` (FinBot) contributes a sink `push_event` and a chain edge. This is not a false positive — the script really does POST — but it is low-value noise from a non-production directory. 1.2a.3d covers `tests/` via a prompt note; `scripts/` is not test, but dev tooling.
+**Approach:** Either an `is_dev_code: true` node attribute (mirroring the test-file note) or a discovery exclusion for `scripts/`. The attribute is the softer option; the exclusion is cleaner if scripts are never production. Decide on the corpus evidence.
+**References:** 1.2a.3i report, review item 3.
 
 ### 1.3 — Capability-based taint, combined with non-linear chains
 
 **Priority:** High
-**Status:** Blocked by 1.2a (needs `flow_kind` in the graph) and by `reads_untrusted`
-**Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Capability-based taint gives this without full dataflow analysis. Non-linear chains (chain groups, ADR-0010) require untrusted sources.
-**References:** ADR-0009, ADR-0010, ADR-0012, TP examples #1, #2.
-**Approach:**
-- Entry point must have `reads_untrusted` or `http_ingress` or `cli_input` (new capability).
-- Path must contain at least one `data_flows_to` edge (currently: `flow_kind = "data"` on `has_access_to`).
-- Sink must have a sink capability.
-- Combine with `find_chain_groups` for non-linear chains.
+**Status:** Blocked by `reads_untrusted` and by 1.2a.1/1.2a.2 (needs `data` edges on real targets)
+**Rationale:** Even with `flow_kind`, a chain is only exploitable if untrusted data enters somewhere and reaches a dangerous sink. Non-linear chains (chain groups, ADR-0010) require untrusted sources.
+**References:** ADR-0009, ADR-0010, ADR-0012.
 
 ### 1.3a — Architecture and data-model review
 
 **Priority:** High
-**Status:** Blocked by 1.2a and 1.3
-**Rationale:** Introducing capability-based taint and non-linear chains changes the data model further (taint sources, chain groups table usage). This review happens once 1.2a and 1.3 are in place, so it can verify the whole picture, not the first half.
-**Deliverables:**
-1. **Data-model review** — taint sources on nodes, `chain_groups` table population, any new tables or columns.
-2. **Python model review** — `Node.lethal_trifecta`, `Node.taint_sources`, `ChainGroup`.
-3. **Query layer review** — `find_chain_groups`, interaction with `data_edges_only`.
-4. **Normalizer review** — taint propagation.
-5. **Prompt contract review** — taint information in the payload, prompt version bump.
-6. **ADR updates** — ADR-0009, ADR-0010, ADR-0015, ADR-0016 (taint model, if needed).
-7. **C4 updates** — C4 L3 Phase 1, C4 L3 Phase 3.
-8. **Test plan.**
+**Status:** Blocked by 1.3
+**Rationale:** Introducing capability-based taint and non-linear chains changes the data model further (taint sources, chain groups table usage).
+**Deliverables:** Data-model review, Python model review, query layer review, normalizer review, prompt contract review, ADR updates, C4 updates, test plan.
 
 ### 1.4 — Prompt engineering: grounded evaluation
 
 **Priority:** High
-**Status:** **Partially done** (P0/P2, v1.2.0: calibration rules for the FinBot root cause). Full version blocked by 1.2a (prompt receives `flow_kind` only after implementation).
-**Rationale:** The FP examples show the LLM gives contradictory verdicts on structurally identical chains. The prompt lacks grounding criteria. The P0/P2 fix added calibration rules; the full fix needs `flow_kind` in the payload.
-**Approach (remaining after 1.2a):**
-- Prompt v1.3.0 receives `flow_kind` and `data_flow_confirmed`.
-- Instructions: data chains are stronger than control chains; structural edges on a path are a construction error; `data_flow_confirmed` describes how the data flow was established.
-- `uncertain` verdict with concrete criteria for structural reachability without implementation details.
-- Test scripts and dev scripts distinguished from production entry points.
-- **No hard confidence rules.** The LLM decides.
+**Status:** **Partially done** (P0/P2 v1.2.0 calibration; v1.3.0 flow_kind instructions). Full version blocked by 1.3a.
+**Remaining:** `uncertain` verdict with concrete criteria; explicit production-vs-test entry point distinction; prompt regression tests.
 
 ### 1.5 — Graph densification
 
 **Priority:** Medium
-**Status:** Deferred until 1.2a is complete and 1.3 design is in place.
-**Rationale:** The graph is sparse (FinBot: 283 nodes, 93 edges — ratio 0.33). Many real paths go through intermediate functions that are not classified. Adding call-graph edges without flow semantics would worsen false positives: more paths, same lack of data-flow distinction. Densification must come after `flow_kind` and taint are in place.
-**Approach (when unblocked):**
-- Add call-graph edges (`calls`) between all functions.
-- Add import edges (`imports`) between modules.
-- Extend cross-file resolution to all edge kinds.
-- Re-tune `max_hops` — denser graphs produce longer paths.
+**Status:** Deferred until 1.2a.1, 1.2a.2, and 1.3 design are in place.
+**Rationale:** The graph is sparse (FinBot: 283 nodes, 93 edges — ratio 0.33). Adding call-graph edges without taint would worsen false positives.
 
 ### 1.6 — Lethal trifecta detection
 
 **Priority:** High
 **Status:** Blocked by 1.3 (needs `reads_untrusted`)
-**Rationale:** ADR-0009 defines the combination but nothing implements it. Cheap to implement once `reads_untrusted` exists.
-**Approach:** On node write, compute `lethal_trifecta`. Chains passing through such nodes get `priority: high`.
 
 ---
 
@@ -172,21 +286,20 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Currently `has_access_to` (tool → sink) is built only within a single file. In mcploitable and dvmcp, 8–12 sink nodes have no incoming edges because the tools that reach them live in other files.
-**Approach:** Extend the call graph to span imports. Reuse the import table in `entry_points._collect_module_imports`. Populate `flow_kind` and `data_flow_confirmed` on the resulting edges (ADR-0015).
+**Rationale:** `has_access_to` (tool → sink) is built only within a single file. In mcploitable and dvmcp, sink nodes with no incoming edges exist because tools that reach them live in other files.
+**Approach:** Extend the call graph to span imports. Populate `flow_kind` and `data_flow_confirmed` on the resulting edges (ADR-0015).
 
 ### `openai_agents.py` detector
 
 **Priority:** High
 **Status:** Not started
-**Rationale:** Last detector in ADR-0011 implementation order.
+**Rationale:** Last detector in ADR-0011 implementation order. The OpenAI Agents SDK is a rising framework; targets using it currently produce an empty graph.
 
 ### TSAOutput cleanup
 
 **Priority:** Low
 **Status:** Not started
-**Rationale:** `TSAOutput.call_edges` and `TSAOutput.precision` are unused and will never be populated from TSA (item 1.1). Keeping them is misleading.
-**Approach:** Remove `call_edges` from `TSAOutput`. Either remove `precision` or document it is always `"syntactic"`. Update `tsa_worker.py` and tests.
+**Rationale:** `TSAOutput.call_edges` and `TSAOutput.precision` are unused and will never be populated from TSA.
 
 ### Additional TSA modules for non-Python languages
 
@@ -210,7 +323,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### Chain groups (ADR-0010)
 
 **Priority:** High
-**Status:** Not started. Goes with Flow Semantics item 1.3.
+**Status:** Not started. Goes with 1.3.
 
 ### Chain group prioritization (ADR-0012)
 
@@ -220,7 +333,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `reads_untrusted` capability
 
 **Priority:** High
-**Status:** Blocked by untrusted source detection. Goes with Flow Semantics item 1.3.
+**Status:** Blocked by untrusted source detection. Goes with 1.3.
 
 ### Dynamic chain selection
 
@@ -239,7 +352,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `guards` edge emission
 
 **Priority:** High
-**Status:** Partially done (node kind only). When emitted, the edge carries `flow_kind = "structural"` (ADR-0015).
+**Status:** Partially done (node kind only). When emitted, the edge carries `flow_kind = "structural"`.
 
 ### Guardrail attributes
 
@@ -263,7 +376,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### `untrusted_source` node kind
 
 **Priority:** High
-**Status:** Not started. Goes with Flow Semantics item 1.3.
+**Status:** Not started. Goes with 1.3.
 
 ### Untrusted source detection
 
@@ -335,7 +448,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 ### SCIP integration
 
 **Priority:** Icebox
-**Status:** Deferred until a target requires it. TSA does not provide call edges (item 1.1), so SCIP would not change flow-kind determination.
+**Status:** Deferred until a target requires it.
 
 ### Multi-host (Core + Agent)
 
@@ -343,7 +456,7 @@ The graph mixes control flow and data flow, does not track taint, and produces c
 
 ### `structural_heuristics.py`
 
-**Priority:** Cancelled. Its role was absorbed by `classification.py` (ADR-0011).
+**Priority:** Cancelled. Its role was absorbed by `classification.py`.
 
 ---
 

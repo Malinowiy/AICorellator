@@ -153,6 +153,9 @@ def test_resolve_edges_nmb_pattern(tmp_path: Path) -> None:
     edges = resolve_agent_tool_edges(manifest, nodes)
     assert len(edges) == 2
     assert all(e.kind == "uses_tool" for e in edges)
+    # ADR-0015: control flow, data flow unconfirmed.
+    assert all(e.flow_kind == "control" for e in edges)
+    assert all(e.data_flow_confirmed == "unknown" for e in edges)
 
     # Edge IDs are hashes, so compare by target node name/source_file,
     # not by raw ID.

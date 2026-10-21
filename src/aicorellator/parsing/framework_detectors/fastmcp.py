@@ -17,11 +17,14 @@ Extracted nodes:
   - mcp_server — one per `FastMCP(...)` call, carrying the server name.
   - tool       — one per `@<var>.tool(...)` decorator, with the parent
                  server recorded in `parent_server`. Capabilities are
-                 extracted from the decorated function body (ADR-0009).
+                 extracted from the decorated function body (ADR-0009),
+                 and `tool_data_flow` from its signature (1.2a.2).
 
 Edges: none from this detector. Cross-file resolution and the virtual
 MCP entry point (MCP client → tool) are produced by the normalizer
-(ADR-0013, A3 variant).
+(ADR-0013, A3 variant). The normalizer copies `tool_data_flow` onto the
+edges it builds, which is where the enrichment becomes an edge
+attribute.
 
 Per-file contract (ADR-0011): the detector reads one file and returns
 nodes from that file alone.
@@ -35,6 +38,7 @@ import logging
 
 from ...graph.models import Node
 from .base import DetectionResult, FrameworkDetector
+from .enrichment import enrich_provides_tool
 
 
 log = logging.getLogger(__name__)
@@ -99,6 +103,14 @@ class FastMCPDetector(FrameworkDetector):
                 extra_attrs={
                     "framework": self.name,
                     "parent_server": server_name,
+                    # 1.2a.2: the tool's signature answers "does the MCP
+                    # client hand this tool data?". The normalizer copies
+                    # this onto the server → tool edge it builds. The
+                    # attribute is the decision's kind (a JSON string);
+                    # the normalizer rebuilds the provenance.
+                    "tool_data_flow": enrich_provides_tool(
+                        func_node, framework=self.name
+                    ).kind,
                 },
             )
             node.capabilities = caps

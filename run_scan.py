@@ -12,7 +12,13 @@ logging.basicConfig(
 
 from aicorellator import GraphStore
 from aicorellator.ingestion import ingest, discover
-from aicorellator.parsing import run_tsa, normalize, write_graph, set_phase1_done
+from aicorellator.parsing import (
+    make_context,
+    normalize,
+    run_tsa,
+    set_phase1_done,
+    write_graph,
+)
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
 from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.entry_points import run as run_entry_points
@@ -112,11 +118,11 @@ def main() -> int:
     print()
 
     # --- Normalization (merge everything into a graph delta) ---
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, tsa, ep, llm,
         capabilities=capabilities,
         framework_detection=detection,
-    )
+    ))
 
     # --- Write to SQLite ---
     with GraphStore(ws.db_path) as store:

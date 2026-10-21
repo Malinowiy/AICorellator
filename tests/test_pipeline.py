@@ -28,7 +28,13 @@ import pytest
 
 from aicorellator import GraphStore
 from aicorellator.ingestion import discover, ingest
-from aicorellator.parsing import normalize, run_tsa, set_phase1_done, write_graph
+from aicorellator.parsing import (
+    make_context,
+    normalize,
+    run_tsa,
+    set_phase1_done,
+    write_graph,
+)
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
@@ -177,7 +183,7 @@ def test_phase1_full_pipeline(
     assert "openai" in providers
 
     # 5. Normalization
-    delta = normalize(manifest, tsa, ep, llm)
+    delta = normalize(make_context(manifest, tsa, ep, llm))
     node_kinds = {n.kind for n in delta.nodes}
     assert "agent" in node_kinds
     assert "mcp_server" in node_kinds
@@ -214,7 +220,7 @@ def test_pipeline_idempotent(
     tsa = run_tsa(manifest, target.root)
     ep = run_entry_points(manifest)
     llm = run_llm_extractor(manifest)
-    delta = normalize(manifest, tsa, ep, llm)
+    delta = normalize(make_context(manifest, tsa, ep, llm))
 
     with GraphStore(pipeline_db) as store:
         write_graph(store, delta)
@@ -222,7 +228,7 @@ def test_pipeline_idempotent(
         edges_first = store.edges.count()
 
     # Second run: same target, same input
-    delta2 = normalize(manifest, tsa, ep, llm)
+    delta2 = normalize(make_context(manifest, tsa, ep, llm))
 
     with GraphStore(pipeline_db) as store:
         write_graph(store, delta2)
@@ -257,7 +263,7 @@ def test_pipeline_produces_candidate_chains(
     tsa = run_tsa(manifest, target.root)
     ep = run_entry_points(manifest)
     llm = run_llm_extractor(manifest)
-    delta = normalize(manifest, tsa, ep, llm)
+    delta = normalize(make_context(manifest, tsa, ep, llm))
 
     with GraphStore(pipeline_db) as store:
         write_graph(store, delta)
@@ -292,7 +298,9 @@ def test_pipeline_persists_capabilities(
     tsa = run_tsa(manifest, target.root)
     ep = run_entry_points(manifest)
     llm = run_llm_extractor(manifest)
-    delta = normalize(manifest, tsa, ep, llm, capabilities=capabilities)
+    delta = normalize(
+        make_context(manifest, tsa, ep, llm, capabilities=capabilities)
+    )
 
     with GraphStore(pipeline_db) as store:
         write_graph(store, delta)

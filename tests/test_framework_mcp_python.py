@@ -166,3 +166,59 @@ async def t() -> str:
 """)
     for node in result.nodes:
         assert node.attributes.get("framework") == "mcp_python"
+
+
+# ------------------------------------------------------------
+# 1.2a.2 — tool_data_flow for the normalizer's server → tool edge
+# ------------------------------------------------------------
+
+def test_tool_with_parameters_records_parameter_match() -> None:
+    """A tool with a parameter receives the client's data (MCP channel)."""
+    result = _detect("""
+from mcp.server import Server
+server = Server("srv")
+
+@server.call_tool()
+async def search(query: str) -> str:
+    return "ok"
+""")
+    tools = [n for n in result.nodes if n.kind == "tool"]
+    assert len(tools) == 1
+    assert tools[0].attributes["tool_data_flow"] == "parameter_match"
+    # The detector emits no edges; the normalizer copies the attribute
+    # onto the edge it builds.
+    assert result.edges == []
+
+
+def test_tool_without_parameters_records_no_args() -> None:
+    """A parameterless tool has nothing to receive."""
+    result = _detect("""
+from mcp.server import Server
+server = Server("srv")
+
+@server.call_tool()
+async def health() -> str:
+    return "ok"
+""")
+    tools = [n for n in result.nodes if n.kind == "tool"]
+    assert len(tools) == 1
+    assert tools[0].attributes["tool_data_flow"] == "no_args"
+
+
+def test_tool_method_ignores_self() -> None:
+    """`self` is not a client-supplied argument."""
+    result = _detect("""
+from mcp.server import Server
+
+class MyServer:
+    def __init__(self):
+        self.server = Server("srv")
+
+    def setup(self):
+        @self.server.call_tool()
+        async def ping(self) -> str:
+            return "ok"
+""")
+    tools = [n for n in result.nodes if n.kind == "tool"]
+    assert len(tools) == 1
+    assert tools[0].attributes["tool_data_flow"] == "no_args"

@@ -15,6 +15,12 @@ Design constraints:
   name of every Call node and check whether it matches a known
   pattern.
 
+The patterns are `CapabilityRule` objects from `patterns.py`, matched
+by `patterns_registry.CallPattern` (step 3): the trailing-segment,
+verb-family and underscore rules live there, not here. Each branch
+below names the rule it consults, so a classification can always be
+traced to the rule and its stated reason.
+
 The extractor produces a mapping from symbol (class or function)
 to the set of capabilities its body exercises.
 """
@@ -25,24 +31,26 @@ import ast
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable
 
 from ..patterns import (
-    CAPABILITY_CALLS_LLM,
-    CAPABILITY_EXECUTES_CODE,
-    CAPABILITY_EXECUTES_SHELL_EXPLICIT,
-    CAPABILITY_EXECUTES_SHELL_IMPLICIT,
-    CAPABILITY_EXECUTES_SHELL,
-    CAPABILITY_HTTP_EGRESS,
-    CAPABILITY_INVOKES_MCP_TOOL,
-    CAPABILITY_READS_DB,
-    CAPABILITY_READS_ENV,
-    CAPABILITY_READS_FILESYSTEM,
-    CAPABILITY_WRITES_DB,
-    CAPABILITY_WRITES_FILESYSTEM,
+    CALLS_LLM_RULE,
+    DB_STATEMENT_RULE,
+    EXECUTES_CODE_RULE,
+    EXECUTES_SHELL_EXPLICIT_RULE,
+    EXECUTES_SHELL_IMPLICIT_RULE,
+    HTTP_EGRESS_RULE,
+    INVOKES_MCP_TOOL_RULE,
+    ORM_READS_RULE,
+    ORM_WRITES_RULE,
+    READS_ENV_RULE,
+    READS_FILESYSTEM_RULE,
+    WRITES_FILESYSTEM_RULE,
     SECRET_ENV_KEY_SUBSTRINGS,
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
 )
+from ..patterns_registry import CallPattern, CapabilityRule, matches_any
 
 
 log = logging.getLogger(__name__)
@@ -191,8 +199,29 @@ def _scan_node(node: ast.AST) -> set[str]:
     return caps
 
 
+def _credit(
+    caps: set[str],
+    capability: str,
+    rule: CapabilityRule,
+    target: str,
+) -> None:
+    """Add `capability` and record which rule decided (step 3).
+
+    The rule's `reason` is the explanation a log reader gets; without it
+    a classification is just a name.
+    """
+    caps.add(capability)
+    log.debug("capability %s from %s: %s", capability, target, rule.reason)
+
+
 def _classify_call(call: ast.Call) -> set[str]:
-    """Return the set of capabilities implied by a single Call node."""
+    """Return the set of capabilities implied by a single Call node.
+
+    Each branch is a `CapabilityRule` from the registry; the branches
+    run in a fixed order because a call can match more than one rule and
+    the earlier answer is the better one (`db.delete("id")` is a write,
+    not a statement read).
+    """
     target = _dotted_name(call.func)
     if target is None:
         return set()
@@ -200,56 +229,91 @@ def _classify_call(call: ast.Call) -> set[str]:
     caps: set[str] = set()
 
     # executes_code / executes_shell
-    if _matches_any(target, CAPABILITY_EXECUTES_CODE):
-        caps.add("executes_code")
-    if _matches_any(target, CAPABILITY_EXECUTES_SHELL_IMPLICIT):
-        caps.add("executes_shell")
-    elif _matches_any(target, CAPABILITY_EXECUTES_SHELL_EXPLICIT):
+    if EXECUTES_CODE_RULE.matches(target):
+        _credit(caps, "executes_code", EXECUTES_CODE_RULE, target)
+    if EXECUTES_SHELL_IMPLICIT_RULE.matches(target):
+        _credit(
+            caps, "executes_shell", EXECUTES_SHELL_IMPLICIT_RULE, target
+        )
+    elif EXECUTES_SHELL_EXPLICIT_RULE.matches(target):
         if _has_shell_keyword(call):
-         caps.add("executes_shell")
+            _credit(
+                caps,
+                "executes_shell",
+                EXECUTES_SHELL_EXPLICIT_RULE,
+                target,
+            )
 
     # filesystem
-    if _matches_any(target, CAPABILITY_READS_FILESYSTEM):
+    if READS_FILESYSTEM_RULE.matches(target):
         # `open(path, 'w')` is a write, not a read — check mode arg.
         if target == "open" and _has_write_mode(call):
-            caps.add("writes_filesystem")
+            _credit(
+                caps,
+                "writes_filesystem",
+                READS_FILESYSTEM_RULE,
+                target,
+            )
         else:
-            caps.add("reads_filesystem")
-    if _matches_any(target, CAPABILITY_WRITES_FILESYSTEM):
-        caps.add("writes_filesystem")
+            _credit(
+                caps, "reads_filesystem", READS_FILESYSTEM_RULE, target
+            )
+    if WRITES_FILESYSTEM_RULE.matches(target):
+        _credit(
+            caps, "writes_filesystem", WRITES_FILESYSTEM_RULE, target
+        )
 
     # database
-    if _matches_any(target, CAPABILITY_READS_DB):
+    if ORM_WRITES_RULE.matches(target):
+        # ORM session / repository write (1.2a.3): there is no SQL
+        # text to inspect — the method name itself is the evidence.
+        # Checked first: `db.delete("id")` is a write, not a read.
+        _credit(caps, "writes_db", ORM_WRITES_RULE, target)
+    elif DB_STATEMENT_RULE.matches(target) or ORM_READS_RULE.matches(
+        target
+    ):
         sql = _first_string_arg(call)
         if sql is not None:
+            # Statement call site — the SQL keyword decides.
             upper = sql.upper()
             if any(kw in upper for kw in SQL_WRITE_KEYWORDS):
-                caps.add("writes_db")
+                _credit(caps, "writes_db", DB_STATEMENT_RULE, target)
             elif any(kw in upper for kw in SQL_READ_KEYWORDS):
-                caps.add("reads_db")
+                _credit(caps, "reads_db", DB_STATEMENT_RULE, target)
             else:
                 # Unknown SQL — assume read (safer default)
-                caps.add("reads_db")
+                _credit(caps, "reads_db", DB_STATEMENT_RULE, target)
+        elif ORM_READS_RULE.matches(target):
+            # ORM read: no SQL text, the method name is the evidence.
+            _credit(caps, "reads_db", ORM_READS_RULE, target)
 
     # network
-    if _matches_any(target, CAPABILITY_HTTP_EGRESS):
-        caps.add("http_egress")
+    if HTTP_EGRESS_RULE.matches(target):
+        _credit(caps, "http_egress", HTTP_EGRESS_RULE, target)
 
     # env / secrets
-    if _matches_any(target, CAPABILITY_READS_ENV):
-        caps.add("reads_env")
+    if READS_ENV_RULE.matches(target):
+        _credit(caps, "reads_env", READS_ENV_RULE, target)
         # Check whether the accessed key looks like a secret.
         key = _env_key_from_call(call)
         if key is not None and _looks_like_secret(key):
             caps.add("reads_secrets")
+            log.debug(
+                "capability reads_secrets from %s: the env key looks "
+                "like a secret (%s)",
+                target,
+                SECRET_ENV_KEY_SUBSTRINGS,
+            )
 
     # LLM
-    if _matches_any(target, CAPABILITY_CALLS_LLM):
-        caps.add("calls_llm")
+    if CALLS_LLM_RULE.matches(target):
+        _credit(caps, "calls_llm", CALLS_LLM_RULE, target)
 
     # MCP
-    if _matches_any(target, CAPABILITY_INVOKES_MCP_TOOL):
-        caps.add("invokes_mcp_tool")
+    if INVOKES_MCP_TOOL_RULE.matches(target):
+        _credit(
+            caps, "invokes_mcp_tool", INVOKES_MCP_TOOL_RULE, target
+        )
 
     return caps
 
@@ -280,26 +344,19 @@ def _dotted_name(node: ast.expr) -> str | None:
     return None
 
 
-def _matches_any(dotted: str, patterns: tuple[str, ...]) -> bool:
-    """True if `dotted` ends with any of the patterns.
+def _matches_any(dotted: str, patterns: Iterable[CallPattern | str]) -> bool:
+    """True if `dotted` matches any pattern.
 
-    Handles prefixes like `self.` or `obj.`:
-        self.conn.execute  matches  connection.execute  → False (no)
-        subprocess.run     matches  subprocess.run      → True
-        os.path.abspath(...).open  matches open         → True (ends with open)
-
-    To avoid matching too broadly, patterns longer than one segment
-    are matched on the trailing segments.
+    The matching rules live in `patterns_registry` (step 3): a pattern
+    is a `CallPattern`, and `matches` implements the trailing-segment,
+    verb-family and underscore rules. `_classify_call` no longer calls
+    this — it consults the rules directly, so the capability branch and
+    the reason stay together. The name is kept as the extractor's
+    compatibility entry point: its tests (and any call site that thinks
+    in pattern text) call it with rendered patterns like
+    `("repo.get*",)`.
     """
-    if dotted in patterns:
-        return True
-    for p in patterns:
-        if dotted.endswith("." + p):
-            return True
-        # Single-segment pattern: match the last segment only.
-        if "." not in p and dotted.endswith("." + p):
-            return True
-    return False
+    return matches_any(dotted, patterns)
 
 
 def _has_shell_keyword(call: ast.Call) -> bool:

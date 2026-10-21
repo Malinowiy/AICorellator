@@ -37,7 +37,13 @@ import hashlib
 import logging
 
 from ...graph.models import Edge, Node
+from ..flow.decision import FlowDecision, flow_kind_for
 from .base import DetectionResult, FrameworkDetector
+from .enrichment import (
+    enrich_provides_tool,
+    enrich_uses_model,
+    enrich_uses_tool,
+)
 
 
 log = logging.getLogger(__name__)
@@ -154,7 +160,17 @@ class LangChainDetector(FrameworkDetector):
                 name=func_name,
                 file_path=file_path,
                 host_id=host_id,
-                extra_attrs={"framework": "langchain"},
+                extra_attrs={
+                    "framework": "langchain",
+                    # 1.2a.2: the tool's signature answers "can the agent
+                    # hand this tool data?" — same rule as an MCP tool.
+                    # The node attribute stays a plain string (it is
+                    # persisted as JSON); the normalizer rebuilds the
+                    # decision from it.
+                    "tool_data_flow": enrich_provides_tool(
+                        func_node, framework=self.name
+                    ).kind,
+                },
             )
             node.capabilities = caps
             result.nodes.append(node)
@@ -245,6 +261,15 @@ class LangChainDetector(FrameworkDetector):
             if agent_node is None:
                 continue
 
+            # 1.2a.2 enrichment inputs. The system prompt is the
+            # developer's statement about which tools the agent uses;
+            # the enclosing function's parameters are the caller-
+            # supplied data the model configuration may come from.
+            system_prompt = self._string_value(
+                self._keyword_arg(call, "system_prompt"), assignments
+            )
+            params = self._enclosing_parameters(tree, call)
+
             # --- tools= ---
             tools_arg = self._keyword_arg(call, "tools")
             if tools_arg is not None:
@@ -267,6 +292,10 @@ class LangChainDetector(FrameworkDetector):
                         target_id=target.id,
                         kind="uses_tool",
                         host_id=host_id,
+                        decision=enrich_uses_tool(
+                            tools_arg, system_prompt, assignments,
+                            framework=self.name, tool_name=tname,
+                        ),
                     ))
 
             # --- model= / llm= ---
@@ -284,6 +313,10 @@ class LangChainDetector(FrameworkDetector):
                         target_id=target.id,
                         kind="uses_model",
                         host_id=host_id,
+                        decision=enrich_uses_model(
+                            llm_arg, assignments, params,
+                            framework=self.name,
+                        ),
                     ))
 
         return edges
@@ -409,6 +442,7 @@ class LangChainDetector(FrameworkDetector):
         target_id: str,
         kind: str,
         host_id: str,
+        decision: FlowDecision = FlowDecision("unknown"),
     ) -> Edge:
         h = hashlib.sha256(
             f"{source_id}:{target_id}:{kind}:{host_id}".encode("utf-8")
@@ -420,8 +454,71 @@ class LangChainDetector(FrameworkDetector):
             target_id=target_id,
             kind=kind,
             host_id=host_id,
+            # 1.2a.2: the detector may enrich the default control edge
+            # (ADR-0015, decisions 3 and 4). `flow_kind` is derived from
+            # the decision, never set independently.
+            flow_kind=flow_kind_for(decision),
+            data_flow_confirmed=decision.kind,
             attributes={"framework": self.name},
         )
+
+    @staticmethod
+    def _string_value(
+        node: ast.expr | None,
+        assignments: dict[str, ast.expr],
+        _visited: set[str] | None = None,
+    ) -> str | None:
+        """Resolve an expression to a string literal, or None.
+
+        Follows a symbolic reference through the assignment table (the
+        same table `tools=` and `llm=` resolution uses) and returns the
+        last string literal it finds. An f-string, a call, or an
+        unresolvable name yields None: the prompt is then unknown and
+        no enrichment happens.
+        """
+        if _visited is None:
+            _visited = set()
+
+        if isinstance(node, ast.Constant):
+            return node.value if isinstance(node.value, str) else None
+
+        if isinstance(node, ast.Name):
+            if node.id in _visited:
+                return None
+            _visited.add(node.id)
+            target = assignments.get(node.id)
+            if target is None:
+                return None
+            return LangChainDetector._string_value(
+                target, assignments, _visited
+            )
+
+        return None
+
+    @staticmethod
+    def _enclosing_parameters(tree: ast.Module, call: ast.Call) -> set[str]:
+        """Return the parameters of every function enclosing `call`.
+
+        A nested definition sees its own parameters and its enclosing
+        function's: data can reach the call from either. Line ranges
+        are used because the AST has no parent links.
+        """
+        params: set[str] = set()
+        line = call.lineno
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            end = node.end_lineno or node.lineno
+            if not (node.lineno <= line <= end):
+                continue
+            args = node.args
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                params.add(arg.arg)
+            if args.vararg is not None:
+                params.add(args.vararg.arg)
+            if args.kwarg is not None:
+                params.add(args.kwarg.arg)
+        return params
 
     # --------------------------------------------------------
     # Helpers (node extraction)

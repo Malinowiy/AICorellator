@@ -175,18 +175,28 @@ def _node_to_dict(store: GraphStore, node_id: str) -> dict:
 def _edge_to_dict(store: GraphStore, edge_id: str) -> dict:
     edge = store.edges.get(edge_id)
     if edge is None:
-        return {"id": edge_id, "kind": "unknown"}
+        return {"id": edge_id, "kind": "unknown", "flow_kind": "unknown"}
     # Edge capabilities encode transfer semantics (ADR-0009); precision
-    # records how the edge was resolved (ADR-0013/0014).
-    return {
+    # records how the edge was resolved (ADR-0013/0014); flow_kind
+    # separates "X calls Y" from "data from X reaches Y" (ADR-0015).
+    # The schema makes flow_kind NOT NULL, so every edge the LLM sees
+    # carries one — a missing value would be a construction bug.
+    d = {
         "id": edge.id,
         "kind": edge.kind,
         "source_id": edge.source_id,
         "target_id": edge.target_id,
+        "flow_kind": edge.flow_kind,
         "capabilities": list(edge.capabilities),
         "precision": edge.precision,
         "attributes": edge.attributes,
     }
+    # data_flow_confirmed is populated only for has_access_to (ADR-0015).
+    # Omitted when absent rather than sent as null: a null would read as
+    # a fourth value and invite the LLM to interpret it.
+    if edge.data_flow_confirmed is not None:
+        d["data_flow_confirmed"] = edge.data_flow_confirmed
+    return d
 
 
 def _voter_response_dict(r, candidate_edge_ids: set[str]) -> dict:

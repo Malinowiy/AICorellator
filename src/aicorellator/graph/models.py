@@ -39,6 +39,12 @@ VALID_EDGE_KINDS = frozenset({
     "guards",
 })
 
+# Valid flow kinds (ADR-0015). Mirrors the CHECK constraint in schema.sql.
+#   control    — X calls Y, or X can reach Y through calls.
+#   data       — data from X reaches Y (data flow confirmed).
+#   structural — a declaration, not a path (guards).
+VALID_FLOW_KINDS = frozenset({"control", "data", "structural"})
+
 
 # ------------------------------------------------------------
 # Host
@@ -122,6 +128,8 @@ class Edge:
     kind: str
     host_id: str
     precision: str = "syntactic"
+    flow_kind: str = "control"
+    data_flow_confirmed: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
     confidence: float = 1.0
@@ -144,6 +152,8 @@ class Edge:
             kind=row["kind"],
             host_id=row["host_id"],
             precision=row["precision"],
+            flow_kind=row["flow_kind"],
+            data_flow_confirmed=row["data_flow_confirmed"],
             attributes=json.loads(row["attributes"]),
             capabilities=json.loads(row["capabilities"] or "[]"),
             confidence=row["confidence"],

@@ -18,7 +18,13 @@ import json
 
 
 # Increment when prompt structure changes. Stored per chain row.
-PROMPT_VERSION = "v1.2.0"  # capabilities in payload + calibration guidance
+# v1.3.0: edges carry flow_kind (and data_flow_confirmed) — ADR-0015.
+# v1.4.0: nodes carry sink_data_flow and returns_data — 1.2a.1.
+# v1.4.1: test-file nodes are not production entry points — 1.2a.3d.
+#   Patch bump: the payload is unchanged (no new fields, no new schema);
+#   only the instructions changed, and only about reading the existing
+#   `source_file` attribute.
+PROMPT_VERSION = "v1.4.1"
 
 
 SYSTEM_PROMPT = """You are a security analyst evaluating the exploitability of attack chains in AI infrastructure.
@@ -30,6 +36,52 @@ Rules:
 2. Base your verdict only on the structural properties of the chain and the trust relationships it encodes.
 3. If the chain is plausible but you cannot confirm exploitability, set exploitable to false and lower confidence.
 4. Return valid JSON matching the requested schema. No prose outside the JSON.
+
+Flow semantics (ADR-0015):
+- Every edge carries a "flow_kind": "control", "data", or "structural".
+- "control" means "X calls Y", or "X can reach Y through calls". Data flow is
+  not confirmed.
+- "data" means "data from X reaches Y", confirmed by argument analysis. The
+  "data_flow_confirmed" field says how: "parameter_match" and
+  "local_var_match" are direct (a sink argument is a tool parameter, or a
+  variable derived from one); "call_result_match" is inferential (the sink
+  argument is the result of another call, and the analyzer does not know what
+  that call returns); "literal_only" and "no_args" mean the sink call takes
+  only constants, or no arguments at all. Only the first three put the edge on
+  "data"; the others keep it on "control".
+- "unknown" means the arguments were not analyzed (e.g. attribute access, a
+  dictionary lookup, unpacking), or the edge kind is one the analyzer does not
+  resolve data flow for. It is an enrichable placeholder, not a judgement.
+- A chain with "data" edges is stronger evidence than a chain with only
+  "control" edges.
+- "provides_tool" is "control": an MCP server exposes a tool and the agent
+  can invoke it — for security analysis, "can call" is treated as "will call".
+- "guards" is "structural" and does not appear on a chain path. A structural
+  edge on a chain path is a construction error; say so rather than reasoning
+  around it.
+- Node attributes carry a second, weaker signal (1.2a.1). A sink node has
+  "sink_data_flow": how the sink passes its own arguments to a dangerous call —
+  "parameter_match" (data derived from the sink's parameters reaches the
+  dangerous call), "literal_only" (only constants reach it), or "unknown" (no
+  argument-level evidence). A tool node has "returns_data": whether the tool
+  hands data back to its caller. A tool that returns data plus a sink that
+  accepts data is a *potential* data flow through the agent, even when the
+  "has_access_to" edge is "control" — weaker than a confirmed "data" edge,
+  stronger than reachability alone. It is a node property, not an edge: it
+  never changes an edge's "flow_kind".
+- Test files and fixtures (1.2a.3d): some nodes come from test files
+  (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) and from test
+  fixtures (setup/teardown helpers, in-test database setup). A test script
+  is not a production entry point: no external attacker reaches it, so a
+  sink reached only through test code is not an exploitable path in
+  production. Treat a chain whose entry point or intermediate nodes are
+  exclusively test-file nodes as low-confidence, unless the test exercises
+  a production code path that a real attacker could also reach. Test files
+  in the target are useful signal — they show what the code is expected to
+  do — but they are not the attack surface. Every node carries
+  `source_file`: use it to tell test code from production code.
+- The confidence you assign is your judgement; these definitions constrain
+  what an edge means, not how exploitable you must find the chain.
 """
 
 
@@ -47,6 +99,24 @@ Rules:
 2. Weigh voters by the quality of their reasoning, not by majority vote alone.
 3. If voters disagree, explain which reasoning is stronger.
 4. Return valid JSON matching the requested schema. No prose outside the JSON.
+
+Flow semantics:
+- Voters may refer to an edge's "flow_kind" ("control" or "data") and to
+  "data_flow_confirmed" in their reasoning.
+- All else equal, weigh a chain whose edges are "data" more heavily than a
+  chain built only from "control" edges: confirmed data flow is stronger
+  evidence than plain call reachability.
+- Nodes carry attributes as well (1.2a.1): a sink node's "sink_data_flow"
+  ("parameter_match", "literal_only" or "unknown") and a tool node's
+  "returns_data". A tool that returns data plus a sink that accepts data is a
+  potential data flow through the agent — weaker than a confirmed "data" edge,
+  stronger than reachability alone. It is a node property and does not change
+  an edge's "flow_kind".
+- Test-file nodes (1.2a.3d): voters may flag a chain as test-only (`tests/`,
+  `test_*.py`, `*_test.py`, `conftest.py`) — the nodes' `source_file` says
+  what came from the target's test suite. Weigh that signal: a chain that
+  is test-only should not receive a high final verdict unless the voters
+  give a concrete production path that a real attacker could also reach.
 """
 
 
@@ -62,7 +132,9 @@ def build_voter_prompt(
         chain_nodes: ordered list of
             {id, kind, name, capabilities, confidence, attributes}
         chain_edges: ordered list of
-            {id, kind, source_id, target_id, capabilities, precision, attributes}
+            {id, kind, source_id, target_id, flow_kind, capabilities,
+             precision, attributes} — plus data_flow_confirmed when the edge
+            kind is has_access_to
     """
     payload = {
         "chain_id": chain_id,
@@ -82,17 +154,42 @@ Evaluate whether this chain is exploitable. Consider:
 - Are there guardrails on the path? Are they bypassable?
 
 Calibration rules:
-- An edge means only what its kind and capabilities state. A structural or
-  ownership edge between two nodes in the same module means those nodes are
-  colocated, NOT that one invokes the other or that data flows between them.
-- Do not assume data flow that is not evidenced by a data-flow capability on
-  the edges. "Node A is next to sink B" is not "A reaches B".
-- If the chain only shows colocation or control reachability with no
-  data-flow/taint evidence, lower confidence substantially.
+- Read each edge's "flow_kind" before reasoning about it:
+  - "data" — data from the source reaches the target, confirmed by argument
+    analysis. Check "data_flow_confirmed" for how: "parameter_match" and
+    "local_var_match" are direct; "call_result_match" is inferential (the sink
+    argument is another call's result and the analyzer cannot see what that
+    call returns); "literal_only" and "no_args" mean constants only, or no
+    arguments. "unknown" means the arguments were not analyzed (attribute
+    access, dictionary lookup, unpacking) or the edge kind does not resolve
+    data flow — treat it as reachability only.
+  - "control" — the source calls the target, or can reach it through calls.
+    Data flow is not confirmed. Do not assume data flow that is not evidenced
+    by a data-flow capability on the edge. "Node A is next to sink B" is not
+    "A reaches B".
+  - "structural" — never appears on a chain path. If one does, the chain is
+    mis-constructed: say so and lower confidence rather than reasoning around
+    it.
+- A chain with "data" edges is stronger evidence than a chain with only
+  "control" edges. If the chain only shows control reachability with no
+  confirmed data flow, lower confidence substantially.
+- "provides_tool" is "control": an MCP server exposes a tool and the agent can
+  invoke it — for security analysis, "can call" is treated as "will call".
+- Node attributes carry a weaker, node-level signal (1.2a.1): a sink node's
+  "sink_data_flow" ("parameter_match", "literal_only", "unknown") and a tool
+  node's "returns_data". A tool that returns data plus a sink that accepts data
+  is a potential data flow through the agent even when the "has_access_to" edge
+  is "control" — stronger than reachability alone, weaker than a confirmed
+  "data" edge. Treat it as a hypothesis to argue for or against, not as proof.
 - Distinguish production entry points from test/dev scripts; a test or CLI
   helper is not reachable by an external attacker.
+- A chain that reaches its sink only through test-file nodes (`tests/`,
+  `test_*.py`, `*_test.py`, `conftest.py`) is not a production attack path —
+  lower the confidence unless the test exercises a production code path.
 - If reachability is plausible but exploitability cannot be confirmed from the
   provided structure, prefer a low-confidence verdict over an invented scenario.
+- The confidence you assign is your judgement. These definitions constrain what
+  an edge means, not how exploitable you must find the chain.
 
 Return JSON with this exact schema:
 {{
@@ -172,6 +269,48 @@ Rules:
 - Base your verdict only on structural properties of the chain.
 - If evidence is thin, lower confidence — do not invent facts.
 - Return valid JSON only.
+
+Flow semantics (ADR-0015):
+- Every edge carries a "flow_kind": "control", "data", or "structural".
+- "control" means "X calls Y", or "X can reach Y through calls". Data flow is
+  not confirmed.
+- "data" means "data from X reaches Y", confirmed by argument analysis. The
+  "data_flow_confirmed" field says how: "parameter_match" and
+  "local_var_match" are direct; "call_result_match" is inferential (the sink
+  argument is another call's result and the analyzer cannot see what that call
+  returns); "literal_only" and "no_args" mean constants only, or no arguments.
+  Only the first three put the edge on "data".
+- "unknown" means the arguments were not analyzed, or the edge kind is one the
+  analyzer does not resolve data flow for: an enrichable placeholder, not a
+  judgement.
+- A chain with "data" edges is stronger evidence than a chain with only
+  "control" edges.
+- "provides_tool" is "control": an MCP server exposes a tool and the agent can
+  invoke it — for security analysis, "can call" is treated as "will call".
+- "guards" is "structural" and does not appear on a chain path; a structural
+  edge on a path is a construction error.
+- Node attributes carry a second, weaker signal (1.2a.1). A sink node has
+  "sink_data_flow": how the sink passes its own arguments to a dangerous call —
+  "parameter_match" (data derived from the sink's parameters reaches the
+  dangerous call), "literal_only" (only constants reach it), or "unknown" (no
+  argument-level evidence). A tool node has "returns_data": whether the tool
+  hands data back to its caller. A tool that returns data plus a sink that
+  accepts data is a *potential* data flow through the agent, even when the
+  "has_access_to" edge is "control" — weaker than a confirmed "data" edge,
+  stronger than reachability alone. It is a node property, not an edge: it
+  never changes an edge's "flow_kind".
+- Test files and fixtures (1.2a.3d): some nodes come from test files
+  (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) and from test
+  fixtures (setup/teardown helpers, in-test database setup). A test script
+  is not a production entry point: no external attacker reaches it, so a
+  sink reached only through test code is not an exploitable path in
+  production. Read each node's `source_file` in step 1: if the entry point
+  and the intermediate nodes are all test-file nodes, treat the chain as
+  low-confidence unless the test exercises a production code path that a
+  real attacker could also reach. Test files are useful signal about what
+  the code is expected to do, but they are not the attack surface.
+- The confidence you assign is your judgement; these definitions constrain what
+  an edge means, not how exploitable you must find the chain.
 """
 
 
@@ -203,13 +342,16 @@ Step by step:
 2. TRANSIT
    - Does data pass through an LLM without validation?
    - Does it cross trust boundaries (agent → agent, agent → MCP)?
-   - Does any edge actually carry data (a data-flow capability), or is the
-     connection structural colocation only?
+   - Does any edge actually carry data — flow_kind == "data" (check
+     data_flow_confirmed) — or is the connection control reachability only
+     (flow_kind == "control")?
 
 3. TOOLS AND CAPABILITIES
    - What tools does the chain reach?
    - Do their declared capabilities indicate a dangerous action?
    - Do they accept attacker-controlled arguments?
+   - Do the node attributes show a potential flow: the tool's "returns_data"
+     and the sink's "sink_data_flow"?
 
 4. GUARDRAILS
    - Are there any guardrails in the path? (kind == "guardrail")

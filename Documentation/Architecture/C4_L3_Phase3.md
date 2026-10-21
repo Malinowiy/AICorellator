@@ -71,7 +71,8 @@ flowchart TB
 **Edge traversal:**
 
 - `control` and `data` edges are traversed.
-- `structural` edges are **not** traversed. `provides_tool` and `guards` describe declarations, not paths (ADR-0015).
+- `provides_tool` is `control` and **is** traversed. The access path from an agent to a tool an MCP server exposes is the candidate attack path: "the agent can call the tool" is the step an attacker uses (ADR-0015).
+- `guards` is `structural` and is **not** traversed. A guardrail is a defensive control, not a step in an attack path (ADR-0015).
 
 **`data_edges_only` parameter:**
 
@@ -267,7 +268,7 @@ reports/current/
 
 ## Prompt Contract
 
-The prompt (v1.3.0, ADR-0015) receives per chain:
+The prompt (v1.4.1, ADR-0015) receives per chain:
 
 - **Nodes** — kind, name, attributes, capabilities, confidence.
 - **Edges** — kind, source, target, attributes, capabilities, precision, `flow_kind`, `data_flow_confirmed`.
@@ -314,7 +315,7 @@ The prompt (v1.3.0, ADR-0015) receives per chain:
 5. **`structural` edges do not reach the evaluator.** They are not traversed by `find_chains`. The evaluator sees only `control` and `data` edges.
 6. **Raw voter text is not persisted.** `voter_outputs` stores structured responses (verdict, confidence, reasoning, evidence) but not the raw text. Storing raw payloads is a policy decision (backlog).
 7. **Report on demand.** Evaluation is expensive. The report is generated only when requested.
-8. **Prompt versioning.** `PROMPT_VERSION` is stored per chain row. When the payload structure changes (as in v1.3.0 with `flow_kind`), the version is bumped.
+8. **Prompt versioning.** `PROMPT_VERSION` is stored per chain row. When the payload structure changes (as in v1.4.1 with `flow_kind`), the version is bumped.
 9. **Data-flow confidence in the payload.** `data_flow_confirmed` is a six-valued field. It is more informative than a boolean and lets the LLM distinguish direct (`parameter_match`) from inferential (`call_result_match`) evidence.
 
 ---

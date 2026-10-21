@@ -9,6 +9,11 @@ Key methods:
   validate_edges   — Layer 3 deterministic validation (ADR-0006)
   get_neighbors    — graph traversal for a single node
   get_subgraph     — slice by kind
+
+find_chains traverses control and data flow only. Structural edges
+(`guards`) are declarations, not paths, and are skipped (ADR-0015,
+decision 5). `provides_tool` is control: the access path is the
+candidate attack path.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import Edge, Node
-from ..patterns import SINK_CAPABILITIES
+from ..patterns import SINK_CAPABILITIES, TRAVERSABLE_FLOW_KINDS
 
 
 # ============================================================
@@ -175,6 +180,7 @@ class QueryLayer:
         sink_kinds: list[str] | None = None,
         max_hops: int = 6,
         max_candidates: int = 1000,
+        data_edges_only: bool = False,
     ) -> list[CandidateChain]:
         """Enumerate structural paths from entry nodes to sink nodes.
 
@@ -187,6 +193,17 @@ class QueryLayer:
         Capabilities take precedence: a node of kind "tool" with
         executes_code is a valid sink for chain enumeration, because
         the chain reaches a dangerous action through it.
+
+        Only control and data edges are traversed. Structural edges
+        (`guards`) are declarations, not paths, and never appear in a
+        chain (ADR-0015, decision 5). `provides_tool` is control: the
+        access path to a tool is the candidate attack path.
+
+        `data_edges_only` narrows the result to chains carrying at
+        least one data-flow edge — a high-precision shortlist. The
+        default is off: control-only chains stay enumerable because
+        chain groups and manual review need them (ADR-0015,
+        decision 6).
 
         Deterministic. No LLM. Bounded by max_hops and max_candidates.
         """
@@ -235,6 +252,7 @@ class QueryLayer:
                 sink_ids=sink_id_set,
                 max_hops=max_hops,
                 max_candidates=max_candidates - len(candidates),
+                data_edges_only=data_edges_only,
             )
             for nodes, edges in found:
                 chain_id = self._chain_id(nodes, edges)
@@ -258,28 +276,37 @@ class QueryLayer:
         sink_ids: set[str],
         max_hops: int,
         max_candidates: int,
+        data_edges_only: bool = False,
     ) -> list[tuple[list[str], list[str]]]:
         """DFS from `start` to any sink, up to max_hops.
 
         Returns list of (node_ids, edge_ids) tuples. Uses an
         iterative stack to avoid Python recursion limits on deep
         graphs.
+
+        Only control and data edges are traversed; structural edges
+        are skipped (ADR-0015, decision 5). With `data_edges_only`,
+        a path is reported only if at least one traversed edge is a
+        data-flow edge.
         """
         results: list[tuple[list[str], list[str]]] = []
 
-        # stack entries: (current_node, path_nodes, path_edges)
-        stack: list[tuple[str, list[str], list[str]]] = [
-            (start, [start], [])
+        # stack entries: (current_node, path_nodes, path_edges, has_data)
+        stack: list[tuple[str, list[str], list[str], bool]] = [
+            (start, [start], [], False)
         ]
 
         while stack:
             if len(results) >= max_candidates:
                 break
 
-            current, path_nodes, path_edges = stack.pop()
+            current, path_nodes, path_edges, has_data = stack.pop()
 
             if current in sink_ids and len(path_edges) > 0:
-                results.append((path_nodes, path_edges))
+                # A sink terminates the path either way: a chain that
+                # reaches a sink is not extended past it.
+                if not data_edges_only or has_data:
+                    results.append((path_nodes, path_edges))
                 continue
 
             if len(path_edges) >= max_hops:
@@ -298,6 +325,11 @@ class QueryLayer:
             # explored first (depth-first, deterministic).
             for row in reversed(rows):
                 edge = Edge.from_row(row)
+
+                # Structural edges are declarations, not paths.
+                if edge.flow_kind not in TRAVERSABLE_FLOW_KINDS:
+                    continue
+
                 next_node = edge.target_id
 
                 # Cycle guard: do not revisit a node in the same path.
@@ -309,6 +341,7 @@ class QueryLayer:
                         next_node,
                         path_nodes + [next_node],
                         path_edges + [edge.id],
+                        has_data or edge.flow_kind == "data",
                     )
                 )
 

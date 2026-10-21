@@ -109,6 +109,17 @@ CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
 --
 -- capabilities (ADR-0009): JSON array of edge-level capabilities:
 --   data_flows_forward, control_flows_forward, untrusted_propagates
+--
+-- flow_kind (ADR-0015): what kind of flow an edge represents.
+--   'control'    — X calls Y, or X can reach Y through calls.
+--   'data'       — data from X reaches Y (data flow confirmed).
+--   'structural' — a declaration, not a path (provides_tool, guards).
+--   Every stored edge carries it; missing flow_kind is a bug.
+--
+-- data_flow_confirmed (ADR-0015): how data flow was established, for
+-- `has_access_to` only. NULL for every other edge kind. Values:
+--   parameter_match, local_var_match, call_result_match,
+--   literal_only, no_args, unknown.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -118,6 +129,8 @@ CREATE TABLE IF NOT EXISTS edges (
     kind         TEXT NOT NULL,
     host_id      TEXT NOT NULL,
     precision    TEXT NOT NULL DEFAULT 'syntactic',
+    flow_kind    TEXT NOT NULL DEFAULT 'control',
+    data_flow_confirmed TEXT,
     attributes   JSON NOT NULL DEFAULT '{}',
     capabilities JSON NOT NULL DEFAULT '[]',
     confidence   REAL NOT NULL DEFAULT 1.0,
@@ -133,6 +146,11 @@ CREATE TABLE IF NOT EXISTS edges (
         'uses_model', 'uses_tool', 'provides_tool', 'delegates_to', 'has_access_to', 'guards'
     )),
     CHECK (precision IN ('syntactic', 'compiler-verified')),
+    CHECK (flow_kind IN ('control', 'data', 'structural')),
+    CHECK (data_flow_confirmed IS NULL OR data_flow_confirmed IN (
+        'parameter_match', 'local_var_match', 'call_result_match',
+        'literal_only', 'no_args', 'unknown'
+    )),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(attributes)),

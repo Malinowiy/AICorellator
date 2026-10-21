@@ -123,6 +123,11 @@ def resolve_agent_tool_edges(
                         target_id=tool.id,
                         kind="uses_tool",
                         host_id=host_id,
+                        # Control flow, data flow unconfirmed (ADR-0015,
+                        # decision 4): import resolution says the agent
+                        # *can* reach the tool, not that data does.
+                        flow_kind="control",
+                        data_flow_confirmed="unknown",
                         attributes={
                             "framework": agent.attributes.get("framework", ""),
                             "resolved_via": "cross_file_import",
