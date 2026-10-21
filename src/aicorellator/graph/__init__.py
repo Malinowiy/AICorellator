@@ -2,6 +2,7 @@
 
 from .models import (
     Chain,
+    ChainGroupRecord,
     Edge,
     Finding,
     Host,
@@ -16,6 +17,7 @@ from .store import GraphStore
 __all__ = [
     "GraphStore",
     "Chain",
+    "ChainGroupRecord",
     "Edge",
     "Finding",
     "Host",

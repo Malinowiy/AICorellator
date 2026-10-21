@@ -265,6 +265,73 @@ class Chain:
 
 
 # ------------------------------------------------------------
+# ChainGroupRecord (a `chain_groups` row)
+# ------------------------------------------------------------
+
+@dataclass
+class ChainGroupRecord:
+    """A chain group as stored — one row of `chain_groups`.
+
+    Distinct from `query.ChainGroup`, which is the *enumerated* group
+    returned by `find_chain_groups`: that one is transient and carries
+    only structure. This one carries what the table carries — the
+    prioritization results 1.3c writes (`score`, `score_components`,
+    `priority`) and the evaluation results 1.3d/1.3e will write
+    (`lethal_trifecta`, `verdict`, `confidence`, `reasoning`,
+    `validated`). Two types rather than one because they have two
+    owners and two lifetimes; `query.ChainGroup.to_record()` is the
+    one-way bridge (a stored row never becomes an enumeration result).
+    """
+
+    id: str
+    untrusted_source_id: str
+    write_chain_ids: list[str]
+    read_chain_ids: list[str]
+    name: str | None = None
+    lethal_trifecta: bool = False
+    score: float = 0.0
+    score_components: dict[str, Any] = field(default_factory=dict)
+    verdict: str | None = None
+    confidence: float = 0.0
+    reasoning: str | None = None
+    validated: bool = False
+    priority: str | None = None
+    status: str = "active"
+    created_at: str = field(default_factory=utcnow)
+    updated_at: str = field(default_factory=utcnow)
+
+    def to_row(self) -> dict[str, Any]:
+        row = asdict(self)
+        row["write_chain_ids"] = json.dumps(self.write_chain_ids)
+        row["read_chain_ids"] = json.dumps(self.read_chain_ids)
+        row["score_components"] = json.dumps(self.score_components)
+        row["lethal_trifecta"] = 1 if self.lethal_trifecta else 0
+        row["validated"] = 1 if self.validated else 0
+        return row
+
+    @classmethod
+    def from_row(cls, row: Any) -> "ChainGroupRecord":
+        return cls(
+            id=row["id"],
+            untrusted_source_id=row["untrusted_source_id"],
+            write_chain_ids=json.loads(row["write_chain_ids"]),
+            read_chain_ids=json.loads(row["read_chain_ids"]),
+            name=row["name"],
+            lethal_trifecta=bool(row["lethal_trifecta"]),
+            score=row["score"],
+            score_components=json.loads(row["score_components"] or "{}"),
+            verdict=row["verdict"],
+            confidence=row["confidence"],
+            reasoning=row["reasoning"],
+            validated=bool(row["validated"]),
+            priority=row["priority"],
+            status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+# ------------------------------------------------------------
 # Report
 # ------------------------------------------------------------
 

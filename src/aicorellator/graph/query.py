@@ -8,6 +8,8 @@ Key methods:
   find_chains       — Layer 1 deterministic enumeration (ADR-0006)
   find_chain_groups — Layer 1 enumeration of groups through an
                       untrusted source (ADR-0010, 1.3b)
+  prioritize_chain_groups — Layer 1 scoring and top-N selection of
+                      those groups (ADR-0012, 1.3c)
   validate_edges    — Layer 3 deterministic validation (ADR-0006)
   get_neighbors     — graph traversal for a single node
   get_subgraph      — slice by kind
@@ -27,8 +29,118 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
-from .models import Edge, Node
-from ..patterns import SINK_CAPABILITIES, TRAVERSABLE_FLOW_KINDS
+from .models import ChainGroupRecord, Edge, Node
+from ..patterns import (
+    LETHAL_TRIFECTA_EGRESS_CAPS,
+    LETHAL_TRIFECTA_READ_CAPS,
+    LETHAL_TRIFECTA_SECRET_CAPS,
+    SINK_CAPABILITIES,
+    TRAVERSABLE_FLOW_KINDS,
+)
+
+
+# ============================================================
+# Chain group scoring (ADR-0012)
+# ============================================================
+
+# Weights, one per component of ADR-0012's "Cheap Scoring" table. They
+# live here rather than in patterns.py because they are not patterns —
+# nothing is matched with them; they are policy over signals that
+# patterns.py already defines (the `LETHAL_TRIFECTA_*` capability sets
+# and `SINK_CAPABILITIES`). Changing a weight changes ranking, never
+# detection, which is why it is a constant with a name and not a
+# literal in the scorer.
+SCORE_LETHAL_TRIFECTA = 5
+SCORE_DANGEROUS_SINK = 4
+SCORE_EXFIL_OR_WRITE = 3
+SCORE_AUTHENTICATED_ENTRY = 2
+SCORE_USER_WRITABLE_SOURCE = 2
+SCORE_USER_READABLE_SOURCE = 1
+SCORE_SHORT_CHAIN = 1
+SCORE_STALE_NODE = -2
+SCORE_SHARED_ENTRY = 2
+
+# Capabilities that make a reading chain's sink a dangerous one.
+# `executes_*` is the high-impact action (+4); `writes_filesystem` /
+# `http_egress` is data manipulation or exfiltration (+3). A sink with
+# both earns both — the two rows of the ADR table are two components,
+# not two levels of one.
+DANGEROUS_SINK_CAPS: frozenset[str] = frozenset({
+    "executes_shell",
+    "executes_code",
+})
+EXFIL_OR_WRITE_CAPS: frozenset[str] = frozenset({
+    "writes_filesystem",
+    "http_egress",
+})
+
+# Untrusted source types by how much control the attacker needs to
+# place content in them (ADR-0012): user-writable is +2, readable-only
+# is +1. A type in neither set scores 0 — a source kind nobody has
+# weighed is not silently treated as writable.
+USER_WRITABLE_SOURCE_TYPES: frozenset[str] = frozenset({
+    "user_upload",
+    "rag_corpus",
+})
+USER_READABLE_SOURCE_TYPES: frozenset[str] = frozenset({
+    "mcp_tool_description",
+})
+
+# "Short total chain length" (ADR-0012 leaves the threshold open). 6 is
+# the write + read budget: `find_chain_groups` gives each side
+# `max_hops = 6`, so a group that spends its whole budget on one side
+# is at the edge of "short" and 7 is past it. The cutoff is echoed in
+# the component's reason so a reader of the score can see it.
+SHORT_CHAIN_TOTAL_HOPS = 6
+
+# A node below this confidence makes the group's data uncertain
+# (ADR-0012: `confidence < 0.7`).
+STALE_CONFIDENCE_BELOW = 0.7
+
+# Priority buckets (ADR-0012 §3). Configurable by the caller of
+# `prioritize_chain_groups`; these are the defaults.
+PRIORITY_HIGH_MIN = 15
+PRIORITY_MEDIUM_MIN = 10
+
+# Selection defaults (ADR-0012 §"Ranking and Selection").
+MAX_GROUPS_SCORED = 10000
+MAX_GROUPS_EVALUATED = 100
+MIN_SCORE_TO_EVALUATE = 5
+
+# Component keys of `score_components`, in report order. Stable: a
+# downstream consumer filters or re-weights by these names. One key per
+# row of the ADR-0012 table, so a weight can be traced to a key and
+# back.
+SCORE_COMPONENT_KEYS: tuple[str, ...] = (
+    "lethal_trifecta",
+    "dangerous_sink",
+    "exfil_or_write",
+    "authenticated_entry",
+    "user_writable_source",
+    "user_readable_source",
+    "short_chain",
+    "stale_node",
+    "shared_entry",
+)
+
+
+def priority_for(
+    score: float,
+    high_min: int = PRIORITY_HIGH_MIN,
+    medium_min: int = PRIORITY_MEDIUM_MIN,
+) -> str:
+    """The priority bucket for a score: high, medium or low.
+
+    Public because the bucket boundaries are policy a caller may want
+    to test or reuse, and because the pipeline that persists groups
+    needs the same function the scorer used — a second implementation
+    would be a second answer.
+    """
+    if score >= high_min:
+        return "high"
+    if score >= medium_min:
+        return "medium"
+    return "low"
 
 
 # ============================================================
@@ -68,7 +180,7 @@ class ChainGroup:
     injection (ADR-0010). Minimum viable group: one write chain and one
     read chain (ADR-0012), which is what `find_chain_groups` emits
     today — pairs only, `max_chain_group_size = 2` hard-coded until
-    1.3c makes it configurable.
+    1.3c.1 makes it configurable.
 
     `write_chain_ids[i]` is the id of `write_chains[i]`, and the same
     for reads: the ids are recomputable from the node sequence with the
@@ -76,10 +188,13 @@ class ChainGroup:
     (`QueryLayer._chain_id`), so a group is auditable without the
     matching `CandidateChain`.
 
-    Produced by `find_chain_groups`. Not stored: the `chain_groups`
-    table carries evaluation results (`verdict`, `score`,
-    `lethal_trifecta`) that belong to 1.3c-1.3e, and half-filled rows
-    would need a migration to finish (1.3b deliberately writes nothing).
+    Produced by `find_chain_groups`, which writes nothing. `score`,
+    `score_components` and `priority` are filled in by
+    `QueryLayer.prioritize_chain_groups` (1.3c, ADR-0012) on the groups
+    it scores; an unprioritized group carries the defaults, which is
+    how "not scored" is spelled. `to_record()` maps a selected group to
+    its `chain_groups` row — the store is a separate step, so scoring
+    stays testable without a database.
     """
 
     group_id: str
@@ -89,6 +204,24 @@ class ChainGroup:
     read_chain_ids: list[str]
     write_chains: list[list[str]] = field(default_factory=list)
     read_chains: list[list[str]] = field(default_factory=list)
+    score: float = 0.0
+    score_components: dict[str, Any] = field(default_factory=dict)
+    priority: str | None = None
+
+    @property
+    def write_hops(self) -> int:
+        """Total hops on the writing side (summed over its chains)."""
+        return sum(max(0, len(chain) - 1) for chain in self.write_chains)
+
+    @property
+    def read_hops(self) -> int:
+        """Total hops on the reading side (summed over its chains)."""
+        return sum(max(0, len(chain) - 1) for chain in self.read_chains)
+
+    @property
+    def total_hops(self) -> int:
+        """Hops of the whole group — what "short" is measured on."""
+        return self.write_hops + self.read_hops
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -99,7 +232,41 @@ class ChainGroup:
             "read_chain_ids": self.read_chain_ids,
             "write_chains": self.write_chains,
             "read_chains": self.read_chains,
+            "score": self.score,
+            "score_components": self.score_components,
+            "priority": self.priority,
         }
+
+    def to_record(self) -> ChainGroupRecord:
+        """This group as a `chain_groups` row.
+
+        Only the columns 1.3c owns are filled: the anchor, the id sets,
+        `score`, `score_components`, `priority`, `status = 'active'`.
+        The evaluation columns keep their model defaults — 1.3d/1.3e
+        write them, and the repository's `upsert` refuses to touch them.
+
+        `name` is derived, not invented: `<source name>:<w>x<r>` with
+        the hop counts of each side, e.g.
+        `mcp_tool_description:client.list_tools:3x4`. The source name is
+        already the group's human anchor and two groups on one source
+        differ exactly in their chain lengths, so the name identifies
+        the row without an LLM (ADR-0001: no generated prose in stored
+        data) and without a counter that would drift between runs.
+        """
+        return ChainGroupRecord(
+            id=self.group_id,
+            name=(
+                f"{self.untrusted_source_name}:"
+                f"{self.write_hops}x{self.read_hops}"
+            ),
+            untrusted_source_id=self.untrusted_source_id,
+            write_chain_ids=list(self.write_chain_ids),
+            read_chain_ids=list(self.read_chain_ids),
+            score=self.score,
+            score_components=self.score_components,
+            priority=self.priority,
+            status="active",
+        )
 
 
 @dataclass
@@ -433,9 +600,10 @@ class QueryLayer:
             read chains    S → reader → ... → sink    (paths out of S)
 
         into one group per (source, write, read) triple. Pairs only:
-        `max_chain_group_size` is 2, hard-coded until 1.3c makes it
+        `max_chain_group_size` is 2, hard-coded until 1.3c.1 makes it
         configurable, because a pair is the canonical shape (ADR-0012)
-        and larger groups are where the combinatorics bite.
+        and larger groups are where the combinatorics bite. 1.3c scores
+        and selects these pairs; it does not widen them.
 
         S is an **anchor, not a hop**. A write chain ends at S and a
         read chain starts at S; the visited-set rule that keeps a path
@@ -723,6 +891,162 @@ class QueryLayer:
         return f"chain_group:{digest[:16]}"
 
     # --------------------------------------------------------
+    # prioritize_chain_groups — Layer 1 scoring (ADR-0012)
+    # --------------------------------------------------------
+
+    def prioritize_chain_groups(
+        self,
+        groups: list[ChainGroup],
+        max_groups_scored: int = MAX_GROUPS_SCORED,
+        max_groups_evaluated: int = MAX_GROUPS_EVALUATED,
+        min_score_to_evaluate: int = MIN_SCORE_TO_EVALUATE,
+        high_min: int = PRIORITY_HIGH_MIN,
+        medium_min: int = PRIORITY_MEDIUM_MIN,
+    ) -> list[ChainGroup]:
+        """Score, rank and select groups for LLM evaluation (ADR-0012).
+
+        Read-only over the graph and pure over `groups` (apart from
+        filling in their score fields): it does not persist and it does
+        not call an LLM. The store step is the caller's —
+        `ChainGroup.to_record()` plus `ChainGroupsRepository.upsert` —
+        which keeps scoring testable without a database and keeps the
+        Query Layer free of writes.
+
+        Four steps, each bounded by a parameter:
+
+        1. **Score** the first `max_groups_scored` groups, in the order
+           they were enumerated (deterministic: source id, write chain
+           id, read chain id). A group's score cannot be known without
+           scoring it, so the cap is on enumeration order, not on rank.
+           Groups past the cap are left untouched — no score, no
+           components, no priority — and are never selected.
+        2. **Rank** by score descending. Ties break on `group_id`:
+           ids are content-derived, so the order is a property of the
+           groups and not of the enumeration that produced them, and a
+           re-run with a different `max_groups_scored` selects the same
+           groups when scores tie.
+        3. **Select** the first `max_groups_evaluated` groups whose
+           score is at least `min_score_to_evaluate`. Everything else
+           is scored and dropped — visible in the caller's list, not
+           returned.
+        4. **Bucket** each selected group: `high` at `high_min`,
+           `medium` at `medium_min`, else `low`. Unselected groups keep
+           `priority = None`, which is what "not sent to the LLM"
+           means in the table.
+
+        `analysis_budget_seconds` (ADR-0012) is not enforced here — it
+        bounds the LLM phase, which is 1.3e's, and there is nothing in
+        this method to spend it on.
+
+        The selected groups are returned in rank order, best first.
+        """
+        for name, value in (
+            ("max_groups_scored", max_groups_scored),
+            ("max_groups_evaluated", max_groups_evaluated),
+            ("min_score_to_evaluate", min_score_to_evaluate),
+        ):
+            if value < 0:
+                raise ValueError(f"{name} must be >= 0")
+
+        scored = groups[:max_groups_scored]
+        for group in scored:
+            group.score, group.score_components = self.score_chain_group(
+                group
+            )
+
+        ranked = sorted(scored, key=lambda g: (-g.score, g.group_id))
+        selected = [
+            group
+            for group in ranked
+            if group.score >= min_score_to_evaluate
+        ][:max_groups_evaluated]
+
+        chosen = {group.group_id for group in selected}
+        for group in scored:
+            group.priority = (
+                priority_for(group.score, high_min, medium_min)
+                if group.group_id in chosen
+                else None
+            )
+
+        return selected
+
+    def score_chain_group(
+        self,
+        group: ChainGroup,
+    ) -> tuple[float, dict[str, Any]]:
+        """The cheap score of one group, and its breakdown (ADR-0012).
+
+        Capabilities and structure only — no LLM, no target content. The
+        score is the sum of the components; it is *not* clamped at 0, so
+        a stale, low-signal group ranks below a group that scored
+        nothing rather than tying with it.
+
+        Two of the ADR's signals are deliberately not applied, and their
+        components are pinned at 0 with a reason saying so:
+
+          - **authenticated entry point** — the graph does not model
+            authentication. Every entry point would score +2, which is
+            not a signal but a constant, and a pattern-matched guess
+            (`Depends(get_current_user)`) has no corpus to be validated
+            against.
+          - **shared entry point** — a write chain starts at an entry
+            point and a read chain starts at the source, so the two
+            cannot share a first node. The ADR's wording does not
+            describe a shape this enumerator can produce.
+
+        Both stay in `score_components` at 0 so the ADR table and the
+        stored breakdown stay one-to-one: a weight that is off is
+        visible, not missing.
+        """
+        nodes = self._nodes_by_id(self._group_node_ids(group))
+
+        components: dict[str, int] = {key: 0 for key in SCORE_COMPONENT_KEYS}
+        reasons: dict[str, str] = {}
+
+        self._score_lethal_trifecta(group, nodes, components, reasons)
+        self._score_read_sinks(group, nodes, components, reasons)
+        self._score_source_type(group, nodes, components, reasons)
+
+        if group.total_hops <= SHORT_CHAIN_TOTAL_HOPS:
+            components["short_chain"] = SCORE_SHORT_CHAIN
+            reasons["short_chain"] = (
+                f"total {group.total_hops} hops"
+                f" <= {SHORT_CHAIN_TOTAL_HOPS}"
+            )
+        else:
+            reasons["short_chain"] = (
+                f"total {group.total_hops} hops"
+                f" > {SHORT_CHAIN_TOTAL_HOPS}"
+            )
+
+        stale = self._stale_node(nodes)
+        if stale is not None:
+            components["stale_node"] = SCORE_STALE_NODE
+            reasons["stale_node"] = (
+                f"confidence < {STALE_CONFIDENCE_BELOW} at {stale}"
+            )
+        else:
+            reasons["stale_node"] = (
+                f"every node has confidence >= {STALE_CONFIDENCE_BELOW}"
+            )
+
+        components["authenticated_entry"] = 0
+        reasons["authenticated_entry"] = (
+            "not modelled; the signal is skipped in 1.3c"
+        )
+        components["shared_entry"] = 0
+        reasons["shared_entry"] = (
+            "not modelled; write and read chains cannot share a first node"
+        )
+
+        total = sum(components.values())
+        payload: dict[str, Any] = dict(components)
+        payload["total"] = total
+        payload["reasons"] = reasons
+        return float(total), payload
+
+    # --------------------------------------------------------
     # validate_edges — Layer 3 deterministic validation (ADR-0006)
     # --------------------------------------------------------
 
@@ -856,3 +1180,227 @@ class QueryLayer:
             if SINK_CAPABILITIES.intersection(caps):
                 out.add(row["id"])
         return out
+
+    # --------------------------------------------------------
+    # Scoring helpers (ADR-0012)
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _group_node_ids(group: ChainGroup) -> list[str]:
+        """Every node id the group mentions, deduplicated and sorted.
+
+        One read for the whole group rather than one per node: a pair
+        group has at most a dozen nodes and the scorer runs for every
+        enumerated group.
+        """
+        return sorted({
+            node_id
+            for chain in group.write_chains + group.read_chains
+            for node_id in chain
+        })
+
+    def _nodes_by_id(self, node_ids: list[str]) -> dict[str, Node]:
+        """Nodes by id, for the ids that exist.
+
+        A missing id is simply absent: a group is a set of paths the
+        graph produced, but `chain_groups` has no FK to nodes and a
+        caller may hand in a group whose nodes were deleted between
+        enumeration and scoring. Absence scores 0, it does not raise.
+        """
+        if not node_ids:
+            return {}
+        placeholders = ",".join("?" for _ in node_ids)
+        rows = self._conn.execute(
+            f"SELECT * FROM nodes WHERE id IN ({placeholders})",
+            node_ids,
+        ).fetchall()
+        return {row["id"]: Node.from_row(row) for row in rows}
+
+    @staticmethod
+    def _matched_caps(
+        capabilities: list[str],
+        wanted: frozenset[str],
+    ) -> list[str]:
+        """The capabilities a node has out of a set, sorted.
+
+        Sorted so a reason string is deterministic — two runs over the
+        same graph produce the same text, which is what makes a stored
+        `score_components` diffable.
+        """
+        return sorted(wanted.intersection(capabilities))
+
+    @staticmethod
+    def _source_type(group: ChainGroup, nodes: dict[str, Node]) -> str:
+        """The anchor's source type: `rag_corpus`, `mcp_tool_description`...
+
+        Read from the node's `source_type` attribute, which is what
+        1.3a's detector writes. The name (`<type>:<call_target>`) is the
+        fallback for a group whose anchor carries no attributes — a
+        hand-built one in a test, or a node written before the attribute
+        existed. Both paths give the same string for a graph 1.3a built.
+        """
+        source = nodes.get(group.untrusted_source_id)
+        if source is not None:
+            declared = source.attributes.get("source_type")
+            if isinstance(declared, str) and declared:
+                return declared
+        return group.untrusted_source_name.split(":", 1)[0]
+
+    def _score_lethal_trifecta(
+        self,
+        group: ChainGroup,
+        nodes: dict[str, Node],
+        components: dict[str, int],
+        reasons: dict[str, str],
+    ) -> None:
+        """+5 when a node on the *reading* side has the trifecta.
+
+        The three sets come from `patterns.py` (ADR-0009): reads
+        untrusted input, can read secrets, can send data out. The
+        boolean is computed here and only here — no `lethal_trifecta`
+        node attribute is written (that is 1.3d), so the signal stays a
+        property of the score and not a new fact in the graph.
+
+        The writing side is not searched: the attacker's content enters
+        through the read, and a trifecta node upstream of the write
+        would be another chain's problem.
+        """
+        read_ids = sorted({
+            node_id
+            for chain in group.read_chains
+            for node_id in chain
+        })
+        for node_id in read_ids:
+            node = nodes.get(node_id)
+            if node is None:
+                continue
+            caps = node.capabilities
+            if not LETHAL_TRIFECTA_READ_CAPS.intersection(caps):
+                continue
+            if not LETHAL_TRIFECTA_SECRET_CAPS.intersection(caps):
+                continue
+            if not LETHAL_TRIFECTA_EGRESS_CAPS.intersection(caps):
+                continue
+            matched = (
+                self._matched_caps(caps, LETHAL_TRIFECTA_READ_CAPS)
+                + self._matched_caps(caps, LETHAL_TRIFECTA_SECRET_CAPS)
+                + self._matched_caps(caps, LETHAL_TRIFECTA_EGRESS_CAPS)
+            )
+            components["lethal_trifecta"] = SCORE_LETHAL_TRIFECTA
+            reasons["lethal_trifecta"] = f"{'+'.join(matched)} at {node_id}"
+            return
+
+        reasons["lethal_trifecta"] = (
+            "no read-side node reads untrusted input and secrets and can "
+            "send data out"
+        )
+
+    def _score_read_sinks(
+        self,
+        group: ChainGroup,
+        nodes: dict[str, Node],
+        components: dict[str, int],
+        reasons: dict[str, str],
+    ) -> None:
+        """+4 / +3 when a reading chain *ends* at a dangerous sink.
+
+        The sink is the last node of a read chain — the node the
+        enumeration stopped at, either a `sink` node or one carrying a
+        sink capability (ADR-0009). A mid-chain node is not a sink: the
+        chain reaches the sink, it does not pass through it.
+
+        Each component is credited once per group (the best read chain
+        wins), not once per read chain: the group is one finding, and
+        "the read side can run a shell" is one fact about it. The two
+        components are independent — a sink that both executes and
+        exfiltrates earns both, because the ADR table's two rows are two
+        signals, not two levels of one.
+        """
+        terminals = sorted({
+            chain[-1]
+            for chain in group.read_chains
+            if chain
+        })
+        for node_id in terminals:
+            node = nodes.get(node_id)
+            if node is None:
+                continue
+            dangerous = self._matched_caps(
+                node.capabilities, DANGEROUS_SINK_CAPS
+            )
+            if dangerous and not components["dangerous_sink"]:
+                components["dangerous_sink"] = SCORE_DANGEROUS_SINK
+                reasons["dangerous_sink"] = (
+                    f"{'+'.join(dangerous)} at {node_id}"
+                )
+            exfil = self._matched_caps(node.capabilities, EXFIL_OR_WRITE_CAPS)
+            if exfil and not components["exfil_or_write"]:
+                components["exfil_or_write"] = SCORE_EXFIL_OR_WRITE
+                reasons["exfil_or_write"] = f"{'+'.join(exfil)} at {node_id}"
+
+        if not components["dangerous_sink"]:
+            reasons["dangerous_sink"] = (
+                "no reading chain ends at an executes_shell or "
+                "executes_code node"
+            )
+        if not components["exfil_or_write"]:
+            reasons["exfil_or_write"] = (
+                "no reading chain ends at a writes_filesystem or "
+                "http_egress node"
+            )
+
+    def _score_source_type(
+        self,
+        group: ChainGroup,
+        nodes: dict[str, Node],
+        components: dict[str, int],
+        reasons: dict[str, str],
+    ) -> None:
+        """+2 for a user-writable source, +1 for a readable-only one.
+
+        Mutually exclusive: a source has one type, and the two weights
+        are two rows of the ADR table for the two cases. A type in
+        neither set scores 0 — an unweighed source kind is not silently
+        treated as writable.
+        """
+        source_type = self._source_type(group, nodes)
+        if source_type in USER_WRITABLE_SOURCE_TYPES:
+            components["user_writable_source"] = SCORE_USER_WRITABLE_SOURCE
+            reasons["user_writable_source"] = (
+                f"source type {source_type} is user-writable"
+            )
+            reasons["user_readable_source"] = (
+                f"source type {source_type} is writable, not readable-only"
+            )
+            return
+
+        if source_type in USER_READABLE_SOURCE_TYPES:
+            components["user_readable_source"] = SCORE_USER_READABLE_SOURCE
+            reasons["user_readable_source"] = (
+                f"source type {source_type} is user-readable only"
+            )
+            reasons["user_writable_source"] = (
+                f"source type {source_type} is not user-writable"
+            )
+            return
+
+        reasons["user_writable_source"] = (
+            f"source type {source_type} is not user-writable"
+        )
+        reasons["user_readable_source"] = (
+            f"source type {source_type} is not user-readable only"
+        )
+
+    @staticmethod
+    def _stale_node(nodes: dict[str, Node]) -> str | None:
+        """The first node below the confidence floor, or None.
+
+        First in id order, so the reason is deterministic when several
+        nodes are stale. The floor is ADR-0012's `confidence < 0.7`; the
+        value itself is not echoed into the reason (ADR-0001: stored
+        prose describes the rule, not the data).
+        """
+        for node_id in sorted(nodes):
+            if nodes[node_id].confidence < STALE_CONFIDENCE_BELOW:
+                return node_id
+        return None

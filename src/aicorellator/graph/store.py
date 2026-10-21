@@ -21,6 +21,7 @@ from pathlib import Path
 from types import TracebackType
 
 from .query import QueryLayer
+from .repositories.chain_groups import ChainGroupsRepository
 from .repositories.chains import ChainsRepository
 from .repositories.edges import EdgesRepository
 from .repositories.findings import FindingsRepository
@@ -57,6 +58,7 @@ class GraphStore:
         self.edges = EdgesRepository(self._conn)
         self.findings = FindingsRepository(self._conn)
         self.chains = ChainsRepository(self._conn)
+        self.chain_groups = ChainGroupsRepository(self._conn)
         self.reports = ReportsRepository(self._conn)
         self.state = StateRepository(self._conn)
         self.task_state = TaskStateRepository(self._conn)

@@ -1037,3 +1037,100 @@ def test_find_chain_groups_is_read_only(store: GraphStore) -> None:
         "SELECT COUNT(*) AS n FROM chain_groups"
     ).fetchone()["n"] == 0
 
+
+# ------------------------------------------------------------
+# prioritize_chain_groups (1.3c, ADR-0012)
+# ------------------------------------------------------------
+
+def _second_group(store: GraphStore) -> str:
+    """A second write/read pair whose read chain ends at a shell.
+
+        entry → writer2 → source2 → reader2 → execute_script
+
+    Same shape as `_group_graph`, one difference: the sink carries
+    `executes_shell`, so the group scores +4 where the first scores 0.
+    """
+    ids = {
+        "writer": "tool:" + "W" * 16,
+        "source": "untrusted_source:" + "V" * 16,
+        "reader": "tool:" + "R" * 16,
+        "sink": "sink:" + "S" * 16,
+    }
+    _put(store, ids["writer"], "tool", "save_document")
+    _put(
+        store, ids["source"], "untrusted_source",
+        "rag_corpus:vectorstore.search",
+    )
+    _put(store, ids["reader"], "tool", "search_documents")
+    _put(
+        store, ids["sink"], "sink", "execute_script",
+        capabilities=["executes_shell"],
+    )
+    _link(store, "edge:" + "6" * 16, "entry_point:" + "e" * 16, ids["writer"])
+    _link(
+        store, "edge:" + "7" * 16, ids["writer"], ids["source"],
+        flow_kind="data",
+    )
+    _link(
+        store, "edge:" + "8" * 16, ids["source"], ids["reader"],
+        flow_kind="data",
+    )
+    _link(store, "edge:" + "9" * 16, ids["reader"], ids["sink"])
+    return ids["source"]
+
+
+def test_prioritize_chain_groups_selects_the_stronger_group(
+    store: GraphStore,
+) -> None:
+    """Two enumerated groups, one dangerous sink: the sink wins."""
+    ids = _group_graph(store)
+    other_source = _second_group(store)
+
+    groups = store.query.find_chain_groups()
+    assert len(groups) == 2
+
+    selected = store.query.prioritize_chain_groups(
+        groups, min_score_to_evaluate=0, max_groups_evaluated=1,
+    )
+
+    assert len(selected) == 1
+    assert selected[0].untrusted_source_id == other_source
+    assert selected[0].score == 7.0
+    assert selected[0].priority == "low"
+    assert selected[0].score_components["dangerous_sink"] == 4
+
+    # The other group was scored and dropped, not skipped.
+    weak = next(g for g in groups if g.untrusted_source_id == ids["source"])
+    assert weak.score == 3.0
+    assert weak.priority is None
+
+
+def test_prioritize_chain_groups_applies_the_default_threshold(
+    store: GraphStore,
+) -> None:
+    """ADR-0012's `min_score_to_evaluate = 5` is the default."""
+    _group_graph(store)
+    other_source = _second_group(store)
+
+    selected = store.query.prioritize_chain_groups(
+        store.query.find_chain_groups()
+    )
+
+    assert [g.untrusted_source_id for g in selected] == [other_source]
+
+
+def test_prioritize_chain_groups_does_not_write(
+    store: GraphStore,
+) -> None:
+    """Selection is not persistence: the caller stores, not the query."""
+    _group_graph(store)
+    _second_group(store)
+    before = (store.nodes.count(), store.edges.count())
+
+    assert store.query.prioritize_chain_groups(
+        store.query.find_chain_groups()
+    )
+
+    assert (store.nodes.count(), store.edges.count()) == before
+    assert store.chain_groups.count() == 0
+

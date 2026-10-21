@@ -882,6 +882,77 @@ def test_pipeline_chain_group_through_dynamic_invocation(
         )}
 
 
+def test_pipeline_chain_groups_persist_and_prioritize(
+    dynamic_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """1.3c end to end: enumerate, score, select, store.
+
+    The graph is 1.3a.1.2's FinBot shape, so both halves of the channel
+    exist and two groups come out of `find_chain_groups` — one whose
+    read chain reaches the shell in three hops, one in four. Scoring
+    ranks the short one first (it earns the short-chain point), and
+    both clear ADR-0012's `min_score_to_evaluate = 5`.
+
+    Then the store step: `to_record()` plus `ChainGroupsRepository`,
+    which is the caller's job because the Query Layer does not write.
+    A second pass over the same graph is idempotent — same ids, same
+    scores, one row each — and does not disturb the evaluation columns.
+    """
+    target = ingest(dynamic_target, kind="folder")
+    delta = _normalized_dynamic(target)
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        groups = store.query.find_chain_groups()
+        assert len(groups) == 2
+
+        selected = store.query.prioritize_chain_groups(groups)
+        for group in selected:
+            store.chain_groups.upsert(group.to_record())
+
+        rows = store.chain_groups.list()
+        assert [r.id for r in rows] == [g.group_id for g in selected]
+        assert sorted(r.score for r in rows) == [5.0, 6.0]
+        assert [r.priority for r in rows] == ["low", "low"]
+        assert all(r.status == "active" for r in rows)
+        # The name is the anchor plus the two hop counts, not prose.
+        assert all(
+            r.name.startswith("mcp_tool_description:client.list_tools:")
+            for r in rows
+        )
+        assert {r.name.split(":")[-1] for r in rows} == {"3x3", "3x4"}
+        # 1.3d/1.3e columns are untouched by prioritization.
+        assert all(r.verdict is None and r.lethal_trifecta is False
+                   for r in rows)
+
+        # An evaluation that 1.3e would write...
+        store._conn.execute(
+            "UPDATE chain_groups"
+            " SET verdict = 'exploitable', confidence = 0.9",
+        )
+        # ...survives a re-run of prioritization over the same graph.
+        again = store.query.prioritize_chain_groups(
+            store.query.find_chain_groups()
+        )
+        for group in again:
+            store.chain_groups.upsert(group.to_record())
+
+        assert [g.group_id for g in again] == [g.group_id for g in selected]
+        assert store.chain_groups.count() == 2
+        assert [r.id for r in store.chain_groups.list()] == [
+            r.id for r in rows
+        ]
+        assert [r.score for r in store.chain_groups.list()] == [
+            r.score for r in rows
+        ]
+        assert all(
+            r.verdict == "exploitable" and r.confidence == 0.9
+            for r in store.chain_groups.list()
+        )
+
+
 def test_pipeline_chain_group_survives_the_literal_moving_file(
     split_target: Path,
     pipeline_db: Path,
