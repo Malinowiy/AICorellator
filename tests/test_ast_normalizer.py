@@ -25,6 +25,7 @@ from aicorellator.parsing.ast_normalizer import (
     _sha256,
     normalize,
 )
+from aicorellator.parsing.normalizer_context import make_context
 from aicorellator.parsing.capability_extractor import (
     FileCapabilities,
     SymbolCapabilities,
@@ -204,13 +205,13 @@ def test_node_from_method_tool() -> None:
 
 
 # ============================================================
-# normalize() — end to end
+# normalize(make_context()) — end to end
 # ============================================================
 
 def test_normalize_empty(manifest_with_findrive: FileManifest) -> None:
     """Empty TSA output still produces MCP server nodes."""
     tsa = TSAOutput(symbols=[])
-    delta = normalize(manifest_with_findrive, tsa)
+    delta = normalize(make_context(manifest_with_findrive, tsa))
     # Two files in mcp/servers/findrive/ → one mcp_server node
     assert len(delta.nodes) == 1
     assert delta.nodes[0].kind == "mcp_server"
@@ -223,7 +224,7 @@ def test_normalize_mcp_server_dedup(
 ) -> None:
     """Two files in same server dir → one node."""
     tsa = TSAOutput(symbols=[])
-    delta = normalize(manifest_with_findrive, tsa)
+    delta = normalize(make_context(manifest_with_findrive, tsa))
     mcp_nodes = [n for n in delta.nodes if n.kind == "mcp_server"]
     assert len(mcp_nodes) == 1
 
@@ -231,7 +232,7 @@ def test_normalize_mcp_server_dedup(
 def test_normalize_agent_node(tsa_with_agent: TSAOutput, target: Target) -> None:
     """A single InvoiceAgent class → one agent node."""
     empty_manifest = FileManifest(target=target)
-    delta = normalize(empty_manifest, tsa_with_agent)
+    delta = normalize(make_context(empty_manifest, tsa_with_agent))
     assert len(delta.nodes) == 1
     assert delta.nodes[0].kind == "agent"
     assert delta.nodes[0].name == "InvoiceAgent"
@@ -259,7 +260,7 @@ def test_normalize_provides_tool_edge(target: Target) -> None:
             class_name="FinDriveServer",
         ),
     ])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     # Expect: 1 mcp_server node, 1 tool node, 1 provides_tool edge
     assert len([n for n in delta.nodes if n.kind == "mcp_server"]) == 1
@@ -307,7 +308,7 @@ def test_normalize_has_access_to_edge(target: Target) -> None:
             class_name="SystemUtilsServer",
         ),
     ])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     # Expect: 1 mcp_server, 1 tool, 1 sink, 1 provides_tool edge,
     # 1 has_access_to edge
@@ -333,8 +334,8 @@ def test_normalize_deterministic(target: Target) -> None:
             file_path="agents/invoice.py", line_start=1, line_end=50,
         ),
     ])
-    d1 = normalize(manifest, tsa)
-    d2 = normalize(manifest, tsa)
+    d1 = normalize(make_context(manifest, tsa))
+    d2 = normalize(make_context(manifest, tsa))
 
     ids1 = sorted(n.id for n in d1.nodes)
     ids2 = sorted(n.id for n in d2.nodes)
@@ -356,7 +357,7 @@ def test_normalize_entry_point_node(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
     eps = [n for n in delta.nodes if n.kind == "entry_point"]
     assert len(eps) == 1
     assert eps[0].name == "POST /api/chat"
@@ -388,7 +389,7 @@ def test_normalize_entry_to_agent_edge(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
@@ -434,7 +435,7 @@ def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
     mcp_nodes = [n for n in delta.nodes if n.kind == "mcp_server"]
@@ -492,7 +493,9 @@ def test_normalize_cross_file_uses_tool(target: Target) -> None:
     ]
 
     tsa = TSAOutput(symbols=[])
-    delta = normalize(manifest, tsa, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, framework_detection=detection)
+    )
 
     uses_tool = [e for e in delta.edges if e.kind == "uses_tool"]
     assert len(uses_tool) == 1
@@ -531,7 +534,9 @@ def test_orphan_entry_links_to_single_framework_agent(target: Target) -> None:
         ),
     ]
 
-    delta = normalize(manifest, tsa, ep, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, ep, framework_detection=detection)
+    )
 
     delegates = [e for e in delta.edges if e.kind == "delegates_to"]
     assert len(delegates) == 2
@@ -553,7 +558,7 @@ def test_orphan_entry_no_framework_agent(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
     delegates = [e for e in delta.edges if e.kind == "delegates_to"]
     assert delegates == []
 
@@ -586,7 +591,9 @@ def test_orphan_entry_multiple_framework_agents_no_link(target: Target) -> None:
             attributes={"source_file": "b.py", "framework": "langchain"},
         ),
     ]
-    delta = normalize(manifest, tsa, ep, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, ep, framework_detection=detection)
+    )
     delegates = [e for e in delta.edges if e.kind == "delegates_to"]
     assert delegates == []
 
@@ -626,7 +633,9 @@ def test_orphan_entry_not_relinked_when_already_linked(target: Target) -> None:
             attributes={"source_file": "agents/invoice.py"},  # no framework
         ),
     ]
-    delta = normalize(manifest, tsa, ep, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, ep, framework_detection=detection)
+    )
     delegates = [e for e in delta.edges if e.kind == "delegates_to"]
     # Two edges total: one from agent_calls (entry → InvoiceAgent),
     # and... none from orphan fallback, because InvoiceAgent has
@@ -655,7 +664,7 @@ def test_entry_point_to_sink_direct_handler(target: Target) -> None:
         ],
         call_graph={"upload_file": set()},
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     sink_nodes = [n for n in delta.nodes if n.kind == "sink"]
@@ -706,7 +715,7 @@ def test_entry_point_to_sink_via_helper(target: Target) -> None:
             "execute_script": set(),
         },
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     sink_nodes = [n for n in delta.nodes if n.kind == "sink"]
@@ -747,7 +756,7 @@ def test_entry_point_to_sink_unreachable_skipped(target: Target) -> None:
             "execute_script": set(),
         },
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert has_access == []
 
@@ -777,7 +786,7 @@ def test_entry_point_to_sink_cycle_safe(target: Target) -> None:
             "execute_script": set(),
         },
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 1
 
@@ -807,7 +816,9 @@ def test_mcp_entry_point_created_for_framework_server(target: Target) -> None:
         ),
     ]
 
-    delta = normalize(manifest, tsa, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, framework_detection=detection)
+    )
 
     mcp_entries = [
         n for n in delta.nodes
@@ -844,7 +855,9 @@ def test_mcp_entry_point_not_created_for_path_heuristic(target: Target) -> None:
         ),
     ]
 
-    delta = normalize(manifest, tsa, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, framework_detection=detection)
+    )
 
     mcp_entries = [
         n for n in delta.nodes
@@ -867,7 +880,7 @@ def test_cli_entry_point_created(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     cli_nodes = [
         n for n in delta.nodes
@@ -892,7 +905,7 @@ def test_streamlit_entry_point_created(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     sl_nodes = [
         n for n in delta.nodes
@@ -923,7 +936,7 @@ def test_cli_entry_fallback_to_all_sinks(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(manifest, tsa, ep)
+    delta = normalize(make_context(manifest, tsa, ep))
 
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 1
@@ -1017,7 +1030,7 @@ def test_has_access_to_parameter_is_data(target: Target) -> None:
     """Tool forwards its own parameter to the sink → data / parameter_match."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1029,7 +1042,7 @@ def test_has_access_to_literal_is_control(target: Target) -> None:
     """Sink called with a literal only → control / literal_only."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "list_files")
     assert len(edges) == 1
@@ -1041,7 +1054,7 @@ def test_two_has_access_to_edges_differ_in_flow_kind(target: Target) -> None:
     """One file, one sink, two tools → one data edge and one control edge."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 2
@@ -1063,7 +1076,7 @@ class SystemUtilsServer:
 """
     manifest = _server_manifest(target, source)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1083,7 +1096,7 @@ class SystemUtilsServer:
 """
     manifest = _server_manifest(target, source)
     tsa = _systemutils_tsa(["process_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "process_file")
     assert len(edges) == 1
@@ -1096,7 +1109,7 @@ def test_has_access_to_missing_file_is_unknown(target: Target) -> None:
     """abs_path does not exist on disk → control / unknown, no crash."""
     manifest = _server_manifest(target, None)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1108,7 +1121,7 @@ def test_has_access_to_syntax_error_is_unknown(target: Target) -> None:
     """Unparseable file → control / unknown, no crash."""
     manifest = _server_manifest(target, "def broken(:\n")
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1132,7 +1145,7 @@ def test_source_file_parsed_at_most_once_per_scan(
         return real_parse(source, *args, **kwargs)
 
     monkeypatch.setattr(ast, "parse", counting_parse)
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     assert len([e for e in delta.edges if e.kind == "has_access_to"]) == 2
     assert len(calls) == 1
@@ -1142,7 +1155,7 @@ def test_every_edge_carries_flow_kind(target: Target) -> None:
     """Normalizing leaves no edge without a valid flow_kind (ADR-0015)."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     assert delta.edges
     for edge in delta.edges:
@@ -1176,7 +1189,7 @@ def test_provides_tool_is_control(target: Target) -> None:
     """A parseable file does not change provides_tool's flow_kind."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert len(provides) == 2
@@ -1241,7 +1254,7 @@ def test_sink_node_records_parameter_match(target: Target) -> None:
     """A sink that forwards its parameter to `os.remove` (1.2a.1)."""
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     sink = _node(delta, "delete_file")
     assert sink.kind == "sink"
@@ -1258,7 +1271,7 @@ def test_sink_node_records_parameter_attribute(target: Target) -> None:
     """
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER_ATTRIBUTE)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     sink = _node(delta, "delete_file")
     assert sink.kind == "sink"
@@ -1269,7 +1282,7 @@ def test_tool_node_records_returns_data(target: Target) -> None:
     """A tool whose body returns a value to its caller (1.2a.1)."""
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     tool = _node(delta, "read_file")
     assert tool.kind == "tool"
@@ -1280,7 +1293,7 @@ def test_tool_node_without_return_records_false(target: Target) -> None:
     """A tool that never returns a value is not a data source."""
     manifest = _server_manifest(target, SINK_FORWARDS_LITERAL)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     assert _node(delta, "read_file").attributes["returns_data"] is False
 
@@ -1289,7 +1302,7 @@ def test_sink_node_records_literal_only(target: Target) -> None:
     """A sink whose dangerous call takes a constant only (1.2a.1)."""
     manifest = _server_manifest(target, SINK_FORWARDS_LITERAL)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     assert _node(delta, "delete_file").attributes["sink_data_flow"] == "literal_only"
 
@@ -1298,7 +1311,7 @@ def test_sink_node_without_body_is_unknown(target: Target) -> None:
     """A heuristic sink node with no function of that name (1.2a.1)."""
     manifest = _server_manifest(target, SINK_WITHOUT_BODY)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     assert _node(delta, "delete_file").attributes["sink_data_flow"] == "unknown"
 
@@ -1307,7 +1320,7 @@ def test_sink_node_missing_file_is_unknown(target: Target) -> None:
     """abs_path does not exist on disk → unknown, no crash."""
     manifest = _server_manifest(target, None)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     assert _node(delta, "delete_file").attributes["sink_data_flow"] == "unknown"
     assert _node(delta, "read_file").attributes["returns_data"] is False
@@ -1323,7 +1336,7 @@ def test_only_tools_and_sinks_carry_flow_attributes(target: Target) -> None:
         ),
         *_systemutils_tsa(["read_file", "delete_file"]).symbols,
     ])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     for node in delta.nodes:
         if node.kind == "tool":
@@ -1346,7 +1359,7 @@ def test_body_attributes_do_not_change_flow_kind(target: Target) -> None:
     """
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     sink = _node(delta, "delete_file")
     assert sink.attributes["sink_data_flow"] == "parameter_match"
@@ -1376,7 +1389,9 @@ def test_body_attributes_survive_detector_node_replacement(
     )
     detection = DetectionResult(nodes=[detector_tool], framework="fastmcp")
 
-    delta = normalize(manifest, tsa, framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, tsa, framework_detection=detection)
+    )
 
     tool = _node(delta, "read_file")
     assert tool.id == "tool:detector"
@@ -1469,9 +1484,9 @@ def test_class_sink_node_records_parameter_match(target: Target) -> None:
     `analyze_sink_class` reads the class's methods instead.
     """
     manifest = _class_sink_manifest(target, CLASS_SINK_FORWARDS_PARAMETER)
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
-    )
+    ))
 
     sink = _node(delta, "FileRepository")
     assert sink.kind == "sink"
@@ -1481,9 +1496,9 @@ def test_class_sink_node_records_parameter_match(target: Target) -> None:
 def test_class_sink_node_records_literal_only(target: Target) -> None:
     """A class-kind sink whose `__init__` passes a constant only."""
     manifest = _class_sink_manifest(target, CLASS_SINK_DELETES_LITERAL)
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
-    )
+    ))
 
     sink = _node(delta, "FileRepository")
     assert sink.attributes["sink_data_flow"] == "literal_only"
@@ -1499,9 +1514,9 @@ def test_class_sink_node_with_method_only_is_parameter_match(
     — is what makes the node `parameter_match`.
     """
     manifest = _class_sink_manifest(target, CLASS_SINK_METHOD_ONLY)
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
-    )
+    ))
 
     sink = _node(delta, "FileRepository")
     assert sink.attributes["sink_data_flow"] == "parameter_match"
@@ -1512,9 +1527,9 @@ def test_class_sink_node_without_dangerous_call_is_unknown(
 ) -> None:
     """Methods that call nothing dangerous → unknown, and no crash."""
     manifest = _class_sink_manifest(target, CLASS_SINK_NO_DANGEROUS_CALL)
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
-    )
+    ))
 
     sink = _node(delta, "FileRepository")
     assert sink.attributes["sink_data_flow"] == "unknown"
@@ -1530,9 +1545,9 @@ def test_class_sink_node_with_stored_attribute_is_parameter_match(
     spelling produced before 1.2a.3g.
     """
     manifest = _class_sink_manifest(target, CLASS_SINK_STORED_ATTRIBUTE)
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, _class_sink_tsa(), capabilities=_class_sink_caps(),
-    )
+    ))
 
     sink = _node(delta, "FileRepository")
     assert sink.attributes["sink_data_flow"] == "parameter_match"
@@ -1558,7 +1573,9 @@ def test_class_sink_detector_node_resolves_the_class_body(
     )
     detection = DetectionResult(nodes=[detector_sink], framework="fastmcp")
 
-    delta = normalize(manifest, TSAOutput(), framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, TSAOutput(), framework_detection=detection)
+    )
 
     sink = _node(delta, "FileRepository")
     assert sink.id == "sink:detector"
@@ -1672,7 +1689,7 @@ def test_duplicate_method_names_resolve_by_line_start(target: Target) -> None:
     """
     manifest = _server_manifest(target, DUPLICATE_SINK_METHODS)
     tsa = _tsa_from_source(DUPLICATE_SINK_METHODS, SYSTEMUTILS_PATH)
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     lines = _definition_lines(DUPLICATE_SINK_METHODS, "delete_file")
     assert len(lines) == 2
@@ -1704,7 +1721,9 @@ def test_duplicate_method_names_without_line_start_use_the_first(
     )
     detection = DetectionResult(nodes=[detector_sink], framework="fastmcp")
 
-    delta = normalize(manifest, TSAOutput(), framework_detection=detection)
+    delta = normalize(
+        make_context(manifest, TSAOutput(), framework_detection=detection)
+    )
 
     sink = _node(delta, "delete_file")
     assert "line_start" not in sink.attributes
@@ -1738,7 +1757,7 @@ def test_approximate_line_start_uses_the_closest_preceding_definition(
         line_end=approximate + 1,
         class_name="SecondRepository",
     )])
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     sink = _node(delta, "delete_file")
     assert sink.attributes["line_start"] == approximate
@@ -1753,7 +1772,7 @@ def test_duplicate_tool_names_resolve_by_line_start(target: Target) -> None:
     """
     manifest = _server_manifest(target, DUPLICATE_TOOL_NAMES)
     tsa = _tsa_from_source(DUPLICATE_TOOL_NAMES, SYSTEMUTILS_PATH)
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
 
     lines = _definition_lines(DUPLICATE_TOOL_NAMES, "read_file")
     assert len(lines) == 2
@@ -1861,9 +1880,9 @@ def test_mcp_entry_edge_inherits_tool_data_flow(target: Target) -> None:
         ),
     ]
 
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, TSAOutput(symbols=[]), framework_detection=detection
-    )
+    ))
 
     by_target = {
         e.target_id: e for e in delta.edges if e.kind == "delegates_to"
@@ -1935,9 +1954,9 @@ def test_enriched_uses_tool_edge_not_downgraded(target: Target) -> None:
         ),
     ]
 
-    delta = normalize(
+    delta = normalize(make_context(
         manifest, TSAOutput(symbols=[]), framework_detection=detection
-    )
+    ))
 
     uses_tool = [e for e in delta.edges if e.kind == "uses_tool"]
     assert len(uses_tool) == 1
@@ -1974,7 +1993,7 @@ def test_provides_tool_edge_stays_control_for_tsa_tools(
             size=100,
         ),
     ]
-    delta = normalize(manifest, tsa)
+    delta = normalize(make_context(manifest, tsa))
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert len(provides) == 1
     assert provides[0].flow_kind == "control"
