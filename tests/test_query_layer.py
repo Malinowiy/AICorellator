@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aicorellator import GraphStore
 from aicorellator.graph import Edge, Node
+from aicorellator.graph.query import SCORE_WRITES_DB
 
 
 def test_find_chains_entry_to_sink(
@@ -1079,6 +1080,58 @@ def _second_group(store: GraphStore) -> str:
     return ids["source"]
 
 
+def _long_pair(
+    store: GraphStore,
+    *,
+    tag: str,
+    sink_caps: list[str] | None = None,
+) -> str:
+    """A pair too long for the short-chain point, with a chosen sink.
+
+        entry → w1 → w2 → source → r1 → r2 → r3 → sink
+
+    Three write hops and four read hops is 7 — one past the short-chain
+    threshold — so the score is the source type plus the sink and
+    nothing else. The source is `mcp_tool_description`, ADR-0012's
+    readable-only kind (+1).
+
+    `tag` namespaces every id: two of these in one test must not share
+    a node, because `nodes.upsert` unions capabilities.
+    """
+    ids = {
+        "entry": "entry_point:" + tag * 16,
+        "w1": f"tool:{tag}w1",
+        "w2": f"tool:{tag}w2",
+        "source": "untrusted_source:" + tag * 16,
+        "r1": f"tool:{tag}r1",
+        "r2": f"tool:{tag}r2",
+        "r3": f"tool:{tag}r3",
+        "sink": "sink:" + tag * 16,
+    }
+    _put(store, ids["entry"], "entry_point", "POST /chat")
+    _put(store, ids["w1"], "tool", "prepare_upload")
+    _put(store, ids["w2"], "tool", "save_document")
+    _put(
+        store, ids["source"], "untrusted_source",
+        "mcp_tool_description:client.list_tools",
+    )
+    _put(store, ids["r1"], "tool", "get_documents")
+    _put(store, ids["r2"], "tool", "summarize_documents")
+    _put(store, ids["r3"], "tool", "file_update")
+    _put(
+        store, ids["sink"], "sink", "update_status",
+        capabilities=sink_caps,
+    )
+    _link(store, f"edge:{tag}1", ids["entry"], ids["w1"])
+    _link(store, f"edge:{tag}2", ids["w1"], ids["w2"], flow_kind="data")
+    _link(store, f"edge:{tag}3", ids["w2"], ids["source"], flow_kind="data")
+    _link(store, f"edge:{tag}4", ids["source"], ids["r1"], flow_kind="data")
+    _link(store, f"edge:{tag}5", ids["r1"], ids["r2"])
+    _link(store, f"edge:{tag}6", ids["r2"], ids["r3"])
+    _link(store, f"edge:{tag}7", ids["r3"], ids["sink"])
+    return ids["source"]
+
+
 def test_prioritize_chain_groups_selects_the_stronger_group(
     store: GraphStore,
 ) -> None:
@@ -1108,15 +1161,64 @@ def test_prioritize_chain_groups_selects_the_stronger_group(
 def test_prioritize_chain_groups_applies_the_default_threshold(
     store: GraphStore,
 ) -> None:
-    """ADR-0012's `min_score_to_evaluate = 5` is the default."""
-    _group_graph(store)
+    """ADR-0012's revised `min_score_to_evaluate = 3` is the default.
+
+    `_group_graph` scores 3.0 (a writable source plus the short-chain
+    point) and `_second_group` 7.0 (the shell sink), so both clear the
+    revised threshold — the original 5 would have dropped the first.
+    A readable source alone (+1) is still below it.
+    """
+    ids = _group_graph(store)
     other_source = _second_group(store)
+    readable_only = _long_pair(store, tag="x")
+
+    groups = store.query.find_chain_groups()
+    selected = store.query.prioritize_chain_groups(groups)
+
+    assert [g.untrusted_source_id for g in selected] == [
+        other_source, ids["source"],
+    ]
+    assert [g.score for g in selected] == [7.0, 3.0]
+    below = next(
+        g for g in groups if g.untrusted_source_id == readable_only
+    )
+    assert below.score == 1.0
+    assert below.priority is None
+
+
+def test_prioritize_chain_groups_selects_a_writes_db_sink(
+    store: GraphStore,
+) -> None:
+    """A readable source (+1) plus a database write (+3) is 4 — over 3.
+
+    The FinBot shape at the new threshold: the sink is a `writes_db`
+    method, which the two 1.3c impact components did not weight.
+    """
+    source = _long_pair(store, tag="x", sink_caps=["writes_db"])
 
     selected = store.query.prioritize_chain_groups(
         store.query.find_chain_groups()
     )
 
-    assert [g.untrusted_source_id for g in selected] == [other_source]
+    assert [g.untrusted_source_id for g in selected] == [source]
+    assert selected[0].score == 4.0
+    assert selected[0].score_components["writes_db"] == SCORE_WRITES_DB
+    assert selected[0].priority == "low"
+
+
+def test_prioritize_chain_groups_drops_a_source_only_group(
+    store: GraphStore,
+) -> None:
+    """A source without a sink is not worth the LLM call (ADR-0012)."""
+    source = _long_pair(store, tag="x")
+
+    groups = store.query.find_chain_groups()
+    selected = store.query.prioritize_chain_groups(groups)
+
+    assert selected == []
+    weak = next(g for g in groups if g.untrusted_source_id == source)
+    assert weak.score == 1.0
+    assert weak.priority is None
 
 
 def test_prioritize_chain_groups_does_not_write(

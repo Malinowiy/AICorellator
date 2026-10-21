@@ -21,6 +21,7 @@ import pytest
 from aicorellator import GraphStore
 from aicorellator.graph import ChainGroup, Node
 from aicorellator.graph.query import (
+    MIN_SCORE_TO_EVALUATE,
     SCORE_COMPONENT_KEYS,
     SCORE_DANGEROUS_SINK,
     SCORE_EXFIL_OR_WRITE,
@@ -29,6 +30,7 @@ from aicorellator.graph.query import (
     SCORE_STALE_NODE,
     SCORE_USER_READABLE_SOURCE,
     SCORE_USER_WRITABLE_SOURCE,
+    SCORE_WRITES_DB,
     SHORT_CHAIN_TOTAL_HOPS,
     priority_for,
 )
@@ -253,6 +255,75 @@ def test_a_mid_chain_dangerous_node_is_not_a_sink(
 
 
 # ------------------------------------------------------------
+# Reading chain writes to a database (+3, ADR-0012 revision)
+# ------------------------------------------------------------
+
+def test_writes_db_sink_fires(store: GraphStore) -> None:
+    """The FinBot shape: a readable catalogue, a DB-writing method."""
+    group = _pair(
+        store,
+        source_type="mcp_tool_description",
+        sink_caps=["writes_db"],
+    )
+
+    components = _score(store, group)
+
+    assert components["writes_db"] == SCORE_WRITES_DB
+    assert "writes_db" in components["reasons"]["writes_db"]
+    assert _ids()["sink"] in components["reasons"]["writes_db"]
+
+
+def test_a_file_and_a_db_write_stack(store: GraphStore) -> None:
+    """Two rows of the table, two components — not two levels of one."""
+    group = _pair(store, sink_caps=["writes_filesystem", "writes_db"])
+
+    components = _score(store, group)
+
+    assert components["exfil_or_write"] == SCORE_EXFIL_OR_WRITE
+    assert components["writes_db"] == SCORE_WRITES_DB
+    assert (
+        components["exfil_or_write"] + components["writes_db"]
+        == 2 * SCORE_EXFIL_OR_WRITE
+    )
+
+
+def test_a_reads_db_sink_scores_nothing(store: GraphStore) -> None:
+    """Reading is not the impact; the write is."""
+    group = _pair(store, sink_caps=["reads_db"])
+
+    components = _score(store, group)
+
+    assert components["writes_db"] == 0
+    assert "no reading chain node" in components["reasons"]["writes_db"]
+
+
+def test_a_mid_chain_db_write_still_counts(store: GraphStore) -> None:
+    """Wider than the two sink components: *any* read-chain node.
+
+    The impact is the mutation, not the stopping point. A chain that
+    writes a row mid-path and continues to another sink has still let
+    untrusted input reach the database.
+    """
+    group = _pair(store, reader_caps=["writes_db"])
+
+    components = _score(store, group)
+
+    assert components["writes_db"] == SCORE_WRITES_DB
+    assert _ids()["reader"] in components["reasons"]["writes_db"]
+
+
+def test_writes_db_is_credited_once(store: GraphStore) -> None:
+    """One row of the table, one component, however many nodes."""
+    group = _pair(
+        store, reader_caps=["writes_db"], sink_caps=["writes_db"],
+    )
+
+    components = _score(store, group)
+
+    assert components["writes_db"] == SCORE_WRITES_DB
+
+
+# ------------------------------------------------------------
 # Source type (+2 / +1)
 # ------------------------------------------------------------
 
@@ -385,6 +456,8 @@ def test_score_components_shape(store: GraphStore) -> None:
 
     components = _score(store, group)
 
+    assert len(SCORE_COMPONENT_KEYS) == 10
+    assert "writes_db" in SCORE_COMPONENT_KEYS
     assert set(components) == set(SCORE_COMPONENT_KEYS) | {
         "total", "reasons",
     }
@@ -482,6 +555,7 @@ def test_ties_break_on_group_id(store: GraphStore) -> None:
 
 
 def test_selection_honors_the_threshold(store: GraphStore) -> None:
+    """A threshold above the default still binds (the parameter works)."""
     strong, weak = _two_groups(store)
 
     selected = store.query.prioritize_chain_groups(
@@ -492,6 +566,32 @@ def test_selection_honors_the_threshold(store: GraphStore) -> None:
     # The weak group was scored and dropped, not ignored.
     assert weak.score == 2.0
     assert weak.priority is None
+
+
+def test_the_default_threshold_is_three(store: GraphStore) -> None:
+    """ADR-0012's revision: 3, not the original 5.
+
+    A readable source (+1) plus a database write (+3) is 6 with the
+    short-chain point — a candidate. A readable source alone (+1) is
+    not: a source without a sink is not worth an LLM call.
+    """
+    assert MIN_SCORE_TO_EVALUATE == 3
+
+    over = _pair(store, key="a", sink_caps=["writes_db"])
+    under = _pair(
+        store,
+        key="b",
+        source_type="mcp_tool_description",
+        write_hops=4,
+        read_hops=3,
+    )
+
+    selected = store.query.prioritize_chain_groups([under, over])
+
+    assert selected == [over]
+    assert over.score == 6.0
+    assert under.score == 1.0
+    assert under.priority is None
 
 
 def test_selection_honors_max_groups_evaluated(

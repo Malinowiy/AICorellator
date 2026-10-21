@@ -892,7 +892,14 @@ def test_pipeline_chain_groups_persist_and_prioritize(
     exist and two groups come out of `find_chain_groups` — one whose
     read chain reaches the shell in three hops, one in four. Scoring
     ranks the short one first (it earns the short-chain point), and
-    both clear ADR-0012's `min_score_to_evaluate = 5`.
+    both clear ADR-0012's `min_score_to_evaluate = 3`.
+
+    This fixture's sink is a shell (`subprocess.run`), not a database
+    write, so the 2026-10-22 `writes_db` weight does not fire here —
+    the assertion below pins that rather than leaving it implied. The
+    weight is covered by the unit and query-layer tests, and by the
+    FinBot corpus, whose read-side sinks are `writes_db` methods; the
+    fixture is not bent to produce one.
 
     Then the store step: `to_record()` plus `ChainGroupsRepository`,
     which is the caller's job because the Query Layer does not write.
@@ -923,6 +930,10 @@ def test_pipeline_chain_groups_persist_and_prioritize(
             for r in rows
         )
         assert {r.name.split(":")[-1] for r in rows} == {"3x3", "3x4"}
+        # The shell sink earns `dangerous_sink`; nothing on either read
+        # chain writes to a database, so the revision's row stays 0.
+        assert all(r.score_components["dangerous_sink"] == 4 for r in rows)
+        assert all(r.score_components["writes_db"] == 0 for r in rows)
         # 1.3d/1.3e columns are untouched by prioritization.
         assert all(r.verdict is None and r.lethal_trifecta is False
                    for r in rows)

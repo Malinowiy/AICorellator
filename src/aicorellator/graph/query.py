@@ -53,6 +53,11 @@ from ..patterns import (
 SCORE_LETHAL_TRIFECTA = 5
 SCORE_DANGEROUS_SINK = 4
 SCORE_EXFIL_OR_WRITE = 3
+# ADR-0012's 2026-10-22 revision: a persistent data mutation is the
+# same class of impact as a filesystem write, so it is weighted
+# identically. It sits next to the other impact weights because it is
+# one — the source-type weights below are a different axis.
+SCORE_WRITES_DB = 3
 SCORE_AUTHENTICATED_ENTRY = 2
 SCORE_USER_WRITABLE_SOURCE = 2
 SCORE_USER_READABLE_SOURCE = 1
@@ -73,6 +78,10 @@ EXFIL_OR_WRITE_CAPS: frozenset[str] = frozenset({
     "writes_filesystem",
     "http_egress",
 })
+# The third impact row (ADR-0012 revision, 2026-10-22). One capability,
+# so a one-line set rather than a literal: `_matched_caps` takes a set
+# and every impact row is read the same way.
+WRITES_DB_CAPS: frozenset[str] = frozenset({"writes_db"})
 
 # Untrusted source types by how much control the attacker needs to
 # place content in them (ADR-0012): user-writable is +2, readable-only
@@ -105,7 +114,10 @@ PRIORITY_MEDIUM_MIN = 10
 # Selection defaults (ADR-0012 §"Ranking and Selection").
 MAX_GROUPS_SCORED = 10000
 MAX_GROUPS_EVALUATED = 100
-MIN_SCORE_TO_EVALUATE = 5
+# The threshold was revised from 5 to 3 in the same pass that weighted
+# `writes_db` (2026-10-22): a readable source (+1) plus a database
+# write (+3) is a candidate at 4, and no group on FinBot cleared 5.
+MIN_SCORE_TO_EVALUATE = 3
 
 # Component keys of `score_components`, in report order. Stable: a
 # downstream consumer filters or re-weights by these names. One key per
@@ -115,6 +127,7 @@ SCORE_COMPONENT_KEYS: tuple[str, ...] = (
     "lethal_trifecta",
     "dangerous_sink",
     "exfil_or_write",
+    "writes_db",
     "authenticated_entry",
     "user_writable_source",
     "user_readable_source",
@@ -1006,6 +1019,7 @@ class QueryLayer:
 
         self._score_lethal_trifecta(group, nodes, components, reasons)
         self._score_read_sinks(group, nodes, components, reasons)
+        self._score_read_writes_db(group, nodes, components, reasons)
         self._score_source_type(group, nodes, components, reasons)
 
         if group.total_hops <= SHORT_CHAIN_TOTAL_HOPS:
@@ -1315,6 +1329,10 @@ class QueryLayer:
         components are independent — a sink that both executes and
         exfiltrates earns both, because the ADR table's two rows are two
         signals, not two levels of one.
+
+        The table's third impact row, `writes_db`, is *not* here: the
+        revision reads it as any read-chain node, not the terminal. See
+        `_score_read_writes_db`.
         """
         terminals = sorted({
             chain[-1]
@@ -1348,6 +1366,56 @@ class QueryLayer:
                 "no reading chain ends at a writes_filesystem or "
                 "http_egress node"
             )
+
+    def _score_read_writes_db(
+        self,
+        group: ChainGroup,
+        nodes: dict[str, Node],
+        components: dict[str, int],
+        reasons: dict[str, str],
+    ) -> None:
+        """+3 when *any* node on the reading side writes to a database.
+
+        Deliberately wider than `_score_read_sinks`, and this is the one
+        place the two readings of "reaches a sink" differ:
+
+          - `dangerous_sink` / `exfil_or_write` keep 1.3c's reading — a
+            read chain *ends* at the sink. It reaches the sink, it does
+            not pass through it.
+          - `writes_db` credits *any* node on a read chain, because the
+            impact is the mutation and not the stopping point: a chain
+            that writes a row mid-path and continues to another sink has
+            still let untrusted input mutate the database. The ADR
+            table's wording is "reading chain reaches a `writes_db`
+            sink", and a mid-chain node is reached.
+
+        The asymmetry is the ADR-0012 revision's, not the enumerator's:
+        if the two other impact rows should widen the same way, that is
+        a further revision of the table, not a silent change here.
+
+        Credited once per group, like every other component: several
+        read chains through the same database writer is one fact about
+        the group, not three. The first match in id order wins, so the
+        reason string is deterministic.
+        """
+        read_ids = sorted({
+            node_id
+            for chain in group.read_chains
+            for node_id in chain
+        })
+        for node_id in read_ids:
+            node = nodes.get(node_id)
+            if node is None:
+                continue
+            matched = self._matched_caps(node.capabilities, WRITES_DB_CAPS)
+            if matched:
+                components["writes_db"] = SCORE_WRITES_DB
+                reasons["writes_db"] = f"{'+'.join(matched)} at {node_id}"
+                return
+
+        reasons["writes_db"] = (
+            "no reading chain node writes to a database"
+        )
 
     def _score_source_type(
         self,
