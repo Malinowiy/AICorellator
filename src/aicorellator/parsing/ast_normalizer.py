@@ -56,14 +56,16 @@ from .classification import (
     classify_method,
 )
 from .entry_points import EntryPointOutput
-from .flow_analyzer import (
+from .flow import (
     FunctionNode,
+    FlowDecision,
+    VALID_KINDS,
     analyze_has_access_to,
     analyze_sink_body,
     analyze_sink_class,
     analyze_tool_returns,
+    flow_kind_for,
 )
-from .flow.decision import VALID_KINDS, FlowDecision, flow_kind_for
 from .framework_detectors import DetectionResult
 from .llm_extractor import LLMExtractorOutput
 from .models import TSAOutput, TSASymbol

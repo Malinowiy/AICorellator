@@ -30,7 +30,7 @@ from aicorellator.parsing.capability_extractor import (
     SymbolCapabilities,
 )
 from aicorellator.parsing.classification import Classification
-from aicorellator.parsing.flow_analyzer import DATA_FLOW_DATA_VALUES
+from aicorellator.parsing.flow import DATA_FLOW_DATA_VALUES
 from aicorellator.parsing.entry_points import (
     AgentCall,
     EntryPoint,

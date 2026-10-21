@@ -7,9 +7,9 @@ Two things are pinned here:
      and the provenance fields;
   2. **who decides** — each producer returns a decision whose `source`
      names it. The kind values are asserted in the analyzers' own test
-     files (`test_flow_analyzer.py`, `test_enrichment.py`); this file
-     asserts that a value came from the producer claimed to have
-     produced it.
+     files (`test_flow_edge_analyzer.py`, `test_flow_sink_analyzer.py`,
+     `test_enrichment.py`); this file asserts that a value came from the
+     producer claimed to have produced it.
 """
 
 from __future__ import annotations
@@ -20,12 +20,14 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from aicorellator.parsing.flow.decision import (
+    DATA_FLOW_CONFIRMED_VALUES,
+    DATA_FLOW_DATA_VALUES,
     DATA_KINDS,
     VALID_KINDS,
     FlowDecision,
     flow_kind_for,
 )
-from aicorellator.parsing.flow_analyzer import (
+from aicorellator.parsing.flow import (
     analyze_has_access_to,
     analyze_sink_body,
     analyze_sink_class,
@@ -142,6 +144,24 @@ def test_decisions_are_hashable_and_comparable() -> None:
     )
     assert len({FlowDecision("unknown"), FlowDecision("no_args")}) == 2
 
+
+
+# ============================================================
+# Constants
+# ============================================================
+
+def test_confirmed_values_are_the_six() -> None:
+    assert DATA_FLOW_CONFIRMED_VALUES == {
+        "parameter_match", "local_var_match", "call_result_match",
+        "literal_only", "no_args", "unknown",
+    }
+
+
+def test_data_values_are_the_three_data_kinds() -> None:
+    assert DATA_FLOW_DATA_VALUES == {
+        "parameter_match", "local_var_match", "call_result_match",
+    }
+    assert DATA_FLOW_DATA_VALUES <= DATA_FLOW_CONFIRMED_VALUES
 
 # ------------------------------------------------------------
 # Provenance: who decided

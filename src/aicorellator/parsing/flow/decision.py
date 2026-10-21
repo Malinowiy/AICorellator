@@ -59,6 +59,15 @@ DATA_KINDS: frozenset[str] = frozenset({
 })
 
 
+# Legacy spellings of the two sets above. They were published from
+# `parsing.flow_analyzer` before step 2 split that module; ADR-0015 (and
+# the schema comment) name the column `data_flow_confirmed`, so the names
+# are kept as aliases — same objects, one definition each. New code
+# reads `VALID_KINDS` / `DATA_KINDS`.
+DATA_FLOW_CONFIRMED_VALUES: frozenset[str] = VALID_KINDS
+DATA_FLOW_DATA_VALUES: frozenset[str] = DATA_KINDS
+
+
 @dataclass(frozen=True)
 class FlowDecision:
     """One analysis result: the kind, the evidence, and the producer."""
@@ -89,6 +98,8 @@ def flow_kind_for(decision: FlowDecision) -> str:
 
 
 __all__ = [
+    "DATA_FLOW_CONFIRMED_VALUES",
+    "DATA_FLOW_DATA_VALUES",
     "DATA_KINDS",
     "VALID_KINDS",
     "FlowDecision",

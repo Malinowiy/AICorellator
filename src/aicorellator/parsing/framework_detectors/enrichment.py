@@ -15,8 +15,8 @@ argument is keyword-only and has **no default** — attributing a value
 to the wrong framework is worse than writing one more word at the call
 site.
 
-Why here and not in `parsing/flow_analyzer.py`: the Flow Analyzer
-answers the framework-independent question "how does data reach a sink
+Why here and not in `parsing/flow/` (the analyzers): those modules
+answer the framework-independent question "how does data reach a sink
 call inside this body?". These helpers answer framework-specific
 questions — "does the agent's system prompt name this tool?", "was this
 LLM configured with a literal model name?", "does this MCP tool accept
