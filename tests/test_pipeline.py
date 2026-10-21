@@ -22,11 +22,17 @@ The target is a small synthetic project with:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from aicorellator import GraphStore
+from aicorellator.analysis.config_loader import EnsembleConfig
+from aicorellator.analysis.evaluator import evaluate_chain_groups
+from aicorellator.analysis.models import VoterConfig, VoterResponse
+from aicorellator.analysis.prompts import GROUP_SYSTEM_PROMPT
 from aicorellator.ingestion import discover, ingest
 from aicorellator.parsing import (
     make_context,
@@ -39,6 +45,8 @@ from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
+from aicorellator.reporting import render_report, write_bundle
+from aicorellator.workspace import Workspace
 
 
 # ============================================================
@@ -1057,3 +1065,107 @@ def test_pipeline_chain_group_survives_the_literal_moving_file(
             "GET /chat", "ToolProviderAgent", "knowledge",
             "mcp_tool_description:client.list_tools",
         )}
+
+
+# ============================================================
+# 1.3e — chain group evaluation
+# ============================================================
+
+def _group_config() -> EnsembleConfig:
+    """One fast voter, no judge — the cheapest real wiring (ADR-0005)."""
+    return EnsembleConfig(
+        voters=[VoterConfig(name="fake", base_url="x", role="fast")],
+        mode="fast",
+    )
+
+
+def test_pipeline_chain_groups_evaluated_and_reported(
+    dynamic_target: Path,
+    pipeline_db: Path,
+    tmp_path: Path,
+) -> None:
+    """1.3e end to end: evaluate the selected pairs, then report them.
+
+    The voters are mocked — what is under test is the wiring, not a
+    model: enumeration → 1.3c's selection → the group prompt → Layer 3 →
+    the row → the report and the bundle. The mock cites an edge it read
+    out of the prompt, so Layer 3 has something real to check and the
+    group validates on evidence rather than on having no evidence.
+    """
+    target = ingest(dynamic_target, kind="folder")
+    delta = _normalized_dynamic(target)
+    prompts: list[str] = []
+    systems: list[str] = []
+
+    def fake_voter(
+        voter, chain_id, system_prompt, user_prompt, temperature, max_tokens,
+    ):
+        systems.append(system_prompt)
+        prompts.append(user_prompt)
+        block = (
+            user_prompt.split("[UNTRUSTED_DATA]")[1]
+            .split("[/UNTRUSTED_DATA]")[0]
+        )
+        payload = json.loads(block)
+        cited = [
+            edge["id"]
+            for chain in payload["read_chains"]
+            for edge in chain["edges"]
+        ]
+        return VoterResponse(
+            chain_id=chain_id, model=voter.name, prompt_version="v1.5.0",
+            exploitable=True, confidence=0.9,
+            reasoning="the writer plants a payload the reader executes",
+            evidence=cited[:1],
+        )
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        selected = store.query.prioritize_chain_groups(
+            store.query.find_chain_groups()
+        )
+        assert len(selected) == 2
+        for group in selected:
+            store.chain_groups.upsert(group.to_record())
+
+        with patch(
+            "aicorellator.analysis.voters._evaluate_one", side_effect=fake_voter,
+        ):
+            stats = evaluate_chain_groups(
+                store, selected, _group_config(), progress=False,
+            )
+
+        assert stats["evaluated"] == 2
+        assert stats["validated"] == 2
+        assert stats["exploitable"] == 2
+        assert stats["errors"] == 0
+
+        rows = store.chain_groups.list()
+        assert [r.id for r in rows] == [g.group_id for g in selected]
+        assert all(r.verdict == "exploitable" for r in rows)
+        assert all(r.confidence == 0.9 for r in rows)
+        assert all(r.validated for r in rows)
+        assert all("reader executes" in r.reasoning for r in rows)
+        # 1.3c's columns rode through the verdict write.
+        assert all(r.score_components["dangerous_sink"] == 4 for r in rows)
+        assert all(r.priority == "low" for r in rows)
+
+        # The model saw a pair, not a chain.
+        assert set(systems) == {GROUP_SYSTEM_PROMPT}
+        assert len(prompts) == 2
+        for prompt in prompts:
+            assert '"write_chains"' in prompt
+            assert '"read_chains"' in prompt
+
+        report = render_report(store)
+        assert "## Chain groups (Phase 3)" in report
+        assert "| Validated (Layer 3) | 2 |" in report
+        assert "| `exploitable` | 2 |" in report
+        assert "mcp_tool_description:client.list_tools" in report
+
+        bundle = write_bundle(store, Workspace(root=tmp_path))
+        groups_json = json.loads((bundle / "chain_groups.json").read_text())
+        assert [g["verdict"] for g in groups_json] == ["exploitable", "exploitable"]
+        assert all(g["validated"] is True for g in groups_json)
+        assert "## Chain groups (Phase 3)" in (bundle / "report.md").read_text()

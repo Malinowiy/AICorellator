@@ -129,6 +129,61 @@ def test_upsert_leaves_the_evaluation_columns_alone(
     assert fetched.validated is True
 
 
+def test_upsert_writes_a_verdict(store: GraphStore, source: str) -> None:
+    """1.3e's write lands on the row 1.3c created (1.3e).
+
+    Prioritization writes a row with no verdict; the evaluator writes the
+    same row back with one. The verdict columns are the only difference
+    the second write is allowed to make to them.
+    """
+    store.chain_groups.upsert(_record())
+
+    evaluated = _record()
+    evaluated.verdict = "exploitable"
+    evaluated.confidence = 0.9
+    evaluated.reasoning = "the read side runs a shell"
+    evaluated.validated = True
+    store.chain_groups.upsert(evaluated)
+
+    fetched = store.chain_groups.get(evaluated.id)
+    assert store.chain_groups.count() == 1
+    assert fetched.verdict == "exploitable"
+    assert fetched.confidence == 0.9
+    assert fetched.reasoning == "the read side runs a shell"
+    assert fetched.validated is True
+    # 1.3c's columns are refreshed from the incoming record, which is the
+    # same group, so they are unchanged.
+    assert fetched.score == 7.0
+    assert fetched.priority == "low"
+
+
+def test_upsert_carries_validated_with_the_verdict(
+    store: GraphStore,
+    source: str,
+) -> None:
+    """`validated` is not written on its own — it travels with a verdict.
+
+    A row that was validated by an earlier run is marked unvalidated by a
+    new verdict that Layer 3 rejected, because the two describe the same
+    evaluation.
+    """
+    store.chain_groups.upsert(_record())
+    store._conn.execute(
+        "UPDATE chain_groups SET verdict = 'exploitable', validated = 1"
+        " WHERE id = :id",
+        {"id": _record().id},
+    )
+
+    rejected = _record()
+    rejected.verdict = "uncertain"
+    rejected.validated = False
+    store.chain_groups.upsert(rejected)
+
+    fetched = store.chain_groups.get(rejected.id)
+    assert fetched.verdict == "uncertain"
+    assert fetched.validated is False
+
+
 def test_upsert_keeps_created_at(store: GraphStore, source: str) -> None:
     store.chain_groups.upsert(_record())
     created = store.chain_groups.get(_record().id).created_at

@@ -1,16 +1,18 @@
 """Report bundle writer.
 
-Creates a directory with report.md and chains.json. The `current`
-directory is the live report; archived reports go into timestamped
-directories.
+Creates a directory with report.md, chains.json and
+chain_groups.json. The `current` directory is the live report; archived
+reports go into timestamped directories.
 
 Layout under the workspace:
     <workspace.root>/reports/current/
         report.md
         chains.json
+        chain_groups.json
     <workspace.root>/reports/20261010_203000/
         report.md
         chains.json
+        chain_groups.json
 """
 
 from __future__ import annotations
@@ -20,10 +22,10 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..graph.models import Chain
+from ..graph.models import Chain, ChainGroupRecord
 from ..graph.store import GraphStore
 from ..workspace import Workspace
-from .markdown import render_report
+from .markdown import group_chain_paths, render_report
 
 
 def write_bundle(
@@ -68,6 +70,18 @@ def write_bundle(
         encoding="utf-8",
     )
 
+    # chain_groups.json — the group half of the bundle (1.3e). Written
+    # even when there are no groups: an empty array is the honest answer
+    # to "what groups does this workspace have", and a consumer does not
+    # have to test for a missing file to learn that.
+    groups = store.chain_groups.list(status="active")
+    paths = group_chain_paths(store, groups)
+    groups_data = [_group_to_dict(store, g, paths) for g in groups]
+    (current / "chain_groups.json").write_text(
+        json.dumps(groups_data, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     return current
 
 
@@ -96,3 +110,79 @@ def _chain_to_dict(store: GraphStore, chain: Chain) -> dict:
         "nodes": nodes,
         "edges": chain.chain_edges,
     }
+
+
+def _group_to_dict(
+    store: GraphStore,
+    group: ChainGroupRecord,
+    paths: dict[str, list[str]],
+) -> dict:
+    """Serialize a chain group.
+
+    The row's own columns plus what makes it readable: the anchor as a
+    node reference and each chain as its node references, the way
+    `_chain_to_dict` names the nodes of a chain. `write_chain_ids` and
+    `read_chain_ids` are kept next to the resolved chains — a consumer
+    that keys on ids (or that wants to check a path against them) does not
+    have to re-parse the nodes list.
+
+    A chain whose path is not in `paths` (see `group_chain_paths`) is
+    emitted with `nodes: []` rather than dropped: the id is still the
+    durable reference.
+    """
+    source = store.nodes.get(group.untrusted_source_id)
+    if source is None:
+        source_ref: dict = {"id": group.untrusted_source_id}
+    else:
+        source_ref = {
+            "id": source.id,
+            "kind": source.kind,
+            "name": source.name,
+            "source_type": source.attributes.get("source_type"),
+        }
+
+    return {
+        "id": group.id,
+        "name": group.name,
+        "untrusted_source": source_ref,
+        "write_chains": _group_chains_to_dict(
+            store, group.write_chain_ids, paths
+        ),
+        "read_chains": _group_chains_to_dict(
+            store, group.read_chain_ids, paths
+        ),
+        "write_chain_ids": group.write_chain_ids,
+        "read_chain_ids": group.read_chain_ids,
+        "score": group.score,
+        "score_components": group.score_components,
+        "priority": group.priority,
+        "verdict": group.verdict,
+        "confidence": group.confidence,
+        "validated": group.validated,
+        "reasoning": group.reasoning,
+        "status": group.status,
+    }
+
+
+def _group_chains_to_dict(
+    store: GraphStore,
+    chain_ids: list[str],
+    paths: dict[str, list[str]],
+) -> list[dict]:
+    """One side of a group as `[{id, nodes}]`, nodes named when resolved."""
+    chains = []
+    for chain_id in chain_ids:
+        nodes = []
+        for node_id in paths.get(chain_id, []):
+            node = store.nodes.get(node_id)
+            if node:
+                nodes.append({
+                    "id": node.id,
+                    "kind": node.kind,
+                    "name": node.name,
+                    "source_file": node.attributes.get("source_file"),
+                })
+            else:
+                nodes.append({"id": node_id})
+        chains.append({"id": chain_id, "nodes": nodes})
+    return chains

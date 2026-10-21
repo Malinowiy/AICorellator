@@ -13,11 +13,15 @@ class only moves rows.
 
   - 1.3c owns `name`, the id sets, the anchor, `score`,
     `score_components`, `priority`, `status`. `upsert` refreshes
-    exactly those.
-  - 1.3d/1.3e own the evaluation columns (`lethal_trifecta`,
-    `verdict`, `confidence`, `reasoning`, `validated`). `upsert`
-    never touches them, so re-running prioritization over a graph
-    cannot discard a verdict that was already paid for.
+    exactly those, every time.
+  - 1.3d/1.3e own the evaluation columns (`verdict`, `confidence`,
+    `reasoning`, `validated`). `upsert` writes them only when the
+    incoming record carries a verdict, so re-running prioritization
+    over a graph cannot discard a verdict that was already paid for,
+    and 1.3e's post-evaluation write can land on a row 1.3c created.
+  - the group-level `lethal_trifecta` column has no writer yet: 1.3d
+    wrote the per-*node* attribute, and nothing projects it onto the
+    group row. `upsert` leaves it as `add` found it.
 """
 
 from __future__ import annotations
@@ -61,42 +65,66 @@ class ChainGroupsRepository:
     def upsert(self, group: ChainGroupRecord) -> None:
         """Insert or refresh a group by id.
 
-        On conflict, only the prioritization columns are written:
-        `name`, the id sets, the anchor, `score`, `score_components`,
-        `priority`, `status`. The evaluation columns are left as they
-        are — they belong to 1.3d/1.3e, and a second prioritization
-        run (or a delta rescan) must not erase them. `created_at` is
-        left alone too: it is when the group was first seen.
+        On conflict, two kinds of columns are treated differently:
+
+          - `name`, the id sets, the anchor, `score`, `score_components`,
+            `priority`, `status` are always refreshed — they are 1.3c's,
+            and a re-run of prioritization must win.
+          - `verdict`, `confidence`, `reasoning`, `validated` are written
+            only when the incoming record carries a verdict
+            (`verdict is not None`). 1.3c's `to_record()` rows have none,
+            so a second prioritization run (or a delta rescan) cannot
+            erase a verdict that was already paid for; 1.3e's evaluated
+            row does have one, so its write lands.
+            `validated` travels with the verdict rather than on its own:
+            a row with a verdict has been through Layer 3, and the flag
+            says whether it survived.
+
+        `created_at` is left alone too: it is when the group was first
+        seen.
         """
         existing = self.get(group.id)
         if existing is None:
             self.add(group)
             return
 
+        assignments = [
+            "name = :name",
+            "untrusted_source_id = :untrusted_source_id",
+            "write_chain_ids = :write_chain_ids",
+            "read_chain_ids = :read_chain_ids",
+            "score = :score",
+            "score_components = :score_components",
+            "priority = :priority",
+            "status = :status",
+        ]
+        params: dict[str, Any] = {
+            "id": group.id,
+            "name": group.name,
+            "untrusted_source_id": group.untrusted_source_id,
+            "write_chain_ids": json.dumps(group.write_chain_ids),
+            "read_chain_ids": json.dumps(group.read_chain_ids),
+            "score": group.score,
+            "score_components": json.dumps(group.score_components),
+            "priority": group.priority,
+            "status": group.status,
+        }
+
+        if group.verdict is not None:
+            assignments += [
+                "verdict = :verdict",
+                "confidence = :confidence",
+                "reasoning = :reasoning",
+                "validated = :validated",
+            ]
+            params["verdict"] = group.verdict
+            params["confidence"] = group.confidence
+            params["reasoning"] = group.reasoning
+            params["validated"] = 1 if group.validated else 0
+
         self._conn.execute(
-            """
-            UPDATE chain_groups SET
-                name                 = :name,
-                untrusted_source_id  = :untrusted_source_id,
-                write_chain_ids      = :write_chain_ids,
-                read_chain_ids       = :read_chain_ids,
-                score                = :score,
-                score_components     = :score_components,
-                priority             = :priority,
-                status               = :status
-            WHERE id = :id
-            """,
-            {
-                "id": group.id,
-                "name": group.name,
-                "untrusted_source_id": group.untrusted_source_id,
-                "write_chain_ids": json.dumps(group.write_chain_ids),
-                "read_chain_ids": json.dumps(group.read_chain_ids),
-                "score": group.score,
-                "score_components": json.dumps(group.score_components),
-                "priority": group.priority,
-                "status": group.status,
-            },
+            f"UPDATE chain_groups SET {', '.join(assignments)} WHERE id = :id",
+            params,
         )
 
     def mark_stale(self, group_id: str) -> None:
