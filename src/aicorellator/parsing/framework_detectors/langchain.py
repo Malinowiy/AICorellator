@@ -37,12 +37,12 @@ import hashlib
 import logging
 
 from ...graph.models import Edge, Node
+from ..flow.decision import FlowDecision, flow_kind_for
 from .base import DetectionResult, FrameworkDetector
 from .enrichment import (
     enrich_provides_tool,
     enrich_uses_model,
     enrich_uses_tool,
-    flow_kind_for,
 )
 
 
@@ -164,7 +164,12 @@ class LangChainDetector(FrameworkDetector):
                     "framework": "langchain",
                     # 1.2a.2: the tool's signature answers "can the agent
                     # hand this tool data?" — same rule as an MCP tool.
-                    "tool_data_flow": enrich_provides_tool(func_node),
+                    # The node attribute stays a plain string (it is
+                    # persisted as JSON); the normalizer rebuilds the
+                    # decision from it.
+                    "tool_data_flow": enrich_provides_tool(
+                        func_node, framework=self.name
+                    ).kind,
                 },
             )
             node.capabilities = caps
@@ -287,9 +292,9 @@ class LangChainDetector(FrameworkDetector):
                         target_id=target.id,
                         kind="uses_tool",
                         host_id=host_id,
-                        data_flow_confirmed=enrich_uses_tool(
+                        decision=enrich_uses_tool(
                             tools_arg, system_prompt, assignments,
-                            tool_name=tname,
+                            framework=self.name, tool_name=tname,
                         ),
                     ))
 
@@ -308,8 +313,9 @@ class LangChainDetector(FrameworkDetector):
                         target_id=target.id,
                         kind="uses_model",
                         host_id=host_id,
-                        data_flow_confirmed=enrich_uses_model(
-                            llm_arg, assignments, params
+                        decision=enrich_uses_model(
+                            llm_arg, assignments, params,
+                            framework=self.name,
                         ),
                     ))
 
@@ -436,7 +442,7 @@ class LangChainDetector(FrameworkDetector):
         target_id: str,
         kind: str,
         host_id: str,
-        data_flow_confirmed: str = "unknown",
+        decision: FlowDecision = FlowDecision("unknown"),
     ) -> Edge:
         h = hashlib.sha256(
             f"{source_id}:{target_id}:{kind}:{host_id}".encode("utf-8")
@@ -450,9 +456,9 @@ class LangChainDetector(FrameworkDetector):
             host_id=host_id,
             # 1.2a.2: the detector may enrich the default control edge
             # (ADR-0015, decisions 3 and 4). `flow_kind` is derived from
-            # the value, never set independently.
-            flow_kind=flow_kind_for(data_flow_confirmed),
-            data_flow_confirmed=data_flow_confirmed,
+            # the decision, never set independently.
+            flow_kind=flow_kind_for(decision),
+            data_flow_confirmed=decision.kind,
             attributes={"framework": self.name},
         )
 

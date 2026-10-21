@@ -1,8 +1,10 @@
 """Unit tests for the Flow Analyzer (ADR-0015).
 
 The analyzer is pure: these tests build AST nodes from source strings
-and assert the returned `data_flow_confirmed` value. No filesystem, no
-TSA subprocess.
+and assert the returned `FlowDecision.kind` — the published
+`data_flow_confirmed` value. The decision object itself (its `source`
+and `evidence`) is asserted in `test_flow_decision.py`. No filesystem,
+no TSA subprocess.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from aicorellator.parsing.flow_analyzer import (
     analyze_sink_class,
     analyze_tool_returns,
 )
+from aicorellator.parsing.flow.decision import FlowDecision
 
 
 # ============================================================
@@ -51,7 +54,7 @@ def _sink_call(func: FunctionNode, name: str) -> ast.Call:
     raise AssertionError(f"no call to {name} found")
 
 
-def _analyze(source: str, sink: str = "os.remove") -> str:
+def _analyze(source: str, sink: str = "os.remove") -> FlowDecision:
     """Analyze the call to `sink` inside the function in `source`."""
     func = _func(source)
     call = _sink_call(func, sink.split(".")[-1])
@@ -68,7 +71,7 @@ def test_parameter_match() -> None:
     def read_file(query):
         os.remove(query)
     """
-    assert _analyze(src) == "parameter_match"
+    assert _analyze(src).kind == "parameter_match"
 
 
 def test_local_var_match() -> None:
@@ -78,7 +81,7 @@ def test_local_var_match() -> None:
         path = fetch_path()
         os.remove(path)
     """
-    assert _analyze(src) == "local_var_match"
+    assert _analyze(src).kind == "local_var_match"
 
 
 def test_local_var_match_for_loop_target() -> None:
@@ -88,7 +91,7 @@ def test_local_var_match_for_loop_target() -> None:
         for f in files:
             os.remove(f)
     """
-    assert _analyze(src) == "local_var_match"
+    assert _analyze(src).kind == "local_var_match"
 
 
 def test_call_result_match() -> None:
@@ -97,7 +100,7 @@ def test_call_result_match() -> None:
     def purge():
         os.remove(fetch_path())
     """
-    assert _analyze(src) == "call_result_match"
+    assert _analyze(src).kind == "call_result_match"
 
 
 def test_call_result_match_await() -> None:
@@ -106,7 +109,7 @@ def test_call_result_match_await() -> None:
     async def purge():
         os.remove(await fetch_path())
     """
-    assert _analyze(src) == "call_result_match"
+    assert _analyze(src).kind == "call_result_match"
 
 
 def test_literal_only() -> None:
@@ -115,7 +118,7 @@ def test_literal_only() -> None:
     def purge():
         os.remove("/tmp/scratch")
     """
-    assert _analyze(src) == "literal_only"
+    assert _analyze(src).kind == "literal_only"
 
 
 def test_no_args() -> None:
@@ -124,7 +127,7 @@ def test_no_args() -> None:
     def purge():
         delete_all()
     """
-    assert _analyze(src, "delete_all") == "no_args"
+    assert _analyze(src, "delete_all").kind == "no_args"
 
 
 def test_unknown_attribute_access() -> None:
@@ -133,7 +136,7 @@ def test_unknown_attribute_access() -> None:
     def purge(config):
         os.remove(config.path)
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 # ============================================================
@@ -146,7 +149,7 @@ def test_empty_args_is_no_args() -> None:
     def purge():
         os.remove()
     """
-    assert _analyze(src) == "no_args"
+    assert _analyze(src).kind == "no_args"
 
 
 def test_nested_attribute_call_is_call_result() -> None:
@@ -155,7 +158,7 @@ def test_nested_attribute_call_is_call_result() -> None:
     def purge(config):
         os.remove(config.get("path"))
     """
-    assert _analyze(src) == "call_result_match"
+    assert _analyze(src).kind == "call_result_match"
 
 
 def test_nested_subscript_is_unknown() -> None:
@@ -164,7 +167,7 @@ def test_nested_subscript_is_unknown() -> None:
     def purge(config):
         os.remove(config["path"])
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 def test_fstring_with_parameter_is_parameter_match() -> None:
@@ -178,7 +181,7 @@ def test_fstring_with_parameter_is_parameter_match() -> None:
     def purge(base, name):
         os.remove(f"{base}/{name}")
     """
-    assert _analyze(src) == "parameter_match"
+    assert _analyze(src).kind == "parameter_match"
 
 
 def test_fstring_without_a_parameter_is_unknown() -> None:
@@ -191,7 +194,7 @@ def test_fstring_without_a_parameter_is_unknown() -> None:
     def purge():
         os.remove(f"{BASE_URL}/api")
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 def test_fstring_with_a_literal_local_is_local_var_match() -> None:
@@ -207,7 +210,7 @@ def test_fstring_with_a_literal_local_is_local_var_match() -> None:
         base = "https://example.com"
         os.remove(f"{base}/api")
     """
-    assert _analyze(src) == "local_var_match"
+    assert _analyze(src).kind == "local_var_match"
 
 
 def test_fstring_nested_interpolation_is_parameter_match() -> None:
@@ -216,7 +219,7 @@ def test_fstring_nested_interpolation_is_parameter_match() -> None:
     def purge(q):
         os.remove(f"{f'{q}'}/{q}")
     """
-    assert _analyze(src) == "parameter_match"
+    assert _analyze(src).kind == "parameter_match"
 
 
 def test_strongest_result_wins() -> None:
@@ -225,7 +228,7 @@ def test_strongest_result_wins() -> None:
     def purge(query):
         os.remove("/tmp/scratch", query)
     """
-    assert _analyze(src) == "parameter_match"
+    assert _analyze(src).kind == "parameter_match"
 
 
 def test_mixed_literal_and_unknown_is_unknown() -> None:
@@ -238,7 +241,7 @@ def test_mixed_literal_and_unknown_is_unknown() -> None:
     def purge(config):
         os.remove(config.path, "/tmp/scratch")
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 def test_mixed_literal_and_subscript_is_unknown() -> None:
@@ -247,7 +250,7 @@ def test_mixed_literal_and_subscript_is_unknown() -> None:
     def purge(config):
         os.remove(config["a"], "/tmp/x")
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 def test_all_literals_is_literal_only() -> None:
@@ -256,7 +259,7 @@ def test_all_literals_is_literal_only() -> None:
     def purge():
         os.remove("/tmp/a", "/tmp/b")
     """
-    assert _analyze(src) == "literal_only"
+    assert _analyze(src).kind == "literal_only"
 
 
 # ============================================================
@@ -270,7 +273,7 @@ def test_list_argument_is_literal_only() -> None:
     def check_docker():
         subprocess.run(["docker", "info"])
     """
-    assert _analyze(src, "subprocess.run") == "literal_only"
+    assert _analyze(src, "subprocess.run").kind == "literal_only"
 
 
 def test_tuple_argument_is_literal_only() -> None:
@@ -279,7 +282,7 @@ def test_tuple_argument_is_literal_only() -> None:
     def check_redis():
         subprocess.run(("redis-cli", "ping"))
     """
-    assert _analyze(src, "subprocess.run") == "literal_only"
+    assert _analyze(src, "subprocess.run").kind == "literal_only"
 
 
 def test_dict_argument_is_literal_only() -> None:
@@ -288,7 +291,7 @@ def test_dict_argument_is_literal_only() -> None:
     def check_config():
         subprocess.run({"a": 1, "b": 2})
     """
-    assert _analyze(src, "subprocess.run") == "literal_only"
+    assert _analyze(src, "subprocess.run").kind == "literal_only"
 
 
 def test_set_argument_is_literal_only() -> None:
@@ -297,7 +300,7 @@ def test_set_argument_is_literal_only() -> None:
     def check_flags():
         subprocess.run({"a", "b"})
     """
-    assert _analyze(src, "subprocess.run") == "literal_only"
+    assert _analyze(src, "subprocess.run").kind == "literal_only"
 
 
 def test_empty_collection_argument_is_literal_only() -> None:
@@ -306,7 +309,7 @@ def test_empty_collection_argument_is_literal_only() -> None:
     def check_nothing():
         subprocess.run([])
     """
-    assert _analyze(src, "subprocess.run") == "literal_only"
+    assert _analyze(src, "subprocess.run").kind == "literal_only"
 
 
 def test_mixed_collection_argument_is_parameter_match() -> None:
@@ -325,7 +328,7 @@ def test_mixed_collection_argument_is_parameter_match() -> None:
     def check_tool(param):
         subprocess.run(["a", param])
     """
-    assert _analyze(src, "subprocess.run") == "parameter_match"
+    assert _analyze(src, "subprocess.run").kind == "parameter_match"
 
 
 def test_collection_with_local_var_is_local_var_match() -> None:
@@ -340,7 +343,7 @@ def test_collection_with_local_var_is_local_var_match() -> None:
         cmd = fetch_command()
         subprocess.run(["a", cmd])
     """
-    assert _analyze(src, "subprocess.run") == "local_var_match"
+    assert _analyze(src, "subprocess.run").kind == "local_var_match"
 
 
 def test_collection_with_unresolved_element_is_unknown() -> None:
@@ -357,8 +360,8 @@ def test_collection_with_unresolved_element_is_unknown() -> None:
     def check_tool(param):
         subprocess.run(["a", fetch(param)])
     """
-    assert _analyze(attribute, "subprocess.run") == "unknown"
-    assert _analyze(call_result, "subprocess.run") == "unknown"
+    assert _analyze(attribute, "subprocess.run").kind == "unknown"
+    assert _analyze(call_result, "subprocess.run").kind == "unknown"
 
 
 def test_nested_collection_argument_is_literal_only() -> None:
@@ -367,7 +370,7 @@ def test_nested_collection_argument_is_literal_only() -> None:
     def check_nested():
         subprocess.run([["a"], ["b"]])
     """
-    assert _analyze(src, "subprocess.run") == "literal_only"
+    assert _analyze(src, "subprocess.run").kind == "literal_only"
 
 
 def test_nested_mixed_collection_argument_is_parameter_match() -> None:
@@ -381,7 +384,7 @@ def test_nested_mixed_collection_argument_is_parameter_match() -> None:
     def check_nested(param):
         subprocess.run([["a"], param])
     """
-    assert _analyze(src, "subprocess.run") == "parameter_match"
+    assert _analyze(src, "subprocess.run").kind == "parameter_match"
 
 
 def test_dict_with_parameter_value_is_parameter_match() -> None:
@@ -395,7 +398,7 @@ def test_dict_with_parameter_value_is_parameter_match() -> None:
     def check_config(param):
         subprocess.run({"a": param})
     """
-    assert _analyze(src, "subprocess.run") == "parameter_match"
+    assert _analyze(src, "subprocess.run").kind == "parameter_match"
 
 
 def test_dict_unpacking_is_unknown() -> None:
@@ -405,7 +408,7 @@ def test_dict_unpacking_is_unknown() -> None:
     def check_config(param):
         subprocess.run({**param})
     """
-    assert _analyze(src, "subprocess.run") == "unknown"
+    assert _analyze(src, "subprocess.run").kind == "unknown"
 
 
 def test_starred_element_is_unknown() -> None:
@@ -414,7 +417,7 @@ def test_starred_element_is_unknown() -> None:
     def check_args(param):
         subprocess.run([*param, "a"])
     """
-    assert _analyze(src, "subprocess.run") == "unknown"
+    assert _analyze(src, "subprocess.run").kind == "unknown"
 
 
 def test_literal_with_call_result_is_call_result() -> None:
@@ -423,7 +426,7 @@ def test_literal_with_call_result_is_call_result() -> None:
     def purge():
         os.remove("/tmp/scratch", fetch_path())
     """
-    assert _analyze(src) == "call_result_match"
+    assert _analyze(src).kind == "call_result_match"
 
 
 def test_literal_with_local_var_is_local_var() -> None:
@@ -433,7 +436,7 @@ def test_literal_with_local_var_is_local_var() -> None:
         path = fetch_path()
         os.remove("/tmp/scratch", path)
     """
-    assert _analyze(src) == "local_var_match"
+    assert _analyze(src).kind == "local_var_match"
 
 
 def test_keyword_argument_parameter() -> None:
@@ -442,7 +445,7 @@ def test_keyword_argument_parameter() -> None:
     def purge(query):
         os.remove(path=query)
     """
-    assert _analyze(src) == "parameter_match"
+    assert _analyze(src).kind == "parameter_match"
 
 
 def test_self_is_not_a_parameter() -> None:
@@ -451,7 +454,7 @@ def test_self_is_not_a_parameter() -> None:
     def purge(self):
         os.remove(self)
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 def test_global_name_is_unknown() -> None:
@@ -460,7 +463,7 @@ def test_global_name_is_unknown() -> None:
     def purge():
         os.remove(DEFAULT_PATH)
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 # ============================================================
@@ -492,7 +495,7 @@ def test_sink_data_flow_values_are_the_three() -> None:
 # Sink body analyzer (1.2a.1)
 # ============================================================
 
-def _sink_body(source: str) -> str:
+def _sink_body(source: str) -> FlowDecision:
     """Analyze the first function in `source` as a sink body."""
     return analyze_sink_body(_func(source))
 
@@ -503,7 +506,7 @@ def test_sink_parameter_reaches_dangerous_call() -> None:
     def delete_file(self, file_id):
         os.remove(file_id)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_local_var_derived_from_parameter() -> None:
@@ -513,7 +516,7 @@ def test_sink_local_var_derived_from_parameter() -> None:
         path = self._resolve(file_id)
         os.remove(path)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_call_result_counts_as_data() -> None:
@@ -522,7 +525,7 @@ def test_sink_call_result_counts_as_data() -> None:
     def write_report(self, name):
         open(self._path(name), "w")
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_loop_target_is_data() -> None:
@@ -532,7 +535,7 @@ def test_sink_loop_target_is_data() -> None:
         for f in files:
             os.remove(f)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_literals_only() -> None:
@@ -541,7 +544,7 @@ def test_sink_literals_only() -> None:
     def purge(self):
         os.remove("/tmp/scratch")
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_no_dangerous_call_is_unknown() -> None:
@@ -550,7 +553,7 @@ def test_sink_no_dangerous_call_is_unknown() -> None:
     def get_file(self, file_id):
         return self.db.query(file_id)
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_empty_body_is_unknown() -> None:
@@ -559,7 +562,7 @@ def test_sink_empty_body_is_unknown() -> None:
     def nothing(self):
         pass
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_no_argument_dangerous_call_is_unknown() -> None:
@@ -568,7 +571,7 @@ def test_sink_no_argument_dangerous_call_is_unknown() -> None:
     def create_tables(self):
         setup_database()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_literal_with_unresolved_attribute_is_unknown() -> None:
@@ -583,7 +586,7 @@ def test_sink_literal_with_unresolved_attribute_is_unknown() -> None:
     def purge(self):
         os.remove(config.path, "/tmp/scratch")
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_strongest_result_wins() -> None:
@@ -593,7 +596,7 @@ def test_sink_strongest_result_wins() -> None:
         os.remove("/tmp/scratch")
         os.remove(query)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_async_def_supported() -> None:
@@ -602,7 +605,7 @@ def test_sink_async_def_supported() -> None:
     async def wipe(self, target):
         subprocess.run(target, shell=True)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_shell_call_with_constant_is_literal_only() -> None:
@@ -611,7 +614,7 @@ def test_sink_shell_call_with_constant_is_literal_only() -> None:
     def run_script(self):
         subprocess.run("ls -la", shell=True)
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_list_argument_is_literal_only() -> None:
@@ -625,7 +628,7 @@ def test_sink_list_argument_is_literal_only() -> None:
     def run_script(self):
         subprocess.run(["ls", "-la"])
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_tuple_argument_is_literal_only() -> None:
@@ -634,7 +637,7 @@ def test_sink_tuple_argument_is_literal_only() -> None:
     def check_redis(self):
         subprocess.run(("redis-cli", "ping"))
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_dict_argument_is_literal_only() -> None:
@@ -643,7 +646,7 @@ def test_sink_dict_argument_is_literal_only() -> None:
     def check_config(self):
         subprocess.run({"a": 1, "b": 2})
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_set_argument_is_literal_only() -> None:
@@ -652,7 +655,7 @@ def test_sink_set_argument_is_literal_only() -> None:
     def check_flags(self):
         subprocess.run({"a", "b"})
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_empty_collection_is_literal_only() -> None:
@@ -661,7 +664,7 @@ def test_sink_empty_collection_is_literal_only() -> None:
     def check_nothing(self):
         subprocess.run([])
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_mixed_collection_is_parameter_match() -> None:
@@ -674,7 +677,7 @@ def test_sink_mixed_collection_is_parameter_match() -> None:
     def check_tool(self, param):
         subprocess.run([param, "a"])
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_nested_collection_is_literal_only() -> None:
@@ -683,7 +686,7 @@ def test_sink_nested_collection_is_literal_only() -> None:
     def check_nested(self):
         subprocess.run([["a"], ["b"]])
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_nested_mixed_collection_is_parameter_match() -> None:
@@ -692,7 +695,7 @@ def test_sink_nested_mixed_collection_is_parameter_match() -> None:
     def check_nested(self, param):
         subprocess.run([["a"], param])
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_dict_unpacking_is_unknown() -> None:
@@ -701,7 +704,7 @@ def test_sink_dict_unpacking_is_unknown() -> None:
     def check_config(self, param):
         subprocess.run({**param})
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_self_attribute_from_parameter_is_data() -> None:
@@ -717,7 +720,7 @@ def test_sink_self_attribute_from_parameter_is_data() -> None:
         self.q = q
         self.db.delete(self.q)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_self_attribute_from_a_local_var_is_data() -> None:
@@ -728,7 +731,7 @@ def test_sink_self_attribute_from_a_local_var_is_data() -> None:
         self.q = path
         self.db.delete(self.q)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_self_attribute_chain_is_data() -> None:
@@ -745,7 +748,7 @@ def test_sink_self_attribute_chain_is_data() -> None:
         self.s = self.r
         self.db.delete(self.s)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_self_attribute_from_a_literal_is_unknown() -> None:
@@ -755,7 +758,7 @@ def test_sink_self_attribute_from_a_literal_is_unknown() -> None:
         self.q = "literal"
         self.db.delete(self.q)
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_self_attribute_from_a_call_is_unknown() -> None:
@@ -765,7 +768,7 @@ def test_sink_self_attribute_from_a_call_is_unknown() -> None:
         self.q = fetch(q)
         self.db.delete(self.q)
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_self_attribute_not_assigned_here_is_unknown() -> None:
@@ -779,7 +782,7 @@ def test_sink_self_attribute_not_assigned_here_is_unknown() -> None:
     def delete(self, q):
         self.db.delete(self.q)
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_attribute_of_another_object_is_unknown() -> None:
@@ -796,7 +799,7 @@ def test_sink_attribute_of_another_object_is_unknown() -> None:
     def delete(self):
         self.db.delete(other.attr)
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_self_attribute_annotated_and_augmented_is_data() -> None:
@@ -811,8 +814,8 @@ def test_sink_self_attribute_annotated_and_augmented_is_data() -> None:
         self.q += q
         self.db.delete(self.q)
     """
-    assert _sink_body(annotated) == "parameter_match"
-    assert _sink_body(augmented) == "parameter_match"
+    assert _sink_body(annotated).kind == "parameter_match"
+    assert _sink_body(augmented).kind == "parameter_match"
 
 
 def test_sink_fstring_with_parameter_is_data() -> None:
@@ -825,7 +828,7 @@ def test_sink_fstring_with_parameter_is_data() -> None:
     def fetch(self, q):
         requests.get(f"{BASE_URL}/api/{q}")
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_fstring_without_a_parameter_is_unknown() -> None:
@@ -838,7 +841,7 @@ def test_sink_fstring_without_a_parameter_is_unknown() -> None:
     def fetch(self, q):
         requests.get(f"{BASE_URL}/api/tags")
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_sink_fstring_with_a_derived_attribute_is_data() -> None:
@@ -848,7 +851,7 @@ def test_sink_fstring_with_a_derived_attribute_is_data() -> None:
         self.base = base
         requests.get(f"{self.base}/api/tags")
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_dict_with_parameter_value_is_data() -> None:
@@ -861,7 +864,7 @@ def test_sink_dict_with_parameter_value_is_data() -> None:
     def post(self, q):
         requests.post(URL, json={"q": q})
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_dict_with_local_var_value_is_data() -> None:
@@ -878,7 +881,7 @@ def test_sink_dict_with_local_var_value_is_data() -> None:
             json={"model": MODEL, "messages": messages},
         )
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_dict_all_literals_is_literal_only() -> None:
@@ -887,7 +890,7 @@ def test_sink_dict_all_literals_is_literal_only() -> None:
     def post(self, q):
         requests.post("https://example.com/api", json={"a": 1, "b": "x"})
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_list_with_parameter_is_data() -> None:
@@ -899,7 +902,7 @@ def test_sink_list_with_parameter_is_data() -> None:
     def convert(self, q):
         subprocess.run(["docker", q])
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_tuple_with_parameter_is_data() -> None:
@@ -908,7 +911,7 @@ def test_sink_tuple_with_parameter_is_data() -> None:
     def convert(self, q):
         subprocess.run(("docker", q))
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_orm_delete_with_parameter() -> None:
@@ -919,7 +922,7 @@ def test_sink_orm_delete_with_parameter() -> None:
         self.db.delete(f)
         self.db.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_orm_delete_with_local_var() -> None:
@@ -930,7 +933,7 @@ def test_sink_orm_delete_with_local_var() -> None:
         self.db.delete(record)
         self.db.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_orm_delete_with_literal() -> None:
@@ -940,7 +943,7 @@ def test_sink_orm_delete_with_literal() -> None:
         self.db.delete("literal-id")
         self.db.commit()
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 # ============================================================
@@ -979,7 +982,7 @@ def test_commit_only_body_with_parameter_is_parameter_match() -> None:
     def toggle_admin(self, user_id):
         self.db.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_commit_only_body_on_session_is_parameter_match() -> None:
@@ -988,7 +991,7 @@ def test_commit_only_body_on_session_is_parameter_match() -> None:
     def update_status(self, order_id):
         session.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_commit_after_a_write_is_parameter_match() -> None:
@@ -999,7 +1002,7 @@ def test_commit_after_a_write_is_parameter_match() -> None:
         self.db.add(email_id)
         self.db.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_commit_exception_does_not_apply_to_subprocess() -> None:
@@ -1008,7 +1011,7 @@ def test_commit_exception_does_not_apply_to_subprocess() -> None:
     def run_task(self, cmd):
         subprocess.run()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_commit_exception_does_not_apply_to_os_system() -> None:
@@ -1017,7 +1020,7 @@ def test_commit_exception_does_not_apply_to_os_system() -> None:
     def shell_out(self, cmd):
         os.system()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_commit_contributes_while_subprocess_run_does_not() -> None:
@@ -1028,7 +1031,7 @@ def test_commit_contributes_while_subprocess_run_does_not() -> None:
         self.db.commit()
         subprocess.run()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_commit_only_body_without_parameters_is_unknown() -> None:
@@ -1039,7 +1042,7 @@ def test_commit_only_body_without_parameters_is_unknown() -> None:
     def flush(self):
         self.db.commit()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_commit_without_a_write_promotes_a_literal_only_body() -> None:
@@ -1051,7 +1054,7 @@ def test_commit_without_a_write_promotes_a_literal_only_body() -> None:
         cursor.execute("UPDATE orders SET status = 'done'")
         self.conn.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_commit_of_a_qualifier_outside_the_capabilities_counts() -> None:
@@ -1062,7 +1065,7 @@ def test_commit_of_a_qualifier_outside_the_capabilities_counts() -> None:
         self.session.execute("UPDATE configs SET flag = 1")
         self.conn.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 # --- Private qualifiers (1.2a.3e) ---
 
@@ -1087,7 +1090,7 @@ def test_private_conn_commit_with_parameter_is_parameter_match() -> None:
     def create_ticket(self, customer, body):
         self._conn.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_private_conn_commit_without_parameters_is_unknown() -> None:
@@ -1097,7 +1100,7 @@ def test_private_conn_commit_without_parameters_is_unknown() -> None:
     def flush(self):
         self._conn.commit()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_private_commit_does_not_outrank_a_literal_only_body() -> None:
@@ -1109,7 +1112,7 @@ def test_private_commit_does_not_outrank_a_literal_only_body() -> None:
         self._db.add("literal")
         self._conn.commit()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 
@@ -1120,7 +1123,7 @@ def test_subprocess_run_with_empty_string_stays_literal_only() -> None:
     def run_task(self):
         subprocess.run("")
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 # ============================================================
@@ -1215,7 +1218,7 @@ def _class(source: str) -> ast.ClassDef:
     raise AssertionError("no class found in source")
 
 
-def _class_sink(source: str) -> str:
+def _class_sink(source: str) -> FlowDecision:
     """Analyze the first class in `source` as a sink body."""
     return analyze_sink_class(_class(source))
 
@@ -1232,7 +1235,7 @@ def test_class_sink_init_parameter_reaches_dangerous_call() -> None:
         def __init__(self, q):
             self.db.delete(q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_call_parameter_reaches_dangerous_call() -> None:
@@ -1242,7 +1245,7 @@ def test_class_sink_call_parameter_reaches_dangerous_call() -> None:
         def __call__(self, q):
             os.remove(q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_async_call_is_analyzed() -> None:
@@ -1252,7 +1255,7 @@ def test_class_sink_async_call_is_analyzed() -> None:
         async def __call__(self, q):
             os.remove(q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_literal_only_init() -> None:
@@ -1262,7 +1265,7 @@ def test_class_sink_literal_only_init() -> None:
         def __init__(self):
             self.db.delete("literal")
     """
-    assert _class_sink(src) == "literal_only"
+    assert _class_sink(src).kind == "literal_only"
 
 
 def test_class_sink_without_dangerous_call_is_unknown() -> None:
@@ -1272,7 +1275,7 @@ def test_class_sink_without_dangerous_call_is_unknown() -> None:
         def __init__(self, q):
             self.q = q
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_commit_only_init_with_parameter_is_data() -> None:
@@ -1290,7 +1293,7 @@ def test_class_sink_commit_only_init_with_parameter_is_data() -> None:
             self.db.delete(self.q)
             self.db.commit()
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_commit_only_init_without_parameter_is_unknown() -> None:
@@ -1304,7 +1307,7 @@ def test_class_sink_commit_only_init_without_parameter_is_unknown() -> None:
         def __init__(self):
             self.db.commit()
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_self_attribute_argument_is_parameter_match() -> None:
@@ -1320,7 +1323,7 @@ def test_class_sink_self_attribute_argument_is_parameter_match() -> None:
             self.q = q
             self.db.delete(self.q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_self_attribute_from_a_literal_is_unknown() -> None:
@@ -1331,7 +1334,7 @@ def test_class_sink_self_attribute_from_a_literal_is_unknown() -> None:
             self.q = "literal"
             self.db.delete(self.q)
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_attribute_from_another_method_is_unknown() -> None:
@@ -1347,7 +1350,7 @@ def test_class_sink_attribute_from_another_method_is_unknown() -> None:
         def delete(self):
             self.db.delete(self.q)
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_fstring_argument_is_parameter_match() -> None:
@@ -1358,7 +1361,7 @@ def test_class_sink_fstring_argument_is_parameter_match() -> None:
         def fetch(self, q):
             requests.get(f"{BASE_URL}/api/{q}")
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_dict_argument_with_local_var_is_parameter_match() -> None:
@@ -1370,7 +1373,7 @@ def test_class_sink_dict_argument_with_local_var_is_parameter_match() -> None:
             messages = [{"role": "user", "content": user_message}]
             requests.post(BASE_URL, json={"messages": messages})
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_strongest_scope_wins() -> None:
@@ -1389,8 +1392,8 @@ def test_class_sink_strongest_scope_wins() -> None:
         def __call__(self):
             self.db.delete("literal")
     """
-    assert _class_sink(literal_then_parameter) == "parameter_match"
-    assert _class_sink(parameter_then_literal) == "parameter_match"
+    assert _class_sink(literal_then_parameter).kind == "parameter_match"
+    assert _class_sink(parameter_then_literal).kind == "parameter_match"
 
 
 def test_class_sink_plain_method_is_analyzed() -> None:
@@ -1404,7 +1407,7 @@ def test_class_sink_plain_method_is_analyzed() -> None:
         def delete(self, q):
             os.remove(q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_repository_style_add_and_commit_is_data() -> None:
@@ -1420,7 +1423,7 @@ def test_class_sink_repository_style_add_and_commit_is_data() -> None:
             self.db.add(profile)
             self.db.commit()
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_execute_method_parameter_reaches_subprocess() -> None:
@@ -1432,7 +1435,7 @@ def test_class_sink_execute_method_parameter_reaches_subprocess() -> None:
         def execute(self, tool_name, params):
             subprocess.run(params, shell=True)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_method_literal_only() -> None:
@@ -1444,7 +1447,7 @@ def test_class_sink_method_literal_only() -> None:
         def do_GET(self):
             urllib.request.urlopen("http://example.com/")
     """
-    assert _class_sink(src) == "literal_only"
+    assert _class_sink(src).kind == "literal_only"
 
 
 def test_class_sink_methods_without_dangerous_call_is_unknown() -> None:
@@ -1456,7 +1459,7 @@ def test_class_sink_methods_without_dangerous_call_is_unknown() -> None:
         def put(self, q):
             self.q = q
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_async_method_is_analyzed() -> None:
@@ -1466,7 +1469,7 @@ def test_class_sink_async_method_is_analyzed() -> None:
         async def handle(self, q):
             os.remove(q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_strongest_method_wins() -> None:
@@ -1478,7 +1481,7 @@ def test_class_sink_strongest_method_wins() -> None:
         def purge(self, q):
             os.remove(q)
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 def test_class_sink_methods_only_literal_only_is_literal_only() -> None:
@@ -1490,7 +1493,7 @@ def test_class_sink_methods_only_literal_only_is_literal_only() -> None:
         def pong(self):
             self.db.delete("other")
     """
-    assert _class_sink(src) == "literal_only"
+    assert _class_sink(src).kind == "literal_only"
 
 
 def test_class_sink_class_level_dangerous_call_counts() -> None:
@@ -1503,7 +1506,7 @@ def test_class_sink_class_level_dangerous_call_counts() -> None:
         db = SomeClient()
         db.delete("scratch")
     """
-    assert _class_sink(src) == "literal_only"
+    assert _class_sink(src).kind == "literal_only"
 
 
 def test_class_sink_class_level_name_argument_is_unknown() -> None:
@@ -1516,7 +1519,7 @@ def test_class_sink_class_level_name_argument_is_unknown() -> None:
         db = SomeClient()
         db.delete(CONFIG_PATH)
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_nested_class_is_not_analyzed() -> None:
@@ -1529,7 +1532,7 @@ def test_class_sink_nested_class_is_not_analyzed() -> None:
             def __call__(self, q):
                 os.remove(q)
     """
-    assert _class_sink(src) == "unknown"
+    assert _class_sink(src).kind == "unknown"
 
 
 def test_class_sink_nested_class_method_is_not_analyzed() -> None:
@@ -1543,7 +1546,7 @@ def test_class_sink_nested_class_method_is_not_analyzed() -> None:
             def delete(self, q):
                 os.remove(q)
     """
-    assert _class_sink(src) == "literal_only"
+    assert _class_sink(src).kind == "literal_only"
 
 
 def test_class_sink_nested_function_inside_method_counts() -> None:
@@ -1556,7 +1559,7 @@ def test_class_sink_nested_function_inside_method_counts() -> None:
                 os.remove(q)
             inner()
     """
-    assert _class_sink(src) == "parameter_match"
+    assert _class_sink(src).kind == "parameter_match"
 
 
 # ============================================================
@@ -1577,7 +1580,7 @@ def test_fetch_only_body_has_no_sink_evidence() -> None:
     def list_rows(self):
         return cursor.fetchall()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_fetch_after_a_read_statement_has_no_sink_evidence() -> None:
@@ -1588,7 +1591,7 @@ def test_fetch_after_a_read_statement_has_no_sink_evidence() -> None:
         cursor.execute("SELECT * FROM rows")
         return cursor.fetchall()
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 def test_fetch_does_not_change_a_write_sinks_data_flow() -> None:
@@ -1600,7 +1603,7 @@ def test_fetch_does_not_change_a_write_sinks_data_flow() -> None:
         self.db.add(rows)
         return cursor.fetchall()
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 # ============================================================
@@ -1737,7 +1740,7 @@ def test_plain_parameter_is_still_a_data_match() -> None:
     def write_file(param):
         os.remove(param)
     """
-    assert _analyze(src) == "parameter_match"
+    assert _analyze(src).kind == "parameter_match"
 
 
 def test_edge_analyzer_does_not_follow_parameter_attributes() -> None:
@@ -1751,7 +1754,7 @@ def test_edge_analyzer_does_not_follow_parameter_attributes() -> None:
     def call_sink(file_data):
         os.remove(file_data.filename)
     """
-    assert _analyze(src) == "unknown"
+    assert _analyze(src).kind == "unknown"
 
 
 def test_self_attribute_is_still_data_in_a_sink_body() -> None:
@@ -1766,7 +1769,7 @@ def test_self_attribute_is_still_data_in_a_sink_body() -> None:
         self.q = q
         self.db.delete(self.q)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_body_with_a_parameter_attribute_is_data() -> None:
@@ -1775,7 +1778,7 @@ def test_sink_body_with_a_parameter_attribute_is_data() -> None:
     def write_file(self, file_data):
         open(file_data.filename, "w")
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_body_with_a_nested_parameter_attribute_is_data() -> None:
@@ -1784,7 +1787,7 @@ def test_sink_body_with_a_nested_parameter_attribute_is_data() -> None:
     def write_file(self, session_context):
         open(session_context.current_user.id, "w")
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_body_with_a_local_attribute_is_data() -> None:
@@ -1794,7 +1797,7 @@ def test_sink_body_with_a_local_attribute_is_data() -> None:
         cfg = session_context.config
         open(cfg.path, "w")
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_body_with_an_attribute_of_a_global_is_unknown() -> None:
@@ -1803,7 +1806,7 @@ def test_sink_body_with_an_attribute_of_a_global_is_unknown() -> None:
     def write_file(self):
         open(config.path, "w")
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 
 
 # ============================================================
@@ -1825,7 +1828,7 @@ def test_sink_body_with_an_adapter_execute_is_data() -> None:
     def run_command(self, cmd):
         self.adapter.execute(cmd)
     """
-    assert _sink_body(src) == "parameter_match"
+    assert _sink_body(src).kind == "parameter_match"
 
 
 def test_sink_body_with_a_client_post_of_a_literal_is_literal_only() -> None:
@@ -1834,7 +1837,7 @@ def test_sink_body_with_a_client_post_of_a_literal_is_literal_only() -> None:
     def notify(self):
         self.client.post("https://api.example.com/notify")
     """
-    assert _sink_body(src) == "literal_only"
+    assert _sink_body(src).kind == "literal_only"
 
 
 def test_sink_body_with_a_client_get_has_no_evidence() -> None:
@@ -1847,5 +1850,5 @@ def test_sink_body_with_a_client_get_has_no_evidence() -> None:
     def fetch(self, url):
         return self.client.get(url)
     """
-    assert _sink_body(src) == "unknown"
+    assert _sink_body(src).kind == "unknown"
 

@@ -6,6 +6,15 @@ it may upgrade the values the generic Flow Analyzer leaves at
 `unknown`. This module holds the enrichment rules — small, pure
 functions over AST nodes, one per detector question.
 
+Each helper returns a `FlowDecision` (`parsing.flow`). Every helper
+takes the framework name, because the decision's `source`
+(`"enrichment:langchain"`, `"enrichment:fastmcp"`, ...) is part of the
+answer: when an LLM summary disagrees with a second producer about the
+same edge, the producer is what tells you which rule to re-read. The
+argument is keyword-only and has **no default** — attributing a value
+to the wrong framework is worse than writing one more word at the call
+site.
+
 Why here and not in `parsing/flow_analyzer.py`: the Flow Analyzer
 answers the framework-independent question "how does data reach a sink
 call inside this body?". These helpers answer framework-specific
@@ -18,10 +27,10 @@ and each detector owns its own enrichment rule (ADR-0011).
 The rules are name-based, one step deep (ADR-0001). They never follow
 values through calls, subscripts, or attributes of other objects.
 
-Values are the six of `DATA_FLOW_CONFIRMED_VALUES` (ADR-0015). Per
-decision 3, `flow_kind = "data"` exactly when the value is one of
-`DATA_FLOW_DATA_VALUES`; `flow_kind_for` is the single place that rule
-is applied, so a detector and the normalizer cannot disagree.
+Values are the six of `VALID_KINDS` (ADR-0015). Per decision 3,
+`flow_kind = "data"` exactly when the value is one of `DATA_KINDS`;
+`flow.decision.flow_kind_for` is the single place that rule is applied,
+so a detector and the normalizer cannot disagree.
 
 Enrichment is deliberately conservative: a rule that does not apply
 returns `"unknown"`, which leaves the edge as control flow. A false
@@ -34,7 +43,7 @@ from __future__ import annotations
 import ast
 import re
 
-from ..flow_analyzer import DATA_FLOW_CONFIRMED_VALUES, DATA_FLOW_DATA_VALUES
+from ..flow.decision import FlowDecision
 
 
 # Tool functions may be sync or async (MCP tools are often `async def`).
@@ -50,20 +59,13 @@ _IMPLICIT_PARAMS: frozenset[str] = frozenset({"self", "cls"})
 _MODEL_KEYWORDS: tuple[str, ...] = ("model", "model_name")
 
 
-# ============================================================
-# Shared rule: value -> flow_kind
-# ============================================================
-
-def flow_kind_for(data_flow_confirmed: str | None) -> str:
-    """Return the `flow_kind` implied by a `data_flow_confirmed` value.
-
-    ADR-0015 decision 3: `parameter_match`, `local_var_match` and
-    `call_result_match` confirm data flow; everything else — including
-    a missing value — does not.
-    """
-    if data_flow_confirmed in DATA_FLOW_DATA_VALUES:
-        return "data"
-    return "control"
+def _decision(
+    kind: str,
+    framework: str,
+    evidence: tuple[str, ...] = (),
+) -> FlowDecision:
+    """Build an enrichment decision with its framework provenance."""
+    return FlowDecision(kind, evidence, source=f"enrichment:{framework}")
 
 
 # ============================================================
@@ -75,8 +77,9 @@ def enrich_uses_tool(
     agent_system_prompt: str | None,
     assignments: dict[str, ast.expr],
     *,
+    framework: str,
     tool_name: str | None = None,
-) -> str:
+) -> FlowDecision:
     """Classify a LangChain `uses_tool` edge.
 
     The system prompt is the developer's instruction about which tool to
@@ -95,9 +98,12 @@ def enrich_uses_tool(
     `system_prompt="Use a for X"` must enrich the edge to `a` and leave
     the edge to `b` control. Passing the edge's target name answers
     that; omitting it answers the list-level question.
+
+    `framework` names the producer for `source` (keyword-only, no
+    default — see the module docstring).
     """
     if not agent_system_prompt or not agent_system_prompt.strip():
-        return "unknown"
+        return _decision("unknown", framework, ("no system prompt",))
 
     if tool_name is not None:
         names = [tool_name]
@@ -106,8 +112,10 @@ def enrich_uses_tool(
 
     for name in names:
         if name and _named_in_prompt(name, agent_system_prompt):
-            return "parameter_match"
-    return "unknown"
+            return _decision(
+                "parameter_match", framework, (f"prompt names {name}",)
+            )
+    return _decision("unknown", framework, ("no tool named in prompt",))
 
 
 def _named_in_prompt(tool_name: str, prompt: str) -> bool:
@@ -199,7 +207,9 @@ def enrich_uses_model(
     model_arg: ast.expr | None,
     assignments: dict[str, ast.expr],
     params: frozenset[str] | set[str] = frozenset(),
-) -> str:
+    *,
+    framework: str,
+) -> FlowDecision:
     """Classify a LangChain `uses_model` edge.
 
     `model_arg` is the expression the agent was configured with
@@ -217,7 +227,10 @@ def enrich_uses_model(
     enclosing function, for nested definitions). A name in that set is
     caller-supplied data, which is what `parameter_match` means.
     """
-    return _classify_model_value(model_arg, assignments, set(params), set())
+    kind, evidence = _classify_model_value(
+        model_arg, assignments, set(params), set()
+    )
+    return _decision(kind, framework, evidence)
 
 
 def _classify_model_value(
@@ -225,27 +238,31 @@ def _classify_model_value(
     assignments: dict[str, ast.expr],
     params: set[str],
     visited: set[str],
-) -> str:
-    """Classify one expression as a model configuration value."""
+) -> tuple[str, tuple[str, ...]]:
+    """Classify one expression, returning `(kind, evidence)`.
+
+    The recursion carries the evidence with the kind so the reason for
+    the answer survives however many steps of name resolution it took.
+    """
     if node is None:
-        return "unknown"
+        return "unknown", ("no model argument",)
 
     if isinstance(node, ast.Constant):
         # A model identifier is a string; a non-string constant means
         # the argument is not a model name at all.
         if isinstance(node.value, str):
-            return "literal_only"
-        return "unknown"
+            return "literal_only", ("literal model name",)
+        return "unknown", ("model argument is not a string",)
 
     if isinstance(node, ast.Name):
         if node.id in params:
-            return "parameter_match"
+            return "parameter_match", (f"model from parameter {node.id}",)
         if node.id in visited:
-            return "unknown"
+            return "unknown", ("cyclic model assignment",)
         visited.add(node.id)
         target = assignments.get(node.id)
         if target is None:
-            return "unknown"
+            return "unknown", (f"unresolved name {node.id}",)
         return _classify_model_value(target, assignments, params, visited)
 
     if isinstance(node, ast.Call):
@@ -256,18 +273,22 @@ def _classify_model_value(
                 return _classify_model_value(
                     value, assignments, params, visited
                 )
-        return "unknown"
+        return "unknown", ("client call sets no model",)
 
     # An attribute (`settings.model`), a subscript (`config["model"]`),
     # an f-string — not followed (ADR-0001).
-    return "unknown"
+    return "unknown", ("model argument is not a name or literal",)
 
 
 # ============================================================
 # MCP / LangChain tools: provides_tool
 # ============================================================
 
-def enrich_provides_tool(tool_func: ast.expr | None) -> str:
+def enrich_provides_tool(
+    tool_func: ast.expr | None,
+    *,
+    framework: str,
+) -> FlowDecision:
     """Classify a server → tool edge for a decorated tool function.
 
     The MCP protocol is the channel: the client sends tool arguments as
@@ -285,10 +306,21 @@ def enrich_provides_tool(tool_func: ast.expr | None) -> str:
 
     Returns `"unknown"` when there is no function node (a tool created
     by a constructor or factory whose signature is not visible).
+
+    This helper serves three detectors (LangChain `@tool`, FastMCP,
+    MCP Python), so `framework` is what keeps their `source` values
+    apart: `"enrichment:langchain"`, `"enrichment:fastmcp"`,
+    `"enrichment:mcp_python"`.
     """
     if not isinstance(tool_func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return "unknown"
-    return "parameter_match" if _tool_parameters(tool_func) else "no_args"
+        return _decision(
+            "unknown", framework, ("tool signature not visible",)
+        )
+    if _tool_parameters(tool_func):
+        return _decision(
+            "parameter_match", framework, ("tool declares parameters",)
+        )
+    return _decision("no_args", framework, ("tool declares no parameters",))
 
 
 def _tool_parameters(func: FunctionNode) -> list[str]:
@@ -324,10 +356,8 @@ def _keyword(call: ast.Call, key: str) -> ast.expr | None:
 
 
 __all__ = [
-    "DATA_FLOW_CONFIRMED_VALUES",
     "enrich_provides_tool",
     "enrich_uses_model",
     "enrich_uses_tool",
-    "flow_kind_for",
     "resolve_tool_names",
 ]

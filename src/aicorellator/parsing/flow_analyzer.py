@@ -6,15 +6,24 @@ on `has_access_to`. This module answers *how* data moves.
 Edge question — *how* does data reach a sink call invoked inside a tool
 body?
 
-    analyze_has_access_to(tool_func, sink_call) -> str
+    analyze_has_access_to(tool_func, sink_call) -> FlowDecision
 
 Node questions (1.2a.1) — the tool and the sink are often colocated in
 a file without the tool calling the sink by name. Then the useful
 questions are asked of each body separately:
 
-    analyze_sink_body(sink_func)    -> str   ("sink_data_flow")
-    analyze_sink_class(sink_cls)    -> str   ("sink_data_flow")
-    analyze_tool_returns(tool_func) -> bool  ("returns_data")
+    analyze_sink_body(sink_func)    -> FlowDecision  ("sink_data_flow")
+    analyze_sink_class(sink_cls)    -> FlowDecision  ("sink_data_flow")
+    analyze_tool_returns(tool_func) -> bool          ("returns_data")
+
+The three flow answers are `FlowDecision` values (`parsing.flow`), not
+bare strings: the kind, the name-based evidence behind it, and the
+producer's name travel together. Callers write `decision.kind` to the
+graph and map with `flow.decision.flow_kind_for`, so ADR-0015
+decision 3 has one implementation instead of one per caller. The
+`source` field is what makes two producers distinguishable — the edge
+analyzer's `no_args` and a detector's `no_args` mean different things
+about different edges.
 
 A capability-based sink can be a class rather than a function (1.2a.5):
 `UserProfileRepository` writes to a database, `DVMCPClient` reaches the
@@ -91,6 +100,7 @@ from ..patterns import ORM_COMMIT_CALLS, SINK_CAPABILITIES
 # Importing the private helpers follows the convention the framework
 # detectors already use (`from ..capability_extractor import _scan_function`).
 from .capability_extractor import _classify_call, _dotted_name, _matches_any
+from .flow.decision import DATA_KINDS, VALID_KINDS, FlowDecision
 
 
 # Tool functions may be sync or async (MCP tools are often `async def`).
@@ -100,22 +110,17 @@ FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 # The six values of `data_flow_confirmed` (ADR-0015). Mirrors the CHECK
 # constraint on edges.data_flow_confirmed in graph/schema.sql.
-DATA_FLOW_CONFIRMED_VALUES: frozenset[str] = frozenset({
-    "parameter_match",
-    "local_var_match",
-    "call_result_match",
-    "literal_only",
-    "no_args",
-    "unknown",
-})
+#
+# Aliases, not copies: `flow.decision` owns the sets the value object
+# validates against, so a name added in one place cannot go missing in
+# the other. The names stay because every importer (`ast_normalizer`,
+# the enrichment helpers, tests) already reads them from here, and
+# step 1 is a type migration, not a rename.
+DATA_FLOW_CONFIRMED_VALUES: frozenset[str] = VALID_KINDS
 
 # The subset that confirms data flow — `flow_kind = "data"` (ADR-0015,
 # decision 3). The rest mean data flow was not confirmed: `control`.
-DATA_FLOW_DATA_VALUES: frozenset[str] = frozenset({
-    "parameter_match",
-    "local_var_match",
-    "call_result_match",
-})
+DATA_FLOW_DATA_VALUES: frozenset[str] = DATA_KINDS
 
 # The three values of `sink_data_flow` on a sink node (1.2a.1). The
 # three data kinds of `has_access_to` collapse into `parameter_match`:
@@ -128,13 +133,14 @@ SINK_DATA_FLOW_VALUES: frozenset[str] = frozenset({
 })
 
 
-def analyze_sink_body(sink_func: FunctionNode) -> str:
+def analyze_sink_body(sink_func: FunctionNode) -> FlowDecision:
     """Classify how a sink passes its own data to a dangerous call.
 
     Args:
         sink_func: the body of a node classified as `sink`.
 
     Returns:
+        A `FlowDecision` with `source="sink_body"`, whose `kind` is
         `"parameter_match"`, `"literal_only"`, or `"unknown"`.
 
     The question is not "does a tool call this sink?" but "does this
@@ -189,12 +195,13 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
         call for call in _commit_calls(sink_func) if call not in dangerous
     )
     if not dangerous:
-        return "unknown"
+        return _sink_decision("unknown")
 
     params = _parameter_names(sink_func)
     locals_ = _local_variable_names(sink_func)
     self_attrs = _self_attribute_names(sink_func)
     saw_literal_only = False
+    literal_evidence: tuple[str, ...] = ()
 
     for call in dangerous:
         arguments: list[ast.expr] = list(call.args)
@@ -206,7 +213,9 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
             # parameterless sink has no such data, and every other
             # no-argument dangerous call is skipped as before.
             if params and _is_commit_call(call):
-                return "parameter_match"
+                return _sink_decision(
+                    "parameter_match", ("commit persists parameter state",)
+                )
             continue
 
         kinds = [
@@ -220,21 +229,75 @@ def analyze_sink_body(sink_func: FunctionNode) -> str:
             for arg in arguments
         ]
         if any(kind in DATA_FLOW_DATA_VALUES for kind in kinds):
-            return "parameter_match"
+            return _sink_decision(
+                "parameter_match", _argument_evidence(arguments)
+            )
         if all(kind == "literal_only" for kind in kinds):
             saw_literal_only = True
+            literal_evidence = _argument_evidence(arguments)
 
-    return "literal_only" if saw_literal_only else "unknown"
+    if saw_literal_only:
+        return _sink_decision("literal_only", literal_evidence)
+    return _sink_decision("unknown", ("no argument-level evidence",))
 
 
-def analyze_sink_class(cls: ast.ClassDef) -> str:
+def _sink_decision(
+    kind: str,
+    evidence: tuple[str, ...] = (),
+) -> FlowDecision:
+    """Build the sink-body decision. One place, so `source` is stable."""
+    return FlowDecision(kind, evidence, source="sink_body")
+
+
+def _argument_evidence(arguments: list[ast.expr]) -> tuple[str, ...]:
+    """Name-based descriptors of the arguments, for a decision's evidence.
+
+    Never a value: a constant reads `literal`, a call reads `call`, and
+    a name reads as itself. The strings exist so a failing test or a
+    report can say *why* a decision came out as it did (step 1's
+    provenance) without copying program data into the graph.
+    """
+    return tuple(_describe_argument(arg) for arg in arguments)
+
+
+def _describe_argument(node: ast.expr) -> str:
+    """Short description of one argument expression."""
+    if isinstance(node, ast.Await):
+        node = node.value
+    if isinstance(node, ast.Constant):
+        return "literal"
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _attribute_base_name(node)
+        if base is not None:
+            return f"{base}.{node.attr}"
+        if _is_self_attribute(node):
+            return f"self.{node.attr}"
+        return "attribute"
+    if isinstance(node, ast.Call):
+        return "call"
+    if isinstance(node, ast.JoinedStr):
+        return "f-string"
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return "collection"
+    if isinstance(node, ast.Dict):
+        return "mapping"
+    return "expression"
+
+
+def analyze_sink_class(cls: ast.ClassDef) -> FlowDecision:
     """Classify how a class-kind sink passes its own data to a dangerous call.
 
     Args:
         cls: the `ast.ClassDef` of a node classified as `sink`.
 
     Returns:
-        `"parameter_match"`, `"literal_only"`, or `"unknown"`.
+        A `FlowDecision` with `source="sink_class"`, whose `kind` is
+        `"parameter_match"`, `"literal_only"`, or `"unknown"`. The
+        evidence names the scope that decided — `method:<name>` or
+        `class_body` — because for a class the *which method* question
+        is the useful one.
 
     A capability-based sink can be a class. `UserProfileRepository`,
     `DVMCPClient` and `VulnerableChatAssistant` are sinks because their
@@ -279,18 +342,25 @@ def analyze_sink_class(cls: ast.ClassDef) -> str:
     repository that forwards only `self.<attr>` to a dangerous call
     remains `unknown` (attribute-based data flow is backlog 1.2a.3g).
     """
-    results: list[str] = [
-        analyze_sink_body(method) for method in _methods(cls)
+    scopes: list[tuple[str, FlowDecision]] = [
+        (f"method:{method.name}", analyze_sink_body(method))
+        for method in _methods(cls)
     ]
     scope = _class_level_scope(cls)
     if scope is not None:
-        results.append(analyze_sink_body(scope))
+        scopes.append(("class_body", analyze_sink_body(scope)))
 
-    if "parameter_match" in results:
-        return "parameter_match"
-    if "literal_only" in results:
-        return "literal_only"
-    return "unknown"
+    for kind in ("parameter_match", "literal_only"):
+        for name, decision in scopes:
+            if decision.kind == kind:
+                return FlowDecision(
+                    kind,
+                    (name, *decision.evidence),
+                    source="sink_class",
+                )
+    return FlowDecision(
+        "unknown", ("no scope passed data",), source="sink_class"
+    )
 
 
 def analyze_tool_returns(tool_func: FunctionNode) -> bool:
@@ -324,7 +394,7 @@ def analyze_tool_returns(tool_func: FunctionNode) -> bool:
 def analyze_has_access_to(
     tool_func: FunctionNode,
     sink_call: ast.Call,
-) -> str:
+) -> FlowDecision:
     """Classify how data reaches `sink_call` inside `tool_func`.
 
     Args:
@@ -332,7 +402,9 @@ def analyze_has_access_to(
         sink_call: the call to the sink node inside that body.
 
     Returns:
-        One of the six `data_flow_confirmed` values.
+        A `FlowDecision` with `source="edge_analyzer"`, whose `kind` is
+        one of the six `data_flow_confirmed` values. The evidence names
+        the arguments that were classified.
 
     The ranking is not linear. The first rule that matches wins:
 
@@ -356,22 +428,32 @@ def analyze_has_access_to(
     arguments.extend(kw.value for kw in sink_call.keywords)
 
     if not arguments:
-        return "no_args"
+        return _edge_decision("no_args")
 
     params = _parameter_names(tool_func)
     locals_ = _local_variable_names(tool_func)
 
     kinds = [_classify_argument(arg, params, locals_) for arg in arguments]
+    evidence = _argument_evidence(arguments)
 
-    if "parameter_match" in kinds:
-        return "parameter_match"
-    if "local_var_match" in kinds:
-        return "local_var_match"
-    if "call_result_match" in kinds:
-        return "call_result_match"
+    for kind in (
+        "parameter_match",
+        "local_var_match",
+        "call_result_match",
+    ):
+        if kind in kinds:
+            return _edge_decision(kind, evidence)
     if all(kind == "literal_only" for kind in kinds):
-        return "literal_only"
-    return "unknown"
+        return _edge_decision("literal_only", evidence)
+    return _edge_decision("unknown", evidence)
+
+
+def _edge_decision(
+    kind: str,
+    evidence: tuple[str, ...] = (),
+) -> FlowDecision:
+    """Build the edge decision. One place, so `source` is stable."""
+    return FlowDecision(kind, evidence, source="edge_analyzer")
 
 
 # ============================================================

@@ -106,8 +106,12 @@ class MCPPythonDetector(FrameworkDetector):
                     "parent_server": server_name,
                     # 1.2a.2: the tool's signature answers "does the MCP
                     # client hand this tool data?". The normalizer copies
-                    # this onto the server → tool edge it builds.
-                    "tool_data_flow": enrich_provides_tool(func_node),
+                    # this onto the server → tool edge it builds. The
+                    # attribute is the decision's kind (a JSON string);
+                    # the normalizer rebuilds the provenance.
+                    "tool_data_flow": enrich_provides_tool(
+                        func_node, framework=self.name
+                    ).kind,
                 },
             )
             node.capabilities = caps

@@ -1,23 +1,32 @@
 """Unit tests for framework-detector enrichment (1.2a.2).
 
-Each helper is pure: it takes AST nodes and returns one of the six
-`data_flow_confirmed` values (ADR-0015). The tests build the nodes from
-source snippets, which keeps the fixtures readable and independent of
-the detectors.
+Each helper is pure: it takes AST nodes and returns a `FlowDecision`
+whose `kind` is one of the six `data_flow_confirmed` values (ADR-0015).
+The tests build the nodes from source snippets, which keeps the fixtures
+readable and independent of the detectors.
+
+The helpers take the framework name so the decision's `source` records
+the producer; the detector passes its own `name`, and these tests pass
+the same strings.
 """
 
 from __future__ import annotations
 
 import ast
 
-from aicorellator.parsing.flow_analyzer import DATA_FLOW_CONFIRMED_VALUES
+from aicorellator.parsing.flow.decision import VALID_KINDS, FlowDecision
 from aicorellator.parsing.framework_detectors.enrichment import (
     enrich_provides_tool,
     enrich_uses_model,
     enrich_uses_tool,
-    flow_kind_for,
     resolve_tool_names,
 )
+
+
+# The framework names the detectors pass (their `FrameworkDetector.name`).
+LANGCHAIN = "langchain"
+FASTMCP = "fastmcp"
+MCP_PYTHON = "mcp_python"
 
 
 # ------------------------------------------------------------
@@ -58,23 +67,9 @@ def _call_keyword(tree: ast.Module, key: str) -> ast.expr:
     return value
 
 
-# ------------------------------------------------------------
-# flow_kind_for
-# ------------------------------------------------------------
-
-def test_flow_kind_for_data_values() -> None:
-    """The three data values imply flow_kind=data (decision 3)."""
-    assert flow_kind_for("parameter_match") == "data"
-    assert flow_kind_for("local_var_match") == "data"
-    assert flow_kind_for("call_result_match") == "data"
-
-
-def test_flow_kind_for_control_values() -> None:
-    """Non-data values — and a missing value — stay control."""
-    assert flow_kind_for("literal_only") == "control"
-    assert flow_kind_for("no_args") == "control"
-    assert flow_kind_for("unknown") == "control"
-    assert flow_kind_for(None) == "control"
+# The helpers only *produce* decisions; the mapping from a decision to
+# `flow_kind` lives in `flow.decision` and is tested in
+# `test_flow_decision.py` (step 1 moved it out of this module).
 
 
 # ------------------------------------------------------------
@@ -84,38 +79,46 @@ def test_flow_kind_for_control_values() -> None:
 def test_uses_tool_named_in_prompt() -> None:
     """A tool named in the system prompt is given to the agent."""
     tree = _tree('agent = f(tools=[search], system_prompt="Use search for X")')
-    assert enrich_uses_tool(
+    decision = enrich_uses_tool(
         _call_keyword(tree, "tools"),
         "Use search for X",
         _assignments(tree),
-    ) == "parameter_match"
+        framework=LANGCHAIN,
+    )
+    assert decision.kind == "parameter_match"
+    assert decision.source == "enrichment:langchain"
+    assert decision.evidence == ("prompt names search",)
 
 
 def test_uses_tool_not_named_in_prompt() -> None:
     """A prompt about something else does not enrich the edge."""
     tree = _tree('agent = f(tools=[search], system_prompt="Be helpful")')
     assert enrich_uses_tool(
-        _call_keyword(tree, "tools"), "Be helpful", _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "tools"), "Be helpful", _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 def test_uses_tool_without_system_prompt() -> None:
     """No prompt means no evidence: the edge stays unknown."""
     tree = _tree("agent = f(tools=[search])")
     assert enrich_uses_tool(
-        _call_keyword(tree, "tools"), None, _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "tools"), None, _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
     assert enrich_uses_tool(
-        _call_keyword(tree, "tools"), "   ", _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "tools"), "   ", _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 def test_uses_tool_whole_word_match() -> None:
     """`search` is not named by the word "research"."""
     tree = _tree("agent = f(tools=[search])")
     assert enrich_uses_tool(
-        _call_keyword(tree, "tools"), "research the topic", _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "tools"), "research the topic", _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 def test_uses_tool_per_tool_narrowing() -> None:
@@ -129,11 +132,13 @@ def test_uses_tool_per_tool_narrowing() -> None:
     prompt = "Use read_ticket"
 
     assert enrich_uses_tool(
-        tools_arg, prompt, assignments, tool_name="read_ticket"
-    ) == "parameter_match"
+        tools_arg, prompt, assignments,
+        framework=LANGCHAIN, tool_name="read_ticket",
+    ).kind == "parameter_match"
     assert enrich_uses_tool(
-        tools_arg, prompt, assignments, tool_name="search_docs"
-    ) == "unknown"
+        tools_arg, prompt, assignments,
+        framework=LANGCHAIN, tool_name="search_docs",
+    ).kind == "unknown"
 
 
 def test_uses_tool_resolves_symbolic_tool_list() -> None:
@@ -146,15 +151,17 @@ def test_uses_tool_resolves_symbolic_tool_list() -> None:
         _call_keyword(tree, "tools"),
         "Call search_docs",
         _assignments(tree),
-    ) == "parameter_match"
+        framework=LANGCHAIN,
+    ).kind == "parameter_match"
 
 
 def test_uses_tool_cycle_safe() -> None:
     """A cyclic tool list resolves to nothing and stays unknown."""
     tree = _tree('X = Y\nY = X\nagent = f(tools=X, system_prompt="Use X")')
     assert enrich_uses_tool(
-        _call_keyword(tree, "tools"), "Use X", _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "tools"), "Use X", _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 def test_resolve_tool_names_shapes() -> None:
@@ -184,17 +191,22 @@ def test_resolve_tool_names_shapes() -> None:
 def test_uses_model_literal() -> None:
     """A literal model name is a literal_only configuration."""
     tree = _tree('llm = ChatOpenAI(model="gpt-4")')
-    assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "literal_only"
+    decision = enrich_uses_model(
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    )
+    assert decision.kind == "literal_only"
+    assert decision.source == "enrichment:langchain"
+    assert decision.evidence == ("literal model name",)
 
 
 def test_uses_model_resolved_module_assignment() -> None:
     """`model=MODEL` resolves to the module-level string."""
     tree = _tree('MODEL = "gpt-4"\nllm = ChatOpenAI(model=MODEL)')
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "literal_only"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "literal_only"
 
 
 def test_uses_model_function_parameter() -> None:
@@ -204,32 +216,38 @@ def test_uses_model_function_parameter() -> None:
         "    llm = ChatOllama(model=model_name)\n"
         "    return llm\n"
     )
-    assert enrich_uses_model(
+    decision = enrich_uses_model(
         _call_keyword(tree, "model"),
         _assignments(tree),
         {"model_name"},
-    ) == "parameter_match"
+        framework=LANGCHAIN,
+    )
+    assert decision.kind == "parameter_match"
+    assert decision.evidence == ("model from parameter model_name",)
 
 
 def test_uses_model_unresolved_name_is_unknown() -> None:
     """A name with no assignment in the file stays unknown."""
     tree = _tree("llm = ChatOpenAI(model=MODEL)")
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 def test_uses_model_attribute_and_subscript_are_unknown() -> None:
     """Attributes and subscripts are not followed (ADR-0001)."""
     tree = _tree("llm = ChatOpenAI(model=settings.model)")
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
     tree = _tree('llm = ChatOpenAI(model=config["model"])')
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 def test_uses_model_follows_agent_argument_to_client() -> None:
@@ -239,29 +257,34 @@ def test_uses_model_follows_agent_argument_to_client() -> None:
         "agent = create_agent(model=llm, tools=[])\n"
     )
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "literal_only"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "literal_only"
 
 
 def test_uses_model_direct_agent_argument() -> None:
     """`create_agent(model="gpt-4")` is a literal configuration too."""
     tree = _tree('agent = create_agent(model="gpt-4", tools=[])')
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "literal_only"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "literal_only"
 
 
 def test_uses_model_none_is_unknown() -> None:
     """No model argument means no evidence."""
-    assert enrich_uses_model(None, {}) == "unknown"
+    assert enrich_uses_model(
+        None, {}, framework=LANGCHAIN
+    ).kind == "unknown"
 
 
 def test_uses_model_cycle_safe() -> None:
     """A cyclic assignment does not recurse forever."""
     tree = _tree("A = B\nB = A\nllm = ChatOpenAI(model=A)")
     assert enrich_uses_model(
-        _call_keyword(tree, "model"), _assignments(tree)
-    ) == "unknown"
+        _call_keyword(tree, "model"), _assignments(tree),
+        framework=LANGCHAIN,
+    ).kind == "unknown"
 
 
 # ------------------------------------------------------------
@@ -271,30 +294,59 @@ def test_uses_model_cycle_safe() -> None:
 def test_provides_tool_with_parameters() -> None:
     """The MCP client hands the tool its arguments."""
     tree = _tree("def search(query: str, limit: int = 10) -> str: ...")
-    assert enrich_provides_tool(_func(tree, "search")) == "parameter_match"
+    decision = enrich_provides_tool(
+        _func(tree, "search"), framework=FASTMCP
+    )
+    assert decision.kind == "parameter_match"
+    assert decision.source == "enrichment:fastmcp"
+    assert decision.evidence == ("tool declares parameters",)
 
 
 def test_provides_tool_without_parameters() -> None:
     """A tool with no parameter has nothing to receive."""
     tree = _tree("def health() -> str: ...")
-    assert enrich_provides_tool(_func(tree, "health")) == "no_args"
+    assert enrich_provides_tool(
+        _func(tree, "health"), framework=FASTMCP
+    ).kind == "no_args"
 
 
 def test_provides_tool_ignores_self() -> None:
     """`self` is not a client-supplied argument."""
     tree = _tree("class S:\n    def ping(self) -> str: ...\n")
-    assert enrich_provides_tool(_func(tree, "ping")) == "no_args"
+    assert enrich_provides_tool(
+        _func(tree, "ping"), framework=MCP_PYTHON
+    ).kind == "no_args"
 
 
 def test_provides_tool_counts_varargs() -> None:
     """`*args` / `**kwargs` receive caller data too."""
     tree = _tree("def run(*args, **kwargs): ...")
-    assert enrich_provides_tool(_func(tree, "run")) == "parameter_match"
+    assert enrich_provides_tool(
+        _func(tree, "run"), framework=MCP_PYTHON
+    ).kind == "parameter_match"
 
 
 def test_provides_tool_without_function_node() -> None:
     """A tool built by a constructor has no visible signature."""
-    assert enrich_provides_tool(None) == "unknown"
+    assert enrich_provides_tool(
+        None, framework=LANGCHAIN
+    ).kind == "unknown"
+
+
+def test_provides_tool_source_follows_the_framework() -> None:
+    """One helper, three detectors: `source` says which one asked."""
+    tree = _tree("def search(query: str) -> str: ...")
+    tool = _func(tree, "search")
+
+    sources = {
+        enrich_provides_tool(tool, framework=framework).source
+        for framework in (LANGCHAIN, FASTMCP, MCP_PYTHON)
+    }
+    assert sources == {
+        "enrichment:langchain",
+        "enrichment:fastmcp",
+        "enrichment:mcp_python",
+    }
 
 
 # ------------------------------------------------------------
@@ -313,14 +365,21 @@ def test_all_helpers_return_contract_values() -> None:
     assignments = _assignments(tree)
     tool_name_node = ast.parse("search").body[0].value
 
-    values = {
-        enrich_uses_model(model_arg, assignments, set()),
-        enrich_uses_model(model_arg, assignments, {"model_name"}),
-        enrich_uses_model(None, {}),
-        enrich_uses_tool(None, None, {}),
-        enrich_uses_tool(tool_name_node, "Use search", assignments),
-        enrich_uses_tool(tool_name_node, None, assignments),
-        enrich_provides_tool(None),
-        enrich_provides_tool(_func(tree, "build")),
+    decisions = {
+        enrich_uses_model(model_arg, assignments, set(),
+                          framework=LANGCHAIN),
+        enrich_uses_model(model_arg, assignments, {"model_name"},
+                          framework=LANGCHAIN),
+        enrich_uses_model(None, {}, framework=LANGCHAIN),
+        enrich_uses_tool(None, None, {}, framework=LANGCHAIN),
+        enrich_uses_tool(tool_name_node, "Use search", assignments,
+                         framework=LANGCHAIN),
+        enrich_uses_tool(tool_name_node, None, assignments,
+                         framework=LANGCHAIN),
+        enrich_provides_tool(None, framework=FASTMCP),
+        enrich_provides_tool(_func(tree, "build"), framework=MCP_PYTHON),
     }
-    assert values <= DATA_FLOW_CONFIRMED_VALUES
+    assert {d.kind for d in decisions} <= VALID_KINDS
+    # Every decision is a FlowDecision, so the type is the contract: a
+    # helper cannot return an arbitrary string.
+    assert all(isinstance(d, FlowDecision) for d in decisions)

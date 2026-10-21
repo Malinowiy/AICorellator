@@ -57,15 +57,14 @@ from .classification import (
 )
 from .entry_points import EntryPointOutput
 from .flow_analyzer import (
-    DATA_FLOW_DATA_VALUES,
     FunctionNode,
     analyze_has_access_to,
     analyze_sink_body,
     analyze_sink_class,
     analyze_tool_returns,
 )
+from .flow.decision import VALID_KINDS, FlowDecision, flow_kind_for
 from .framework_detectors import DetectionResult
-from .framework_detectors.enrichment import flow_kind_for
 from .llm_extractor import LLMExtractorOutput
 from .models import TSAOutput, TSASymbol
 from .framework_detectors.cross_file import resolve_agent_tool_edges
@@ -112,13 +111,23 @@ def _flow_for_tool_node(tool_node: Node) -> dict[str, str]:
     A tool node without the attribute — every node the normalizer
     creates from TSA symbols — keeps the control default. Enrichment
     never invents a value the detector did not record.
+
+    The node attribute is the decision's `kind` (attributes are JSON,
+    so the object itself cannot be stored); the decision is rebuilt
+    here, with the node's `framework` attribute supplying the
+    provenance — the same `enrichment:<framework>` source the detector
+    used when it made the decision.
     """
     data_flow = tool_node.attributes.get("tool_data_flow")
-    if not data_flow:
+    if not isinstance(data_flow, str) or data_flow not in VALID_KINDS:
         return CONTROL_FLOW
+    framework = tool_node.attributes.get("framework", "unknown")
+    decision = FlowDecision(
+        data_flow, source=f"enrichment:{framework}"
+    )
     return {
-        "flow_kind": flow_kind_for(data_flow),
-        "data_flow_confirmed": data_flow,
+        "flow_kind": flow_kind_for(decision),
+        "data_flow_confirmed": decision.kind,
     }
 
 
@@ -243,12 +252,15 @@ def normalize(
                 ),
             }
         if func is not None:
-            return {"sink_data_flow": analyze_sink_body(func)}
+            # The node attributes carry the decision's kind; the
+            # decision's evidence and source stay with the producer
+            # (step 1 adds them; nothing persists them yet).
+            return {"sink_data_flow": analyze_sink_body(func).kind}
         cls = _resolve_definition(
             _classes_for(source_file), node.name, line_start
         )
         if cls is not None:
-            return {"sink_data_flow": analyze_sink_class(cls)}
+            return {"sink_data_flow": analyze_sink_class(cls).kind}
         return {"sink_data_flow": "unknown"}
 
     # --- MCP servers from files ---
@@ -366,20 +378,23 @@ def normalize(
                 if sink_call is not None:
                     # Flow Analyzer is inline for now. If cross-file data-flow
                     # analysis is added (backlog), it moves to a separate pass.
-                    data_flow = analyze_has_access_to(tool_func, sink_call)
+                    decision = analyze_has_access_to(tool_func, sink_call)
                 else:
-                    data_flow = "unknown"
+                    # The sink call is not in the tool body: reachability
+                    # without evidence, so the decision says so.
+                    decision = FlowDecision(
+                        "unknown",
+                        ("no sink call in the tool body",),
+                        source="edge_analyzer",
+                    )
                 delta.edges.append(Edge(
                     id=_edge_id(tool_node.id, sink_node.id, "has_access_to"),
                     source_id=tool_node.id,
                     target_id=sink_node.id,
                     kind="has_access_to",
                     host_id=HOST_ID,
-                    flow_kind=(
-                        "data" if data_flow in DATA_FLOW_DATA_VALUES
-                        else "control"
-                    ),
-                    data_flow_confirmed=data_flow,
+                    flow_kind=flow_kind_for(decision),
+                    data_flow_confirmed=decision.kind,
                 ))
 
 
