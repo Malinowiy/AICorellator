@@ -2,200 +2,17 @@
 
 **AI Infrastructure Attack Surface Correlator**
 
-A static analyzer that finds multi-hop attack chains in AI systems.
+A static analyzer that builds a graph of AI infrastructure components — agents, LLM endpoints, MCP servers, tools, sinks, guardrails — and evaluates attack chains through that graph with a local LLM ensemble.
 
-Not a CVE scanner. Not SAST. Not a runtime monitor. AICorellator builds a graph of AI components — agents, LLM endpoints, MCP servers, tools, sinks, guardrails — and uses a local LLM voting ensemble to evaluate the exploitability of chains through that graph.
-
----
-
-## Quick Start
-
-### 1. Requirements
-
-- **Python 3.11+**
-- **uv** — provides `uvx`, used to run `tree-sitter-analyzer` as a subprocess.
-
-  Install `uv`:
-
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  ```
-
-  Or via pip:
-
-  ```bash
-  pip install uv
-  ```
-
-- **Optional:** LMStudio, Ollama, or vLLM for Phase 3 (chain evaluation). Without a local LLM runtime, Phase 1 (graph construction) still works; Phase 3 does not.
-
-### 2. Install
-
-```bash
-git clone https://github.com/Malinowiy/AICorellator.git
-cd AICorellator
-pip install -e .
-```
-
-This installs the package in editable mode. It does not install `uvx` or a local LLM runtime; those are separate steps.
-
-### 3. Scan a target
-
-```bash
-python run_scan.py --target /path/to/target
-```
-
-The target can be any directory containing source code: a repository, a folder, an unpacked Docker image, or a mounted filesystem.
-
-Scanning creates a workspace under `./aicorellator_data/`:
-
-```
-aicorellator_data/
-├── aicorellator.db          # SQLite graph
-├── reports/
-│   └── current/
-│       ├── report.md        # human-readable report
-│       └── chains.json      # machine-readable chains
-├── config/
-│   └── models.yaml          # ensemble config (auto-created)
-├── cache/
-│   └── tree-sitter/         # TSA cache
-└── logs/
-    └── aicorellator.log
-```
-
-### 4. Read the report
-
-```bash
-cat aicorellator_data/reports/current/report.md
-```
-
-The report lists nodes by kind, edges by kind, and candidate chains — deterministic structural paths from entry points to sinks. At this stage, chains are **candidates**, not evaluated findings. Phase 3 (see below) evaluates them.
-
-### 5. Evaluate chains (Phase 3, optional)
-
-Requires a local LLM runtime (LMStudio, Ollama, or vLLM).
-
-```bash
-python run_eval.py --mode fast --limit 10
-```
-
-- `--mode fast` — one voter, no judge. Quick screening.
-- `--mode solo` — one voter with reasoning. Deep single-pass.
-- `--mode full` — N voters + judge. Ensemble with final verdict.
-- `--limit` — how many chains to evaluate.
-
-The ensemble is configured in `aicorellator_data/config/models.yaml`. Edit it to point at your local models.
-
-### 6. Regenerate the report
-
-After evaluation, regenerate the report without rescanning:
-
-```bash
-python run_report.py
-```
-
-### Useful flags
-
-```bash
-python run_scan.py --target ./app --workdir /tmp/scan-1    # custom workspace
-python run_scan.py --target ./app --clean                  # wipe workspace first
-python run_scan.py --target ./app --frameworks langchain,fastmcp  # enable specific detectors
-```
-
-### What to do if the graph is empty
-
-- **No nodes at all** — check that `uvx` is installed (`uvx --version`). Without it, TSA does not run, and no symbols are extracted.
-- **Nodes but no edges** — the target may not match any known framework pattern. Check the log at `aicorellator_data/logs/aicorellator.log`.
-- **No chains** — the graph may have no entry points (HTTP routes, CLI scripts, Streamlit apps, or MCP servers) or no sinks. Check the report's node counts.
-
----
-
-## What It Finds
-
-A chain in which untrusted input reaches a dangerous action through AI components. Each node alone is legitimate. The chain is not.
-
-Beyond direct chains, AICorellator is designed to detect:
-
-- **Lethal trifecta** — a node that simultaneously reads untrusted data, accesses secrets, and can send data out.
-- **Multi-chain groups** — indirect prompt injection, where one chain plants data in an untrusted source and another reads it and reaches a sink.
-
-Both are on the roadmap (see `Documentation/BACKLOG.md`); the graph primitives that support them are in place, but the operations are not yet implemented.
-
----
-
-## What It Is Not
-
-- **Not a network scanner.** AICorellator reads local sources: code, configs, container layers.
-- **Not a runtime monitor.** Runtime scanners are planned for Phase 2.
-- **Not a replacement for SAST/DAST/SCA.** Those are inputs; AICorellator correlates their findings into chains.
-- **Not a CVE database.** CVE data is external and optional.
-
----
-
-## Pipeline
-
-**Phase 1 — Graph construction (working).**
-Sources are scanned, parsed with tree-sitter-analyzer, classified by framework detectors and capability extraction, normalized into a canonical Node/Edge model, and written to a SQLite graph store.
-
-**Phase 2 — Enrichment (planned).**
-External scanners attach findings to nodes. Untrusted sources are detected: RAG corpora, MCP tool descriptions, email inboxes, user uploads.
-
-**Phase 3 — Evaluation (working).**
-Candidate chains are enumerated deterministically. A local LLM voting ensemble evaluates each chain. Every reported edge is validated against the graph, so hallucinated chains are impossible.
-
----
-
-## Framework Detectors
-
-Level 1 classification. Per-file, framework-specific.
-
-| Framework | Signature | Status |
-|---|---|---|
-| LangChain | `langchain.agents`, `AgentExecutor`, `create_agent` | Implemented |
-| LangGraph | `langgraph.graph`, `StateGraph` | Implemented |
-| FastMCP | `mcp.server.fastmcp`, `FastMCP` | Implemented |
-| MCP Python SDK | `mcp.server`, `Server` | Implemented |
-| OpenAI Agents SDK | `openai.agents`, `Agent`, `Runner` | Planned |
-
-Level 2 — capability extraction from AST calls. Level 3 — name-based heuristics tuned for FinBot-style projects.
-
-See `Documentation/ADR/ADR_011.md` for the full design.
-
----
-
-## Modes
-
-Phase 3 evaluation runs in one of four modes:
-
-| Mode | Voters | Judge | Purpose |
-|---|---|---|---|
-| `fast` | 1 | no | Quick screening |
-| `solo` | 1 with reasoning | no | Deep single-pass |
-| `full` | N | yes | Ensemble with final verdict |
-| `custom` | as configured | as configured | Manual control |
-
-The ensemble is configured explicitly — models, weights, timeouts, reasoning effort. No auto-discovery. All analysis runs locally via LMStudio, Ollama, or vLLM. No external API calls.
-
----
-
-## Design Principles
-
-| Principle | Meaning |
-|---|---|
-| **Graph is alive** | Single mutable graph per scan. Nodes carry `confidence`; stale nodes lose confidence gradually. |
-| **SQLite is the store** | No external services. Schema is recreated per scan. |
-| **Scanners run on vertices** | Task queue. Each vertex gets scanned asynchronously (Phase 2). |
-| **Evaluation is LLM-only** | Enumeration is deterministic; evaluation is LLM. No regex for evaluation. |
-| **Hallucinations are impossible** | Every reported chain edge is validated against the graph. |
-| **Reports on demand** | Evaluation is expensive. Reports are generated on request. |
-| **False positives accepted** | Detection prefers a spurious edge over a missing one. Phase 3 filters. |
+Not a CVE scanner. Not a runtime monitor. Not a replacement for SAST/DAST/SCA. A correlator: it takes the surface of control that a static scan can see, builds it into a graph, and asks an LLM ensemble whether a path through that graph is exploitable.
 
 ---
 
 ## Status
 
-**Phase 1 MVP.** Validated against seven real targets:
+**v0.1 — prototype (2026-10-22).** Phase 1 (graph construction) works. Phase 3 (LLM evaluation) works. Phase 2 (runtime enrichment) is an interface without implementations.
+
+The prototype has been validated against seven real targets:
 
 | Target | Nodes | Edges | Chains |
 |---|---|---|---|
@@ -207,16 +24,276 @@ The ensemble is configured explicitly — models, weights, timeouts, reasoning e
 | damn-vulnerable-llm-agent | 9 | 6 | 1 |
 | ai-goat | 10 | 7 | 7 |
 
-- **Working:** ingestion, parsing, framework detectors, capability extraction, cross-file resolution, MCP entry synthesis, untrusted-source reads (`untrusted_source` nodes + `reads_untrusted`), CLI and Streamlit entry points, Phase 3 evaluation ensemble, report generation.
-- **Planned:** chain groups (ADR-0010), guardrails, OpenAI Agents SDK detector, runtime enrichment.
-- **Deferred:** schema migrations, SCIP integration, standalone executables, Docker image.
-- **Backlog:** see `Documentation/BACKLOG.md`.
+**Known limitations, stated honestly:**
+
+- ``data_edges_only = 0`` on all four primary corpora. The ``flow_kind`` and ``data_flow_confirmed`` attributes exist in the schema, are populated, and are used by the prompt — but on real code they resolve to ``control`` / ``unknown`` almost everywhere. The flow semantics described in ADR-0015 are **not yet realized** on real data. This is the single most important thing to know about the current state.
+- ``lethal_trifecta`` is ``False`` on every node in every corpus. The mechanism is implemented and tested on synthetic nodes; no real target has exercised it.
+- **Layer 3 validation checks existence, not semantics.** ``is_chain_valid`` verifies that nodes and edges exist in the graph. It does not verify direction, order, or roles.
+- ``chain_groups`` was designed, implemented, and validated — and returns zero findings on FinBot. The five groups that were evaluated all came back ``not_exploitable`` with high confidence. This is the **correct** result: FinBot does not contain indirect prompt injection. It is also a signal that the group pipeline has not yet been exercised against a target where it should fire.
+- **The project is tuned against FinBot-style layouts.** Name-based heuristics (``SINK_METHOD_NAMES``, ``RUNNER_TO_AGENT``, ``EXTRA_AGENT_CLASSES = {"CoPilotAssistant"}``) are literal names from one target. On other projects they are noise.
+
+The next phase (§Roadmap) is a **restart of the AST layer**: remove the name-based heuristics, replace kind classification with LLM classification that reads the body, and move flow analysis from AST to runtime (Layer 2). This is a deliberate rewrite, not an incremental fix. See ``Documentation/BACKLOG.md``.
+
+---
+
+## What It Does
+
+AICorellator answers one question: **can an attacker reach a dangerous action through an AI component?**
+
+Concretely: it takes a directory of sources (a repo, an unpacked Docker image, a mounted filesystem), parses it with ``tree-sitter-analyzer``, runs framework detectors and capability extraction, normalizes everything into a graph, and then evaluates candidate paths through that graph with a local LLM voting ensemble. Every edge in the output chain is validated against the graph — hallucinated chains are impossible.
+
+### What the graph contains
+
+- **Nodes** — ``agent``, ``llm_endpoint``, ``mcp_server``, ``tool``, ``sink``, ``entry_point``, ``guardrail``, ``untrusted_source``.
+- **Edges** — ``uses_model``, ``uses_tool``, ``provides_tool``, ``delegates_to``, ``has_access_to``, ``guards``, ``writes_to``.
+- **Flow attributes** — every edge carries ``flow_kind`` (``control`` | ``data`` | ``structural``) and, where applicable, ``data_flow_confirmed`` (six values describing how the data flow was established). See ADR-0015.
+
+### What the evaluation produces
+
+A **candidate chain** is a structural path from an entry point to a sink. A **finding** is a candidate chain that the LLM ensemble has evaluated and that Layer 3 has validated. The report contains both, clearly separated:
+
+- ``## Candidate chains (Phase 1 enumeration)`` — deterministic paths, no verdict.
+- ``## Evaluated chains (Phase 3)`` — verdict, confidence, reasoning, validation.
+- ``## Chain groups (Phase 3)`` — pairs of chains that meet through an ``untrusted_source``, evaluated as a pair (indirect prompt injection).
+
+A Phase 1 scan produces the first section only. This is by design: evaluation is expensive, and running it on every scan would burn the analyst's budget on chains that no LLM has looked at yet. Phase 3 is on demand (``run_eval.py``).
+
+---
+
+## What It Is Not
+
+- **Not a network scanner.** AICorellator reads local sources. It does not scan ports, services, or network traffic.
+- **Not a runtime monitor.** Runtime analysis is a **planned** layer (Layer 2), not a current capability. The project has no eBPF, no instrumentation, no tracing.
+- **Not a replacement for SAST / DAST / SCA.** Those tools find vulnerabilities. AICorellator finds **paths** through a graph of AI components. Findings from those tools are inputs to the graph, not replacements for it.
+- **Not a CVE database.** CVE data is external and optional.
+- **Not a SAST in the CodeQL sense.** It has no type resolution, no interprocedural dataflow, no symbolic execution. The capability extraction is name-based, and the flow analysis is best-effort at the AST level. Precision is lower than compiler-grade tools; the goal is chain enumeration, not vulnerability discovery at the statement level.
+
+---
+
+## Quick Start
+
+### Requirements
+
+- **Python 3.11+**
+- **uv** — provides ``uvx``, used to run ``tree-sitter-analyzer`` as a subprocess. Install:
+
+  ```
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+  Or via pip: ``pip install uv``.
+
+- **Optional:** a local LLM runtime (LMStudio, Ollama, vLLM) for Phase 3. Without one, Phase 1 works; Phase 3 does not.
+
+### Install
+
+```
+git clone https://github.com/Malinowiy/AICorellator.git
+cd AICorellator
+pip install -e .
+```
+
+### Scan a target
+
+```
+python run_scan.py --target /path/to/target
+```
+
+The target can be any directory containing source code: a repository, a folder, an unpacked Docker image, a mounted filesystem. The scan creates a workspace under ``./aicorellator_data/``:
+
+```
+aicorellator_data/
+├── aicorellator.db          # SQLite graph
+├── reports/
+│   └── current/
+│       ├── report.md        # human-readable
+│       └── chains.json      # machine-readable
+├── config/
+│   └── models.yaml          # ensemble config (auto-created)
+├── cache/
+│   └── tree-sitter/         # TSA cache
+└── logs/
+    └── aicorellator.log
+```
+
+### Evaluate chains (Phase 3, optional)
+
+Requires a local LLM runtime.
+
+```
+python run_eval.py --mode fast --limit 10
+```
+
+- ``--mode fast`` — one voter, no judge. Quick screening.
+- ``--mode solo`` — one voter with reasoning. Deep single-pass.
+- ``--mode full`` — N voters + judge. Ensemble with final verdict.
+- ``--limit`` — how many chains to evaluate.
+
+The ensemble is configured in ``aicorellator_data/config/models.yaml``. Edit it to point at your local models.
+
+### Regenerate the report
+
+```
+python run_report.py
+```
+
+### Useful flags
+
+```
+python run_scan.py --target ./app --workdir /tmp/scan-1    # custom workspace
+python run_scan.py --target ./app --clean                  # wipe workspace first
+python run_scan.py --target ./app --frameworks langchain,fastmcp  # enable specific detectors
+```
+
+### What to do if the graph is empty
+
+- **No nodes at all** — check that ``uvx`` is installed (``uvx --version``). Without it, TSA does not run and no symbols are extracted.
+- **Nodes but no edges** — the target may not match any known framework pattern. Check ``aicorellator_data/logs/aicorellator.log``.
+- **No chains** — the graph may have no entry points (HTTP routes, CLI scripts, Streamlit apps, MCP servers) or no sinks. Check the report's node counts.
 
 ---
 
 ## Architecture
 
-Architectural decisions are recorded in `Documentation/ADR/`. System structure is documented as C4 diagrams in `Documentation/Architecture/` — system context (L1), containers (L2), and components per phase (L3).
+Three layers, with the middle one currently an interface rather than an implementation.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 1a — Structural (AST, deterministic)                  │
+│                                                             │
+│   framework detectors, entry points, call graph,            │
+│   import graph, structural capabilities                     │
+│                                                             │
+│   Output: control graph — who can call whom                 │
+│   Cost: seconds, deterministic                              │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 1b — Classification (LLM, cached) — ROADMAP           │
+│                                                             │
+│   kind classification with reasoning,                       │
+│   capability enhancement                                    │
+│                                                             │
+│   Output: enriched graph with explanations                  │
+│   Cost: minutes (cached)                                    │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 2 — Runtime observation (staging / test) — ROADMAP    │
+│                                                             │
+│   taint tracking (Python bytecode),                         │
+│   eBPF (syscall-level) for other languages                  │
+│                                                             │
+│   Output: observed flows — data edges, source identity      │
+│   Cost: minutes–hours                                       │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 3 — Chain evaluation (LLM ensemble) — WORKING         │
+│                                                             │
+│   voters, judge, aggregation, Layer 3 semantic validation   │
+│                                                             │
+│   Output: verdicts                                          │
+│   Cost: minutes                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Current state:** Layer 1a works, Layer 3 works, Layer 1b and Layer 2 are roadmap items. The consequence is stated in §Status: ``data_edges_only = 0`` on real corpora, because there is no Layer 2 to produce data edges, and Layer 1a cannot.
+
+---
+
+## Roadmap
+
+The roadmap is a **restart of the AST layer**, not an incremental improvement. The reasoning:
+
+1. **Name-based heuristics are the wrong foundation.** ``SINK_METHOD_NAMES``, ``RUNNER_TO_AGENT``, ``EXTRA_AGENT_CLASSES = {"CoPilotAssistant"}`` are literal names from one target. On another project they are noise. They exist because the AST layer has no body-aware classification; the fix is to add one, not to extend the vocabulary.
+2. **Flow semantics cannot be inferred from AST.** ``flow_kind`` and ``data_flow_confirmed`` were designed to distinguish "X calls Y" from "data from X reaches Y". ADR-0015 lists the argument patterns the analyzer recognizes. On real code, the analyzer resolves ``control`` / ``unknown`` almost everywhere. The promise is not kept. Runtime observation is the honest place for this signal; AST cannot produce it.
+3. **Framework-agnostic classification is achievable.** An LLM that reads the body of a class or method can classify it without a name vocabulary. The cost is minutes per scan (cached), not seconds — but the result is framework-agnostic and carries reasoning.
+
+### Phases
+
+| Phase | What | Estimate | Stops at |
+|---|---|---|---|
+| 0 | Freeze v0.1; write ADR-0016 (``data_flow_confirmed`` is enrichment metadata, not a promise) | 0.5 day | v0.1 tagged |
+| 1 | Remove class-A heuristics (name-based) | 1 day | — |
+| 2 | Remove class-B heuristics (name-based capability patterns) | 1 day | — |
+| 3 | Remove flow heuristics from AST | 1 day | — |
+| 4 | **Layer 1b** — LLM classification (kind + capability) | 3 days | **v0.2** — framework-agnostic, reasoning per node |
+| 5 | **Layer 2** — runtime taint tracking (Python) | 7 days | **v1.0** — ``data_edges_only > 0`` on real corpora |
+| 6 | **Chain groups as facts** — observed pairs, no scoring weights | 2 days | **v1.1** — indirect prompt injection is a fact |
+
+Estimates assume vibecoding pace: the current prototype (166 files, ~15k lines, 905 tests) was written in 10 working days. The restart is expected to take **15.5 working days** and to reduce the codebase by roughly half — fewer heuristics, fewer tests, better outcomes.
+
+### What is explicitly not planned
+
+- **Production runtime analysis.** Taint tracking belongs in staging or test. Production is not instrumentable without observability cost that is not worth paying for security analysis alone.
+- **Non-Python runtime analysis** (eBPF, Java bytecode). Deferred until Python works.
+- **TUI.** Not a security tool feature.
+- **Multi-host topology.** The current single-host model is enough for the target audience.
+- **Schema migrations.** The database is recreated per scan.
+- **SCIP integration.** TSA provides symbols; that is what the AST layer needs.
+
+See ``Documentation/BACKLOG.md`` for the full backlog, and ``Documentation/ADR/`` for the reasoning behind each architectural decision.
+
+---
+
+## Framework Detectors
+
+Layer 1a classification. Per-file, framework-specific.
+
+| Framework | Signature | Status |
+|---|---|---|
+| LangChain | ``langchain.agents``, ``AgentExecutor``, ``create_agent`` | Implemented |
+| LangGraph | ``langgraph.graph``, ``StateGraph`` | Implemented |
+| FastMCP | ``mcp.server.fastmcp``, ``FastMCP`` | Implemented |
+| MCP Python SDK | ``mcp.server``, ``Server`` | Implemented |
+| OpenAI Agents SDK | ``openai.agents``, ``Agent``, ``Runner`` | Planned |
+
+See ``Documentation/ADR/ADR_011.md`` for the full design.
+
+---
+
+## Evaluation Modes
+
+Phase 3 evaluation runs in one of four modes:
+
+| Mode | Voters | Judge | Purpose |
+|---|---|---|---|
+| ``fast`` | 1 | no | Quick screening |
+| ``solo`` | 1 with reasoning | no | Deep single-pass |
+| ``full`` | N | yes | Ensemble with final verdict |
+| ``custom`` | as configured | as configured | Manual control |
+
+The ensemble is configured explicitly — models, weights, timeouts, reasoning effort. No auto-discovery. All analysis runs locally via LMStudio, Ollama, or vLLM. No external API calls.
+
+The prompt is versioned (``PROMPT_VERSION``). Every chain row stores the version that produced it.
+
+---
+
+## Design Principles
+
+| Principle | Meaning |
+|---|---|
+| **Graph is alive** | Single mutable graph per scan. Nodes carry ``confidence``; stale nodes lose confidence gradually. |
+| **SQLite is the store** | No external services. Schema recreated per scan. |
+| **Enumeration is deterministic** | Candidate chains are structural paths, enumerated by DFS. No LLM. Bounded by ``max_hops`` and ``max_candidates``. |
+| **Evaluation is LLM-only** | The verdict is produced by an LLM ensemble. No regex, no heuristics for *evaluation*. |
+| **Validation is deterministic** | Every reported edge is validated against the graph. Hallucinated chains are impossible. |
+| **False positives accepted** | Detection prefers a spurious edge over a missing one. Phase 3 filters. |
+| **Reports on demand** | Evaluation is expensive. Reports are generated on request, not on every mutation. |
+| **Reasoning over verdicts** | The output is not a list of "vulnerable" and "safe". It is a list of paths with reasoning, confidence, and provenance. |
+
+---
+
+## Documentation
+
+- ``Documentation/ADR/`` — architectural decisions, one per file. Authoritative record of *why*.
+- ``Documentation/Architecture/`` — C4 diagrams (L1 system context, L2 containers, L3 components per phase).
+- ``Documentation/Analysis/`` — false-positive / true-positive analysis on real corpora.
+- ``Documentation/BACKLOG.md`` — what to do next. Authoritative record of *what*.
 
 ---
 
@@ -224,6 +301,6 @@ Architectural decisions are recorded in `Documentation/ADR/`. System structure i
 
 AICorellator is released under the **PolyForm Noncommercial License 1.0.0**. Noncommercial use is free. Commercial use requires a paid license.
 
-- **Noncommercial use** — free, under the terms of `LICENSE`.
-- **Commercial use** — requires a commercial license. See `COMMERCIAL.md` for pricing, contribution-based discounts, and how to purchase.
-- **Contributions** — welcome, under the terms of `CONTRIBUTING.md`.
+- **Noncommercial use** — free, under the terms of ``LICENSE``.
+- **Commercial use** — requires a commercial license. See ``COMMERCIAL.md`` for pricing, contribution-based discounts, and how to purchase.
+- **Contributions** — welcome, under the terms of ``CONTRIBUTING.md``.
