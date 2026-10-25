@@ -76,6 +76,15 @@ Plus two coverage gaps that ADR-0016 does not close:
 
 ## Recently done
 
+### 2026-10-25 — Schema + `observed_by` + `FlowKindStage` (A.1)
+
+The ADR-0016 foundation. The AST layer is control-only; `observed_by` is on every node and edge.
+
+- **`observed_by`** (`schema.sql`, `graph/models.py`): `JSON NOT NULL DEFAULT '["ast"]'` on `nodes` and `edges`, `CHECK (json_valid(observed_by))`, `Node.observed_by` / `Edge.observed_by: list[str]`. `upsert` merges it as a set union (`repositories/nodes.py`, `repositories/edges.py`).
+- **Control-only AST layer:** `FlowKindStage` pins `flow_kind = "control"` on every non-structural edge and neither reads nor writes `data_flow_confirmed`. Every resolver that runs after it constructs control edges too, and `detector_merge` no longer copies `flow_kind` / `data_flow_confirmed` across a merge. The flow analyzers (`flow/`) keep their behavior; nothing on Layer 1a writes their output (ADR-0016 §Neutral 1–2).
+- **`find_chains(data_edges_only=True)`** filters on `"runtime" in edge.observed_by`, independent of `flow_kind`. On an AST-only scan the shortlist is `[]` by construction — the correct answer, not a failure.
+- **Tests:** AST-layer assertions rewritten from `data_flow_confirmed = "unknown"` to `NULL`; new coverage for the SQL default, the `upsert` union and the `data_edges_only` filter (`test_schema.py`, `test_repositories.py`, `test_query_layer.py`). **913 passed.**
+
 ### 2026-10-25 — ADR-0016 and ADR-0017
 
 - **ADR-0016** — control-only AST layer; `observed_by` on every node and edge; classification layers; scan policy in `scan.yaml`; removal of class-A name heuristics.
@@ -128,17 +137,17 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### A.1 — Schema + `observed_by` + `FlowKindStage`
 
 **Priority:** **Critical**
-**Status:** Not started
+**Status:** Done (2026-10-25).
 **ADR:** ADR-0016
-**Rationale:** The foundation. Every subsequent item writes into `observed_by`. `FlowKindStage` must stop writing `data_flow_confirmed` on AST edges and must set `flow_kind = "control"` unconditionally. `find_chains(data_edges_only=True)` must filter on `"runtime" in observed_by`, not on `flow_kind = "data"`.
+**Rationale:** The foundation. Every subsequent item writes into `observed_by`. `FlowKindStage` no longer writes `data_flow_confirmed` on AST edges and sets `flow_kind = "control"` unconditionally. `find_chains(data_edges_only=True)` filters on `"runtime" in observed_by`, not on `flow_kind = "data"`.
 
-**What changes:**
+**What changed:**
 - `schema.sql`: `observed_by JSON NOT NULL DEFAULT '["ast"]'` on `nodes` and `edges`, with `CHECK (json_valid(observed_by))`.
 - `graph/models.py`: `Node.observed_by: list[str]`, `Edge.observed_by: list[str]`.
 - `graph/repositories/edges.py`, `nodes.py`: `upsert` merges `observed_by` as a set union (matches existing `capabilities` semantics).
 - `parsing/normalizer_stages/flow_kind.py`: sets `flow_kind = "control"` on every AST edge; does not read or write `data_flow_confirmed`.
 - `graph/query.py`: `find_chains(data_edges_only=True)` filters on `"runtime" in edge.observed_by`.
-- Tests on `data_flow_confirmed` are rewritten: the AST-layer value is `NULL`, not `unknown`.
+- Tests on `data_flow_confirmed` were rewritten: the AST-layer value is `NULL`, not `unknown`.
 
 **Size:** ~1 day.
 

@@ -370,8 +370,9 @@ def test_pipeline_produces_untrusted_source_nodes(
 
     The end-to-end shape of the new kind: the extractor credits
     `reads_untrusted` on the reader, the stage emits one node per read
-    site, and the edge from the source to the reader reaches SQLite with
-    the derived `flow_kind` — the whole 1.3a path, in one scan.
+    site, and the edge from the source to the reader reaches SQLite as
+    `control` with `NULL` flow confirmation (ADR-0016) — the whole 1.3a
+    path, in one scan.
     """
     target = ingest(untrusted_target, kind="folder")
     manifest = discover(target)
@@ -414,8 +415,9 @@ def test_pipeline_produces_untrusted_source_nodes(
 
         edges = store.edges.list(source_id=rag.id, kind="has_access_to")
         assert [e.target_id for e in edges] == [tool.id]
-        assert edges[0].flow_kind == "data"
-        assert edges[0].data_flow_confirmed == "call_result_match"
+        # A read is an access path, not a traced flow (ADR-0016).
+        assert edges[0].flow_kind == "control"
+        assert edges[0].data_flow_confirmed is None
 
         # The catalogue read happens in a route handler, so its reader is
         # the entry point node the same scan created.
@@ -605,9 +607,9 @@ def test_pipeline_writer_edge_reaches_the_store(
 
         edges = store.edges.list(kind="writes_to")
         assert len(edges) == 3
-        # Control, with no traced dataflow (ADR-0015 decision 5).
+        # Control, with no traced dataflow (ADR-0016, decision 3).
         assert {e.flow_kind for e in edges} == {"control"}
-        assert {e.data_flow_confirmed for e in edges} == {"unknown"}
+        assert {e.data_flow_confirmed for e in edges} == {None}
         assert sorted(
             (nodes[e.source_id].name, nodes[e.target_id].name)
             for e in edges
@@ -854,7 +856,7 @@ def test_pipeline_chain_group_through_dynamic_invocation(
             for e in invocations
         ] == [("ToolProviderAgent", "get_documents")]
         assert {e.flow_kind for e in invocations} == {"control"}
-        assert {e.data_flow_confirmed for e in invocations} == {"unknown"}
+        assert {e.data_flow_confirmed for e in invocations} == {None}
 
         # The two edges the invocation rule walks.
         assert store.edges.list(

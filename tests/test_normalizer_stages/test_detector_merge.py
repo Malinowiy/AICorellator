@@ -41,6 +41,8 @@ def test_detector_node_replaces_tsa_node_and_repoints_edges(project) -> None:
         id="edge:tsa", source_id="tool:tsa", target_id="sink:1",
         kind="has_access_to", host_id="localhost",
         data_flow_confirmed="parameter_match", flow_kind="data",
+        # The rebuild must not carry the verdict: no AST edge has one
+        # (ADR-0016). `flow_kind` is re-derived, so it is safe to copy.
     ))
 
     delta = DetectorMergeStage().apply(p.delta, p.ctx)
@@ -54,5 +56,5 @@ def test_detector_node_replaces_tsa_node_and_repoints_edges(project) -> None:
     access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(access) == 1
     assert access[0].source_id == "tool:detector"
-    assert access[0].data_flow_confirmed == "parameter_match"
-    assert access[0].flow_kind == "data"
+    assert access[0].data_flow_confirmed is None
+    assert access[0].flow_kind == "control"

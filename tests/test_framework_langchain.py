@@ -105,10 +105,11 @@ def get_agent(role):
 """)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
-    # 1.2a.2: the model was configured with a literal name, so the
-    # edge confirms a configuration value, not a data flow.
+    # The model was configured with a literal name. The detector knows
+    # that, but the AST edge records only the control relationship
+    # (ADR-0016, decision 3).
     assert uses_model[0].flow_kind == "control"
-    assert uses_model[0].data_flow_confirmed == "literal_only"
+    assert uses_model[0].data_flow_confirmed is None
 
 
 def test_uses_tool_from_local_assignment() -> None:
@@ -127,9 +128,9 @@ def get_agent():
 """)
     uses_tool = [e for e in result.edges if e.kind == "uses_tool"]
     assert len(uses_tool) == 1
-    # ADR-0015: control flow, data flow unconfirmed.
+    # ADR-0015: control flow. ADR-0016: no data-flow verdict.
     assert uses_tool[0].flow_kind == "control"
-    assert uses_tool[0].data_flow_confirmed == "unknown"
+    assert uses_tool[0].data_flow_confirmed is None
 
 
 def test_assignment_later_wins() -> None:
@@ -173,8 +174,14 @@ agent = create_agent(model=A, tools=[])
 
 
 # ------------------------------------------------------------
-# 1.2a.2 — data_flow_confirmed enrichment
+# ADR-0016 — the detector reads the source, the edge stays control
 # ------------------------------------------------------------
+#
+# Each case below is a question the detector answers with confidence —
+# "the prompt names this tool", "the model name is a literal", "the model
+# name is a caller-supplied parameter". The answer is framework knowledge
+# for Layer 2; none of it is written to an AST edge, so every edge here
+# is `control` with `data_flow_confirmed = NULL`.
 
 def _tool_edges(result):
     """Map the uses_tool edges by target tool name."""
@@ -186,8 +193,13 @@ def _tool_edges(result):
     }
 
 
-def test_uses_tool_named_in_system_prompt_is_data() -> None:
-    """The prompt names `a`, so the agent was given `a`."""
+def test_uses_tool_named_in_system_prompt_is_still_control() -> None:
+    """The prompt names `a` — and neither edge claims data flow.
+
+    This is the detector's strongest reading of the source: the system
+    prompt mentions one of the two tools. It still is not a data-flow
+    confirmation, because nothing ran (ADR-0016, decision 3).
+    """
     result = _detect("""
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -203,10 +215,10 @@ def b(x: str) -> str:
 agent = create_agent(tools=[a, b], system_prompt="Use a for X")
 """)
     edges = _tool_edges(result)
-    assert edges["a"].flow_kind == "data"
-    assert edges["a"].data_flow_confirmed == "parameter_match"
+    assert edges["a"].flow_kind == "control"
+    assert edges["a"].data_flow_confirmed is None
     assert edges["b"].flow_kind == "control"
-    assert edges["b"].data_flow_confirmed == "unknown"
+    assert edges["b"].data_flow_confirmed is None
 
 
 def test_uses_tool_without_system_prompt_stays_control() -> None:
@@ -223,7 +235,7 @@ agent = create_agent(tools=[a])
 """)
     edges = _tool_edges(result)
     assert edges["a"].flow_kind == "control"
-    assert edges["a"].data_flow_confirmed == "unknown"
+    assert edges["a"].data_flow_confirmed is None
 
 
 def test_uses_tool_unrelated_system_prompt_stays_control() -> None:
@@ -240,7 +252,7 @@ agent = create_agent(tools=[a], system_prompt="Do something unrelated")
 """)
     edges = _tool_edges(result)
     assert edges["a"].flow_kind == "control"
-    assert edges["a"].data_flow_confirmed == "unknown"
+    assert edges["a"].data_flow_confirmed is None
 
 
 def test_uses_model_literal_is_literal_only() -> None:
@@ -255,7 +267,7 @@ agent = AgentExecutor(agent=..., tools=[], llm=llm)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
     assert uses_model[0].flow_kind == "control"
-    assert uses_model[0].data_flow_confirmed == "literal_only"
+    assert uses_model[0].data_flow_confirmed is None
 
 
 def test_uses_model_resolved_module_assignment_is_literal_only() -> None:
@@ -271,11 +283,16 @@ agent = create_agent(model=llm, tools=[])
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
     assert uses_model[0].flow_kind == "control"
-    assert uses_model[0].data_flow_confirmed == "literal_only"
+    assert uses_model[0].data_flow_confirmed is None
 
 
-def test_uses_model_from_function_parameter_is_data() -> None:
-    """A model name that is a caller-supplied parameter is data."""
+def test_uses_model_from_function_parameter_stays_control() -> None:
+    """A caller-supplied model name is the tempting `parameter_match`.
+
+    Same shape as the Flow Analyzer's data case — the value arrives from
+    outside — but the AST layer did not see it arrive, so the edge stays
+    control with no verdict (ADR-0016, decision 3).
+    """
     result = _detect("""
 from langchain.agents import create_agent
 from langchain_ollama import ChatOllama
@@ -286,8 +303,8 @@ def get_agent(model_name):
 """)
     uses_model = [e for e in result.edges if e.kind == "uses_model"]
     assert len(uses_model) == 1
-    assert uses_model[0].flow_kind == "data"
-    assert uses_model[0].data_flow_confirmed == "parameter_match"
+    assert uses_model[0].flow_kind == "control"
+    assert uses_model[0].data_flow_confirmed is None
 
 
 def test_tool_node_records_signature_data_flow() -> None:

@@ -37,7 +37,7 @@ import hashlib
 import logging
 
 from ...graph.models import Edge, Node
-from ..flow.decision import FlowDecision, flow_kind_for
+from ..flow.decision import FlowDecision
 from .base import DetectionResult, FrameworkDetector
 from .enrichment import (
     enrich_provides_tool,
@@ -444,6 +444,22 @@ class LangChainDetector(FrameworkDetector):
         host_id: str,
         decision: FlowDecision = FlowDecision("unknown"),
     ) -> Edge:
+        """Build an edge; `decision` is this detector's enrichment answer.
+
+        ADR-0016, decision 3: the AST layer does not answer the data-flow
+        question, so the answer is **not** written to the edge.
+        `flow_kind` is `control` on every AST edge — `FlowKindStage` pins
+        it, and the `Edge` default already says so — and
+        `data_flow_confirmed` stays at its schema default (`NULL`).
+
+        The detector still computes the decision, and the call sites still
+        name it, because the rules in `enrichment.py` are framework
+        knowledge about how a framework passes arguments: the same
+        questions Layer 2 asks when it runs `flow/` against a pair
+        runtime observed. Keeping the computation here means the answer is
+        at hand when that layer is built, and stops one line short of
+        claiming it on an AST edge.
+        """
         h = hashlib.sha256(
             f"{source_id}:{target_id}:{kind}:{host_id}".encode("utf-8")
         ).hexdigest()
@@ -454,11 +470,6 @@ class LangChainDetector(FrameworkDetector):
             target_id=target_id,
             kind=kind,
             host_id=host_id,
-            # 1.2a.2: the detector may enrich the default control edge
-            # (ADR-0015, decisions 3 and 4). `flow_kind` is derived from
-            # the decision, never set independently.
-            flow_kind=flow_kind_for(decision),
-            data_flow_confirmed=decision.kind,
             attributes={"framework": self.name},
         )
 

@@ -79,18 +79,19 @@ def test_a_read_gets_a_node_and_an_edge_to_the_tool(project) -> None:
     assert [(e.kind, e.source_id, e.target_id) for e in delta.edges] == [
         ("has_access_to", source.id, "tool:read_docs"),
     ]
-    assert delta.edges[0].data_flow_confirmed == "call_result_match"
+    assert delta.edges[0].data_flow_confirmed is None
 
 
-def test_flow_kind_is_data_once_the_deriving_stage_runs(project) -> None:
-    """The stage sets the evidence; `FlowKindStage` derives the kind."""
+def test_flow_kind_is_control_once_the_deriving_stage_runs(project) -> None:
+    """A read is an access path, not a traced flow (ADR-0016)."""
     p = project(files={"tools.py": CORPUS_SOURCE})
     p.delta.nodes.append(_node("tool", "read_docs"))
 
     UntrustedSourceStage().apply(p.delta, p.ctx)
     FlowKindStage().apply(p.delta, p.ctx)
 
-    assert [e.flow_kind for e in p.delta.edges] == ["data"]
+    assert [e.flow_kind for e in p.delta.edges] == ["control"]
+    assert [e.data_flow_confirmed for e in p.delta.edges] == [None]
 
 
 def test_a_method_read_links_to_the_class_when_the_method_has_no_node(

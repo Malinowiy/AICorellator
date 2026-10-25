@@ -1,4 +1,4 @@
-"""FlowKindStage: `flow_kind` derived from `data_flow_confirmed`."""
+"""FlowKindStage: `flow_kind = "control"` on every AST edge (ADR-0016)."""
 
 from __future__ import annotations
 
@@ -16,19 +16,27 @@ def _edge(edge_id: str, kind: str, confirmed: str | None) -> Edge:
 
 
 @pytest.mark.parametrize(
-    ("confirmed", "expected"),
+    "confirmed",
     [
-        ("parameter_match", "data"),
-        ("local_var_match", "data"),
-        ("call_result_match", "data"),
-        ("literal_only", "control"),
-        ("no_args", "control"),
-        ("unknown", "control"),
-        (None, "control"),
+        "parameter_match",
+        "local_var_match",
+        "call_result_match",
+        "literal_only",
+        "no_args",
+        "unknown",
+        None,
     ],
 )
-def test_flow_kind_follows_the_decision(project, confirmed, expected) -> None:
-    """One mapping, applied to every edge (ADR-0015, decision 3)."""
+def test_flow_kind_is_control_whatever_the_decision(
+    project, confirmed,
+) -> None:
+    """No value of `data_flow_confirmed` yields `flow_kind = "data"`.
+
+    The stage does not read the column any more (ADR-0016, decision 2).
+    The values here are the six of ADR-0015 plus the `NULL` an AST edge
+    actually carries: only a runtime observation can make an edge a data
+    edge, and that is Layer 2's write.
+    """
     p = project()
     p.delta.edges.append(
         _edge("edge:1", "has_access_to", confirmed)
@@ -36,8 +44,8 @@ def test_flow_kind_follows_the_decision(project, confirmed, expected) -> None:
 
     delta = FlowKindStage().apply(p.delta, p.ctx)
 
-    assert delta.edges[0].flow_kind == expected
-    # The stage derives flow_kind; it does not touch the decision.
+    assert delta.edges[0].flow_kind == "control"
+    # The stage sets flow_kind; it does not touch the decision.
     assert delta.edges[0].data_flow_confirmed == confirmed
 
 

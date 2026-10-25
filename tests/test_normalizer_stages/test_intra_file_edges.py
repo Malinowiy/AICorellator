@@ -71,7 +71,7 @@ def test_provides_tool_and_same_file_has_access_to(project) -> None:
     assert [(e.source_id, e.target_id) for e in access] == [
         (p.named("get_file").id, p.named("delete_file").id),
     ]
-    # The stage writes the decision, not the mapping: FlowKindStage
-    # derives flow_kind from data_flow_confirmed.
-    assert access[0].data_flow_confirmed == "parameter_match"
+    # The stage builds a control edge; `FlowKindStage` pins the kind and
+    # nothing derives a data verdict from the call graph (ADR-0016).
+    assert access[0].data_flow_confirmed is None
     assert access[0].flow_kind == "control"

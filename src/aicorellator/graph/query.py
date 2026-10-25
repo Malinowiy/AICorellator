@@ -425,10 +425,12 @@ class QueryLayer:
         access path to a tool is the candidate attack path.
 
         `data_edges_only` narrows the result to chains carrying at
-        least one data-flow edge — a high-precision shortlist. The
-        default is off: control-only chains stay enumerable because
-        chain groups and manual review need them (ADR-0015,
-        decision 6).
+        least one edge that a runtime run observed — that is,
+        `"runtime" in edge.observed_by` (ADR-0016). On an AST-only scan
+        no edge carries it, so the answer is `[]`; that is correct, not
+        a failure. The default is off: control-only chains stay
+        enumerable because chain groups and manual review need them
+        (ADR-0015, decision 6).
 
         Deterministic. No LLM. Bounded by max_hops and max_candidates.
         """
@@ -511,12 +513,15 @@ class QueryLayer:
 
         Only control and data edges are traversed; structural edges
         are skipped (ADR-0015, decision 5). With `data_edges_only`,
-        a path is reported only if at least one traversed edge is a
-        data-flow edge.
+        a path is reported only if at least one traversed edge was
+        observed by a runtime run — `"runtime" in edge.observed_by`
+        (ADR-0016).
         """
         results: list[tuple[list[str], list[str]]] = []
 
-        # stack entries: (current_node, path_nodes, path_edges, has_data)
+        # stack entries: (current_node, path_nodes, path_edges,
+        # runtime_observed) — the last flag tracks whether any edge on
+        # the path carries "runtime" in observed_by.
         stack: list[tuple[str, list[str], list[str], bool]] = [
             (start, [start], [], False)
         ]
@@ -525,12 +530,12 @@ class QueryLayer:
             if len(results) >= max_candidates:
                 break
 
-            current, path_nodes, path_edges, has_data = stack.pop()
+            current, path_nodes, path_edges, runtime_observed = stack.pop()
 
             if current in sink_ids and len(path_edges) > 0:
                 # A sink terminates the path either way: a chain that
                 # reaches a sink is not extended past it.
-                if not data_edges_only or has_data:
+                if not data_edges_only or runtime_observed:
                     results.append((path_nodes, path_edges))
                 continue
 
@@ -566,7 +571,7 @@ class QueryLayer:
                         next_node,
                         path_nodes + [next_node],
                         path_edges + [edge.id],
-                        has_data or edge.flow_kind == "data",
+                        runtime_observed or "runtime" in edge.observed_by,
                     )
                 )
 

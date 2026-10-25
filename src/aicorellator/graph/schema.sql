@@ -11,6 +11,9 @@
 --   - confidence is REAL in [0.0, 1.0].
 --   - capabilities is a JSON array of capability strings
 --     (see ADR-0009).
+--   - observed_by is a JSON array of strings identifying who
+--     confirmed the node or edge (ADR-0016). Default ["ast"];
+--     Layer 2 adds "runtime". Required — an empty array is a bug.
 --   - host_id references hosts(id). In Phase 0, only 'localhost'.
 -- ============================================================
 
@@ -75,6 +78,9 @@ VALUES ('localhost', 'localhost', 'standalone', 'active');
 --   writes_filesystem, reads_db, writes_db, http_egress,
 --   http_ingress, reads_env, reads_secrets, calls_llm,
 --   invokes_mcp_tool, reads_untrusted
+--
+-- observed_by (ADR-0016): JSON array of strings identifying who
+-- confirmed the node. Default ["ast"]; Layer 2 adds "runtime".
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS nodes (
@@ -84,6 +90,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     host_id      TEXT NOT NULL,
     attributes   JSON NOT NULL DEFAULT '{}',
     capabilities JSON NOT NULL DEFAULT '[]',
+    observed_by  JSON NOT NULL DEFAULT '["ast"]',
     confidence   REAL NOT NULL DEFAULT 1.0,
     content_hash TEXT,
     status       TEXT NOT NULL DEFAULT 'active',
@@ -100,7 +107,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(attributes)),
-    CHECK (json_valid(capabilities))
+    CHECK (json_valid(capabilities)),
+    CHECK (json_valid(observed_by))
 );
 
 CREATE INDEX IF NOT EXISTS idx_nodes_kind ON nodes(kind);
@@ -128,6 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
 -- `has_access_to` only. NULL for every other edge kind. Values:
 --   parameter_match, local_var_match, call_result_match,
 --   literal_only, no_args, unknown.
+--
+-- observed_by (ADR-0016): JSON array of strings identifying who
+-- confirmed the edge. Default ["ast"]; Layer 2 adds "runtime".
+-- `find_chains(data_edges_only=True)` filters on "runtime" in it.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -139,6 +151,7 @@ CREATE TABLE IF NOT EXISTS edges (
     precision    TEXT NOT NULL DEFAULT 'syntactic',
     flow_kind    TEXT NOT NULL DEFAULT 'control',
     data_flow_confirmed TEXT,
+    observed_by  JSON NOT NULL DEFAULT '["ast"]',
     attributes   JSON NOT NULL DEFAULT '{}',
     capabilities JSON NOT NULL DEFAULT '[]',
     confidence   REAL NOT NULL DEFAULT 1.0,
@@ -164,6 +177,7 @@ CREATE TABLE IF NOT EXISTS edges (
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(attributes)),
     CHECK (json_valid(capabilities)),
+    CHECK (json_valid(observed_by)),
     CHECK (source_id <> target_id)
 );
 

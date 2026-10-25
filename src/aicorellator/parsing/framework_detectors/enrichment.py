@@ -1,10 +1,19 @@
-"""Framework-detector enrichment of `data_flow_confirmed` (1.2a.2).
+"""Framework-detector enrichment rules (1.2a.2).
 
-ADR-0015 decision 7 declares `data_flow_confirmed` **enrichable**: a
-framework detector knows its own framework's argument-passing rules, so
-it may upgrade the values the generic Flow Analyzer leaves at
-`unknown`. This module holds the enrichment rules — small, pure
-functions over AST nodes, one per detector question.
+A framework detector knows its own framework's argument-passing rules:
+"does the agent's system prompt name this tool?", "was this LLM
+configured with a literal model name?", "does this MCP tool accept
+parameters?". This module holds those rules — small, pure functions over
+AST nodes, one per detector question.
+
+**After ADR-0016 the answer does not land on an AST edge.** A decision
+computed here is a framework-specific reading of the source, not a
+data-flow confirmation: the AST layer does not answer that question, so
+`data_flow_confirmed` is `NULL` on every AST edge and is populated only
+by Layer 2, which runs `flow/` against a pair runtime observed. The rules
+remain — like the `flow/` analyzers, they are framework knowledge Layer 2
+will consume — and the detectors still ask them, but no edge carries
+their result.
 
 Each helper returns a `FlowDecision` (`parsing.flow`). Every helper
 takes the framework name, because the decision's `source`
@@ -27,15 +36,16 @@ and each detector owns its own enrichment rule (ADR-0011).
 The rules are name-based, one step deep (ADR-0001). They never follow
 values through calls, subscripts, or attributes of other objects.
 
-Values are the six of `VALID_KINDS` (ADR-0015). Per decision 3,
-`flow_kind = "data"` exactly when the value is one of `DATA_KINDS`;
-`flow.decision.flow_kind_for` is the single place that rule is applied,
-so a detector and the normalizer cannot disagree.
+Values are the six of `VALID_KINDS` (ADR-0015). `flow.decision.
+flow_kind_for` remains the single place the value → kind rule is applied,
+but on Layer 1a nothing consumes the answer: the AST layer writes
+`flow_kind = "control"` on every edge and no `data_flow_confirmed` at
+all (ADR-0016, decision 3). Layer 2 will call it.
 
 Enrichment is deliberately conservative: a rule that does not apply
-returns `"unknown"`, which leaves the edge as control flow. A false
-`data` edge is worse than a missing one — it tells the Phase 3 LLM that
-an attack path is confirmed when it is not (ADR-0015, ADR-0009).
+returns `"unknown"`. A false `data` reading is worse than a missing one —
+it would tell the Phase 3 LLM that an attack path is confirmed when it is
+not (ADR-0015, ADR-0009).
 """
 
 from __future__ import annotations

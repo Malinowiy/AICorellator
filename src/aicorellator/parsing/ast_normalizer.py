@@ -13,13 +13,13 @@ the C4 L3 Phase 1 pipeline, each with an `apply(delta, ctx) -> delta`
 
 What the stages produce, in one place for orientation:
 
-Edges:
-  - provides_tool  (mcp_server → tool)              flow_kind=data|control
-  - has_access_to  (tool → sink)                    flow_kind=data|control
-  - has_access_to  (untrusted_source → reader)      flow_kind=data  (1.3a)
-  - delegates_to   (entry_point → agent)            flow_kind=control
-  - delegates_to   (agent → agent, orchestrator)    flow_kind=control
-  - has_access_to  (agent → mcp_server)             flow_kind=control
+Edges (all `flow_kind=control`, no data-flow verdict — ADR-0016):
+  - provides_tool  (mcp_server → tool)
+  - has_access_to  (tool → sink)
+  - has_access_to  (untrusted_source → reader)      (1.3a)
+  - delegates_to   (entry_point → agent)
+  - delegates_to   (agent → agent, orchestrator)
+  - has_access_to  (agent → mcp_server)
 
 Nodes:
   - agent, llm_endpoint (from classification)
@@ -63,7 +63,6 @@ from .normalizer_helpers import (
     entry_point_id,
     find_sink_call,
     first_definition,
-    flow_for_tool_node,
     index_classes,
     index_functions,
     llm_endpoint_id,
@@ -121,7 +120,6 @@ _edge_id = edge_id
 _entry_point_id = entry_point_id
 _find_sink_call = find_sink_call
 _first_definition = first_definition
-_flow_for_tool_node = flow_for_tool_node
 _index_classes = index_classes
 _index_functions = index_functions
 _llm_endpoint_id = llm_endpoint_id

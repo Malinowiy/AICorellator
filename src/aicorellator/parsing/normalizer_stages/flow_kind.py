@@ -1,35 +1,27 @@
-"""FlowKindStage — `flow_kind` on every edge (ADR-0015).
+"""FlowKindStage — `flow_kind` on every AST edge (ADR-0016).
 
 Run order: 12 of 18 (see `normalizer_stages.STAGES`).
 
-The graph carries two flow facts and they are not the same one:
+Every edge the AST layer produces is a *control* edge. The AST knows
+that one symbol reaches another; it does not know whether data moves
+along that path, and after ADR-0016 it does not pretend to:
 
-    data_flow_confirmed   how confident the producer is that data moves
-                          (six values; set where the edge is created,
-                          because only that producer saw the evidence)
-    flow_kind             control | data | structural — the coarse
-                          classification the prompt and `find_chains`
-                          read
+    flow_kind = "control"   on every edge this stage sees
 
-This stage derives the second from the first, once, for every edge that
-exists when it runs:
+`data_flow_confirmed` is neither read nor written here. It stays `NULL`
+on AST edges and is populated only by Layer 2, which runs the `flow/`
+analyzers against a `(tool_func, sink_call)` pair that runtime observed
+(ADR-0016, decision 3). `flow.decision.flow_kind_for` remains the single
+implementation of the value → kind mapping, and on Layer 1a nothing
+calls it: the kind is `control` unconditionally.
 
-    data_flow_confirmed in DATA_KINDS          → data
-    literal_only | no_args | unknown | NULL    → control
-    a structural edge kind (`guards`)          → left alone
+A structural edge (`guards`) is a declaration, not a path, and is left
+alone (ADR-0015, decision 5). No resolver emits one today; a guardrail
+edge that arrives here must not be downgraded to control.
 
-`FlowDecision` validates the value, so an edge carrying a kind outside
-the six fails here rather than reaching the database. The mapping itself
-is `flow.decision.flow_kind_for` — the single implementation of ADR-0015
-decision 3, which is why this is the only place in the pipeline that
-calls it.
-
-The three resolvers that run after this stage (cross-file, MCP entry
-synthesis, orphan entry, entry-to-sink) construct control edges and pass
-`CONTROL_FLOW`, which is the same mapping's output for `unknown`; the
-MCP entry synthesis is the one exception that can produce a data edge
-after this point, and it carries the 1.2a.2 enrichment value from the
-tool node.
+Every resolver that runs after this stage also constructs control edges,
+and none of them writes `data_flow_confirmed`, so the whole AST graph is
+`control` with a `NULL` flow confirmation, except for structural edges.
 """
 
 from __future__ import annotations
@@ -37,7 +29,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...patterns import STRUCTURAL_EDGE_KINDS
-from ..flow import FlowDecision, flow_kind_for
 from ..normalizer_context import NormalizeContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -45,7 +36,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 class FlowKindStage:
-    """Derive `flow_kind` from `data_flow_confirmed` on every edge."""
+    """Set `flow_kind = "control"` on every AST edge (ADR-0016)."""
 
     name = "flow_kind"
 
@@ -58,6 +49,5 @@ class FlowKindStage:
                 # resolver emits one today; a guardrail edge that
                 # arrives here must not be downgraded to control.
                 continue
-            decision = FlowDecision(edge.data_flow_confirmed or "unknown")
-            edge.flow_kind = flow_kind_for(decision)
+            edge.flow_kind = "control"
         return delta

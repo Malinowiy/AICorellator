@@ -151,7 +151,12 @@ def test_find_chains_sink_by_kind_still_works(
 
 
 # ============================================================
-# ADR-0015 — structural edges and data_edges_only
+# ADR-0015/ADR-0016 — structural edges and data_edges_only
+#
+# `data_edges_only` no longer reads `flow_kind`: an edge qualifies
+# when a runtime run observed it — `"runtime" in observed_by`
+# (ADR-0016, decision 4). On an AST-only scan every edge is `["ast"]`,
+# so the shortlist is empty; that is the intended answer.
 # ============================================================
 
 
@@ -202,7 +207,9 @@ def _add_chain_graph(store: GraphStore) -> dict[str, str]:
     ))
     store.edges.upsert(Edge(
         id=ids["e_dat"], source_id=ids["agent"], target_id=ids["sink_dat"],
-        kind="has_access_to", host_id="localhost", flow_kind="data",
+        kind="has_access_to", host_id="localhost",
+        flow_kind="data",
+        observed_by=["ast", "runtime"],
         data_flow_confirmed="parameter_match",
     ))
 
@@ -321,7 +328,9 @@ def test_find_chains_traverses_provides_tool(store: GraphStore) -> None:
     ))
     store.edges.upsert(Edge(
         id=ids["e4"], source_id=ids["tool"], target_id=ids["sink"],
-        kind="has_access_to", host_id="localhost", flow_kind="data",
+        kind="has_access_to", host_id="localhost",
+        flow_kind="data",
+        observed_by=["ast", "runtime"],
         data_flow_confirmed="parameter_match",
     ))
 
@@ -426,7 +435,9 @@ def test_find_chains_data_edge_mid_path_qualifies(store: GraphStore) -> None:
     ))
     store.edges.upsert(Edge(
         id=e_data, source_id=entry, target_id=agent,
-        kind="has_access_to", host_id="localhost", flow_kind="data",
+        kind="has_access_to", host_id="localhost",
+        flow_kind="data",
+        observed_by=["ast", "runtime"],
         data_flow_confirmed="parameter_match",
     ))
     store.edges.upsert(Edge(
@@ -438,6 +449,81 @@ def test_find_chains_data_edge_mid_path_qualifies(store: GraphStore) -> None:
     chains = store.query.find_chains(data_edges_only=True)
     assert len(chains) == 1
     assert chains[0].edges == [e_data, e_control]
+
+
+def test_find_chains_data_edges_only_asks_observed_by_not_flow_kind(
+    store: GraphStore,
+) -> None:
+    """`flow_kind` is not the filter any more (ADR-0016, decision 4).
+
+    A control edge a runtime run observed qualifies; a `data`-labelled
+    edge no runtime run saw does not. On an AST-only scan every edge is
+    `["ast"]`, so the shortlist is empty by construction.
+    """
+    entry, agent, sink = (
+        "entry_point:" + "e" * 16,
+        "agent:" + "a" * 16,
+        "sink:" + "s" * 16,
+    )
+    for node_id, kind, name in (
+        (entry, "entry_point", "POST /chat"),
+        (agent, "agent", "InvoiceAgent"),
+        (sink, "sink", "shell"),
+    ):
+        store.nodes.upsert(Node(
+            id=node_id, kind=kind, name=name, host_id="localhost",
+        ))
+
+    # Control, but seen at runtime.
+    e_runtime = _link(
+        store, "edge:" + "1" * 16, entry, agent,
+        observed_by=["ast", "runtime"],
+    )
+    # Labelled data, but no runtime run ever confirmed it.
+    e_ast_only = _link(
+        store, "edge:" + "2" * 16, agent, sink, flow_kind="data",
+        observed_by=["ast"],
+    )
+
+    assert [c.edges for c in store.query.find_chains()] == [
+        [e_runtime, e_ast_only]
+    ]
+    assert [
+        c.edges for c in store.query.find_chains(data_edges_only=True)
+    ] == [[e_runtime, e_ast_only]]
+
+
+def test_find_chains_data_edges_only_is_empty_on_an_ast_only_scan(
+    store: GraphStore,
+) -> None:
+    """The Layer 1a graph never qualifies — correctly, not a failure.
+
+    Every AST edge is `observed_by = ["ast"]`, so the high-precision
+    shortlist is empty until a runtime run stamps an edge (ADR-0016).
+    """
+    entry, agent, sink = (
+        "entry_point:" + "e" * 16,
+        "agent:" + "a" * 16,
+        "sink:" + "s" * 16,
+    )
+    for node_id, kind, name in (
+        (entry, "entry_point", "POST /chat"),
+        (agent, "agent", "InvoiceAgent"),
+        (sink, "sink", "shell"),
+    ):
+        store.nodes.upsert(Node(
+            id=node_id, kind=kind, name=name, host_id="localhost",
+        ))
+    e_entry = _link(store, "edge:" + "1" * 16, entry, agent)
+    e_access = _link(store, "edge:" + "2" * 16, agent, sink)
+
+    # Enumerable by default...
+    assert [c.edges for c in store.query.find_chains()] == [
+        [e_entry, e_access]
+    ]
+    # ...and off the shortlist, because nothing was observed at runtime.
+    assert store.edges.get(e_access).observed_by == ["ast"]
+    assert store.query.find_chains(data_edges_only=True) == []
 
 
 # ============================================================
@@ -472,10 +558,18 @@ def _link(
     target: str,
     flow_kind: str = "control",
     kind: str = "has_access_to",
+    observed_by: list[str] | None = None,
 ) -> str:
+    """Link two nodes; a `data` edge is runtime-observed by default.
+
+    The data-only shortlist filters on `"runtime" in observed_by`
+    (ADR-0016), so a hand-built data edge has to say who saw it.
+    """
     store.edges.upsert(Edge(
         id=edge_id, source_id=source, target_id=target, kind=kind,
         host_id="localhost", flow_kind=flow_kind,
+        observed_by=observed_by
+        or (["ast", "runtime"] if flow_kind == "data" else ["ast"]),
     ))
     return edge_id
 
@@ -1071,10 +1165,12 @@ def _second_group(store: GraphStore) -> str:
     _link(
         store, "edge:" + "7" * 16, ids["writer"], ids["source"],
         flow_kind="data",
+        observed_by=["ast", "runtime"],
     )
     _link(
         store, "edge:" + "8" * 16, ids["source"], ids["reader"],
         flow_kind="data",
+        observed_by=["ast", "runtime"],
     )
     _link(store, "edge:" + "9" * 16, ids["reader"], ids["sink"])
     return ids["source"]

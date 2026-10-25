@@ -15,7 +15,6 @@ from aicorellator.ingestion.target import Target
 from aicorellator.parsing.ast_normalizer import (
     GraphDelta,
     _edge_id,
-    _flow_for_tool_node,
     _index_functions,
     _mcp_server_id,
     _node_from_class,
@@ -31,7 +30,6 @@ from aicorellator.parsing.capability_extractor import (
     SymbolCapabilities,
 )
 from aicorellator.parsing.classification import Classification
-from aicorellator.parsing.flow import DATA_FLOW_DATA_VALUES
 from aicorellator.parsing.entry_points import (
     AgentCall,
     EntryPoint,
@@ -270,8 +268,9 @@ def test_normalize_provides_tool_edge(target: Target) -> None:
     edge = delta.edges[0]
     assert edge.kind == "provides_tool"
     # ADR-0015: the access path is the candidate attack path.
+    # ADR-0016: and it is a control edge with no data-flow verdict.
     assert edge.flow_kind == "control"
-    assert edge.data_flow_confirmed == "unknown"
+    assert edge.data_flow_confirmed is None
     mcp_node = next(n for n in delta.nodes if n.kind == "mcp_server")
     tool_node = next(n for n in delta.nodes if n.kind == "tool")
     assert edge.source_id == mcp_node.id
@@ -319,10 +318,10 @@ def test_normalize_has_access_to_edge(target: Target) -> None:
     assert len(has_access) == 1
     assert has_access[0].source_id == tool_node.id
     assert has_access[0].target_id == sink_node.id
-    # The abs_path does not exist on disk, so the Flow Analyzer cannot
-    # confirm anything (ADR-0015): control / unknown, never a crash.
+    # The abs_path does not exist on disk: reachability does not need it,
+    # and no analyzer runs here any more (ADR-0016, decision 3).
     assert has_access[0].flow_kind == "control"
-    assert has_access[0].data_flow_confirmed == "unknown"
+    assert has_access[0].data_flow_confirmed is None
 
 
 def test_normalize_deterministic(target: Target) -> None:
@@ -400,9 +399,9 @@ def test_normalize_entry_to_agent_edge(target: Target) -> None:
     assert len(delegates) == 1
     assert delegates[0].source_id == entry_nodes[0].id
     assert delegates[0].target_id == agent_nodes[0].id
-    # ADR-0015: control flow, data flow unconfirmed.
+    # ADR-0015: control flow. ADR-0016: no data-flow verdict.
     assert delegates[0].flow_kind == "control"
-    assert delegates[0].data_flow_confirmed == "unknown"
+    assert delegates[0].data_flow_confirmed is None
 
 def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
     """Agent with create_mcp_server call → has_access_to edge."""
@@ -451,7 +450,7 @@ def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
     assert len(has_access) == 1
     # ADR-0015: reachability, not a call into a sink.
     assert has_access[0].flow_kind == "control"
-    assert has_access[0].data_flow_confirmed == "unknown"
+    assert has_access[0].data_flow_confirmed is None
 
 def test_normalize_cross_file_uses_tool(target: Target) -> None:
     """Agent in one file, tools in another, connected by import."""
@@ -501,9 +500,9 @@ def test_normalize_cross_file_uses_tool(target: Target) -> None:
     assert len(uses_tool) == 1
     assert uses_tool[0].source_id == "agent:1"
     assert uses_tool[0].target_id == "tool:1"
-    # ADR-0015: control flow, data flow unconfirmed.
+    # ADR-0015: control flow. ADR-0016: no data-flow verdict.
     assert uses_tool[0].flow_kind == "control"
-    assert uses_tool[0].data_flow_confirmed == "unknown"
+    assert uses_tool[0].data_flow_confirmed is None
 
 def test_orphan_entry_links_to_single_framework_agent(target: Target) -> None:
     """One framework agent + orphan entry_points → delegates_to edges."""
@@ -944,14 +943,16 @@ def test_cli_entry_fallback_to_all_sinks(target: Target) -> None:
 
 
 # ============================================================
-# ADR-0015 — flow_kind / data_flow_confirmed
+# ADR-0016 — no data-flow verdict on AST edges
 # ============================================================
 
 SYSTEMUTILS_PATH = "mcp/servers/systemutils/server.py"
 
 # Two tools in one file, one sink. `read_file` forwards its parameter
-# to the sink (data flow); `list_files` passes only a literal (control
-# flow). `delete_file` is a sink by name (SINK_METHOD_NAMES).
+# to the sink and `list_files` passes only a literal — the two shapes the
+# Flow Analyzer used to grade `parameter_match` and `literal_only`. After
+# ADR-0016 neither grade lands on an edge. `delete_file` is a sink by
+# name (SINK_METHOD_NAMES).
 TWO_TOOLS_ONE_SINK = """\
 class SystemUtilsServer:
     def read_file(self, query):
@@ -1026,20 +1027,28 @@ def _has_access_edges(delta: GraphDelta, tool_name: str) -> list:
     ]
 
 
-def test_has_access_to_parameter_is_data(target: Target) -> None:
-    """Tool forwards its own parameter to the sink → data / parameter_match."""
+def test_has_access_to_forwards_its_parameter_still_carries_no_verdict(
+    target: Target,
+) -> None:
+    """The tempting case: `read_file` forwards its own parameter.
+
+    `read_file(self, query)` calls `self.delete_file(query)` — exactly the
+    shape the Flow Analyzer graded `parameter_match`. The pair was never
+    runtime-observed, so the edge stays control with no verdict
+    (ADR-0016, decision 3): the grade is Layer 2's to write.
+    """
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
     delta = normalize(make_context(manifest, tsa))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
-    assert edges[0].flow_kind == "data"
-    assert edges[0].data_flow_confirmed == "parameter_match"
+    assert edges[0].flow_kind == "control"
+    assert edges[0].data_flow_confirmed is None
 
 
 def test_has_access_to_literal_is_control(target: Target) -> None:
-    """Sink called with a literal only → control / literal_only."""
+    """A literal-only call is control, and records nothing either."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
     delta = normalize(make_context(manifest, tsa))
@@ -1047,25 +1056,23 @@ def test_has_access_to_literal_is_control(target: Target) -> None:
     edges = _has_access_edges(delta, "list_files")
     assert len(edges) == 1
     assert edges[0].flow_kind == "control"
-    assert edges[0].data_flow_confirmed == "literal_only"
+    assert edges[0].data_flow_confirmed is None
 
 
-def test_two_has_access_to_edges_differ_in_flow_kind(target: Target) -> None:
-    """One file, one sink, two tools → one data edge and one control edge."""
+def test_two_has_access_to_edges_are_both_control(target: Target) -> None:
+    """One file, one sink, two tools → two control edges."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
     delta = normalize(make_context(manifest, tsa))
 
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 2
-    assert {e.flow_kind for e in has_access} == {"data", "control"}
-    assert {e.data_flow_confirmed for e in has_access} == {
-        "parameter_match", "literal_only",
-    }
+    assert {e.flow_kind for e in has_access} == {"control"}
+    assert {e.data_flow_confirmed for e in has_access} == {None}
 
 
-def test_has_access_to_tool_never_calls_sink_is_unknown(target: Target) -> None:
-    """Tool body does not call the sink → control / unknown."""
+def test_has_access_to_without_a_call_is_still_an_edge(target: Target) -> None:
+    """Reachability, not a call: sharing a file is enough for the edge."""
     source = """\
 class SystemUtilsServer:
     def read_file(self, query):
@@ -1081,11 +1088,11 @@ class SystemUtilsServer:
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
     assert edges[0].flow_kind == "control"
-    assert edges[0].data_flow_confirmed == "unknown"
+    assert edges[0].data_flow_confirmed is None
 
 
-def test_has_access_to_mixed_args_is_unknown(target: Target) -> None:
-    """A literal plus an unresolved attribute → unknown, not literal_only."""
+def test_has_access_to_mixed_args_is_still_control(target: Target) -> None:
+    """An unresolved attribute plus a literal is still just reachability."""
     source = """\
 class SystemUtilsServer:
     def process_file(self, config):
@@ -1101,12 +1108,12 @@ class SystemUtilsServer:
     edges = _has_access_edges(delta, "process_file")
     assert len(edges) == 1
     assert edges[0].flow_kind == "control"
-    assert edges[0].data_flow_confirmed == "unknown"
+    assert edges[0].data_flow_confirmed is None
 
 
 
-def test_has_access_to_missing_file_is_unknown(target: Target) -> None:
-    """abs_path does not exist on disk → control / unknown, no crash."""
+def test_has_access_to_missing_file_is_still_control(target: Target) -> None:
+    """abs_path does not exist on disk → the edge is unaffected."""
     manifest = _server_manifest(target, None)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
     delta = normalize(make_context(manifest, tsa))
@@ -1114,11 +1121,11 @@ def test_has_access_to_missing_file_is_unknown(target: Target) -> None:
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
     assert edges[0].flow_kind == "control"
-    assert edges[0].data_flow_confirmed == "unknown"
+    assert edges[0].data_flow_confirmed is None
 
 
-def test_has_access_to_syntax_error_is_unknown(target: Target) -> None:
-    """Unparseable file → control / unknown, no crash."""
+def test_has_access_to_syntax_error_is_still_control(target: Target) -> None:
+    """Unparseable file → control, no verdict, no crash."""
     manifest = _server_manifest(target, "def broken(:\n")
     tsa = _systemutils_tsa(["read_file", "delete_file"])
     delta = normalize(make_context(manifest, tsa))
@@ -1126,14 +1133,18 @@ def test_has_access_to_syntax_error_is_unknown(target: Target) -> None:
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
     assert edges[0].flow_kind == "control"
-    assert edges[0].data_flow_confirmed == "unknown"
+    assert edges[0].data_flow_confirmed is None
 
 
 def test_source_file_parsed_at_most_once_per_scan(
     target: Target,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two tools, one sink, one file → exactly one ast.parse call."""
+    """Two tools, one sink, one file → at most one ast.parse call.
+
+    The `has_access_to` edges no longer need the file at all (they are
+    reachability). The one parse that is left is `BodyAttributeStage`.
+    """
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
 
@@ -1148,11 +1159,16 @@ def test_source_file_parsed_at_most_once_per_scan(
     delta = normalize(make_context(manifest, tsa))
 
     assert len([e for e in delta.edges if e.kind == "has_access_to"]) == 2
-    assert len(calls) == 1
+    assert len(calls) <= 1
 
 
-def test_every_edge_carries_flow_kind(target: Target) -> None:
-    """Normalizing leaves no edge without a valid flow_kind (ADR-0015)."""
+def test_every_edge_is_control_without_a_verdict(target: Target) -> None:
+    """Normalizing leaves no edge with a data-flow claim (ADR-0016).
+
+    Every edge carries a valid `flow_kind` — and the only kind the AST
+    layer produces is `control`, so no edge carries a
+    `data_flow_confirmed` value.
+    """
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
     delta = normalize(make_context(manifest, tsa))
@@ -1160,28 +1176,17 @@ def test_every_edge_carries_flow_kind(target: Target) -> None:
     assert delta.edges
     for edge in delta.edges:
         assert edge.flow_kind in VALID_FLOW_KINDS, edge
-        if edge.flow_kind == "structural":
-            # Declarations carry no data-flow verdict.
-            assert edge.data_flow_confirmed is None, edge
-        else:
-            # Control and data edges always record a verdict.
-            assert edge.data_flow_confirmed is not None, edge
-
-    data_edges = [e for e in delta.edges if e.flow_kind == "data"]
-    assert data_edges
-    assert all(
-        e.data_flow_confirmed in DATA_FLOW_DATA_VALUES for e in data_edges
-    )
+        assert edge.flow_kind == "control", edge
+        assert edge.data_flow_confirmed is None, edge
 
     # `provides_tool` is control (ADR-0015): the access path to a tool
     # is the candidate attack path.
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert provides
     assert all(e.flow_kind == "control" for e in provides)
-    assert all(e.data_flow_confirmed == "unknown" for e in provides)
 
     # No resolver emits a structural edge yet (`guards`). When one does,
-    # it must carry no data-flow verdict.
+    # it must carry no data-flow verdict — as nothing else here does.
     assert [e for e in delta.edges if e.flow_kind == "structural"] == []
 
 
@@ -1194,7 +1199,7 @@ def test_provides_tool_is_control(target: Target) -> None:
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert len(provides) == 2
     assert all(e.flow_kind == "control" for e in provides)
-    assert all(e.data_flow_confirmed == "unknown" for e in provides)
+    assert all(e.data_flow_confirmed is None for e in provides)
 
 
 # ============================================================
@@ -1353,9 +1358,10 @@ def test_only_tools_and_sinks_carry_flow_attributes(target: Target) -> None:
 def test_body_attributes_do_not_change_flow_kind(target: Target) -> None:
     """The node signals are prompt data, not chain filters (1.2a.1).
 
-    The tool does not call the sink by name, so the `has_access_to`
-    edge stays `control` / `unknown` even though the sink forwards a
-    parameter to a dangerous call.
+    The sink forwards a parameter to a dangerous call, and the node
+    records that — but the `has_access_to` edge stays `control` with no
+    verdict: a node attribute is not a data-flow claim on an edge
+    (ADR-0016, decision 3).
     """
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
@@ -1367,7 +1373,7 @@ def test_body_attributes_do_not_change_flow_kind(target: Target) -> None:
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
     assert edges[0].flow_kind == "control"
-    assert edges[0].data_flow_confirmed == "unknown"
+    assert edges[0].data_flow_confirmed is None
 
 
 def test_body_attributes_survive_detector_node_replacement(
@@ -1810,7 +1816,7 @@ def test_resolve_definition_exact_missing_and_gap() -> None:
 
 
 # ============================================================
-# 1.2a.2 — data_flow_confirmed enrichment on MCP edges
+# 1.2a.2 — `tool_data_flow` is a node attribute, not an edge claim
 # ============================================================
 
 def _tool_node(tool_id: str, name: str, **attrs) -> Node:
@@ -1823,39 +1829,16 @@ def _tool_node(tool_id: str, name: str, **attrs) -> Node:
     )
 
 
-def test_flow_for_tool_node_parameter_match() -> None:
-    """A tool with parameters makes the exposing edge a data edge."""
-    flow = _flow_for_tool_node(
-        _tool_node("tool:1", "search", tool_data_flow="parameter_match")
-    )
-    assert flow == {
-        "flow_kind": "data",
-        "data_flow_confirmed": "parameter_match",
-    }
+def test_mcp_entry_edges_ignore_the_tool_data_flow_attribute(
+    target: Target,
+) -> None:
+    """A detector may grade a tool's signature on the *node*.
 
-
-def test_flow_for_tool_node_no_args() -> None:
-    """A parameterless tool stays control, but records `no_args`."""
-    flow = _flow_for_tool_node(
-        _tool_node("tool:1", "health", tool_data_flow="no_args")
-    )
-    assert flow == {
-        "flow_kind": "control",
-        "data_flow_confirmed": "no_args",
-    }
-
-
-def test_flow_for_tool_node_absent() -> None:
-    """A node the detector did not enrich keeps the control default."""
-    flow = _flow_for_tool_node(_tool_node("tool:1", "search"))
-    assert flow == {
-        "flow_kind": "control",
-        "data_flow_confirmed": "unknown",
-    }
-
-
-def test_mcp_entry_edge_inherits_tool_data_flow(target: Target) -> None:
-    """The virtual MCP entry → tool edge carries the detector's value."""
+    `tool_data_flow` says the tool takes parameters (`parameter_match`) or
+    none (`no_args`). Neither value reaches the edge that exposes the
+    tool: the AST layer makes no data-flow claim (ADR-0016, decision 3),
+    so both edges are control with no verdict.
+    """
     from aicorellator.parsing.framework_detectors.base import DetectionResult
 
     manifest = FileManifest(target=target)
@@ -1884,22 +1867,27 @@ def test_mcp_entry_edge_inherits_tool_data_flow(target: Target) -> None:
         manifest, TSAOutput(symbols=[]), framework_detection=detection
     ))
 
+    # The attribute stays on the node — it is prompt data.
+    tools = {n.id: n for n in delta.nodes if n.kind == "tool"}
+    assert tools["tool:1"].attributes["tool_data_flow"] == "parameter_match"
+    assert tools["tool:2"].attributes["tool_data_flow"] == "no_args"
+
     by_target = {
         e.target_id: e for e in delta.edges if e.kind == "delegates_to"
     }
-    assert by_target["tool:1"].flow_kind == "data"
-    assert by_target["tool:1"].data_flow_confirmed == "parameter_match"
+    assert by_target["tool:1"].flow_kind == "control"
+    assert by_target["tool:1"].data_flow_confirmed is None
     assert by_target["tool:2"].flow_kind == "control"
-    assert by_target["tool:2"].data_flow_confirmed == "no_args"
+    assert by_target["tool:2"].data_flow_confirmed is None
 
 
-def test_enriched_uses_tool_edge_not_downgraded(target: Target) -> None:
-    """A detector-enriched uses_tool edge survives cross-file resolution.
+def test_detector_uses_tool_edge_is_not_duplicated(target: Target) -> None:
+    """A detector `uses_tool` edge survives cross-file resolution.
 
     The detector emits the edge first; `resolve_agent_tool_edges` would
     emit the same id for the same (agent, tool) pair. The normalizer's
-    dedup keeps the detector's edge — the enriched one — so the
-    cross-file default never overwrites it (1.2a.2).
+    dedup keeps the first one, so the pair appears once — with the
+    detector's `attributes`, and with no data-flow verdict either way.
     """
     from aicorellator.graph.models import Edge
     from aicorellator.parsing.framework_detectors.base import DetectionResult
@@ -1948,8 +1936,7 @@ def test_enriched_uses_tool_edge_not_downgraded(target: Target) -> None:
             target_id="tool:1",
             kind="uses_tool",
             host_id="localhost",
-            flow_kind="data",
-            data_flow_confirmed="parameter_match",
+            flow_kind="control",
             attributes={"framework": "langchain"},
         ),
     ]
@@ -1960,8 +1947,9 @@ def test_enriched_uses_tool_edge_not_downgraded(target: Target) -> None:
 
     uses_tool = [e for e in delta.edges if e.kind == "uses_tool"]
     assert len(uses_tool) == 1
-    assert uses_tool[0].flow_kind == "data"
-    assert uses_tool[0].data_flow_confirmed == "parameter_match"
+    assert uses_tool[0].attributes["framework"] == "langchain"
+    assert uses_tool[0].flow_kind == "control"
+    assert uses_tool[0].data_flow_confirmed is None
 
 
 def test_provides_tool_edge_stays_control_for_tsa_tools(
@@ -1969,9 +1957,9 @@ def test_provides_tool_edge_stays_control_for_tsa_tools(
 ) -> None:
     """A normalizer-created tool node has no `tool_data_flow`.
 
-    The `provides_tool` loop builds its tool nodes from TSA symbols, so
-    no detector enrichment reaches it today. The edge must stay the
-    control default — enrichment never invents a value (1.2a.2).
+    The `provides_tool` loop builds its tool nodes from TSA symbols, so no
+    detector enrichment reaches it — and nothing would land on the edge
+    even if it did (ADR-0016, decision 3).
     """
     manifest = FileManifest(target=target)
     tsa = TSAOutput(symbols=[
@@ -1997,5 +1985,5 @@ def test_provides_tool_edge_stays_control_for_tsa_tools(
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert len(provides) == 1
     assert provides[0].flow_kind == "control"
-    assert provides[0].data_flow_confirmed == "unknown"
+    assert provides[0].data_flow_confirmed is None
 

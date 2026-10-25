@@ -377,6 +377,88 @@ def test_edge_upsert_upgrades_flow_kind(store: GraphStore) -> None:
     assert fetched.data_flow_confirmed == "local_var_match"
 
 
+def test_node_observed_by_defaults_to_ast(store: GraphStore) -> None:
+    """Every Layer 1a node says who saw it: `["ast"]` (ADR-0016)."""
+    store.nodes.add(Node(
+        id="n:1", kind="tool", name="t", host_id="localhost",
+    ))
+
+    assert store.nodes.get("n:1").observed_by == ["ast"]
+
+
+def test_node_observed_by_roundtrips(store: GraphStore) -> None:
+    """A runtime-confirmed node keeps both observers (ADR-0016)."""
+    store.nodes.add(Node(
+        id="n:1", kind="agent", name="a", host_id="localhost",
+        observed_by=["ast", "runtime"],
+    ))
+
+    assert store.nodes.get("n:1").observed_by == ["ast", "runtime"]
+
+
+def test_node_upsert_unions_observed_by(store: GraphStore) -> None:
+    """Layer 2 adds itself to the set; it never replaces it (ADR-0016)."""
+    store.nodes.add(Node(
+        id="n:1", kind="agent", name="a", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:1", kind="agent", name="a", host_id="localhost",
+        observed_by=["ast", "runtime"],
+    ))
+
+    assert store.nodes.get("n:1").observed_by == ["ast", "runtime"]
+
+
+def test_edge_observed_by_defaults_to_ast(store: GraphStore) -> None:
+    """Every AST edge is `["ast"]`, the column's schema default."""
+    store.nodes.add(Node(
+        id="n:1", kind="agent", name="a", host_id="localhost",
+    ))
+    store.nodes.add(Node(
+        id="n:2", kind="sink", name="s", host_id="localhost",
+    ))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+    ))
+
+    assert store.edges.get("e:1").observed_by == ["ast"]
+
+
+def test_edge_observed_by_roundtrips(store: GraphStore) -> None:
+    """A runtime observation survives add/get (ADR-0016)."""
+    store.nodes.add(Node(id="n:1", kind="tool", name="t", host_id="localhost"))
+    store.nodes.add(Node(id="n:2", kind="sink", name="s", host_id="localhost"))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        observed_by=["ast", "runtime"],
+    ))
+
+    assert store.edges.get("e:1").observed_by == ["ast", "runtime"]
+
+
+def test_edge_upsert_unions_observed_by(store: GraphStore) -> None:
+    """The set accumulates: `ast` + `runtime`, deduplicated and sorted."""
+    store.nodes.add(Node(
+        id="n:1", kind="agent", name="a", host_id="localhost",
+    ))
+    store.nodes.add(Node(
+        id="n:2", kind="sink", name="s", host_id="localhost",
+    ))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        observed_by=["ast", "runtime"],
+    ))
+
+    assert store.edges.get("e:1").observed_by == ["ast", "runtime"]
+
+
 def test_edge_upsert_unions_capabilities(store: GraphStore) -> None:
     store.nodes.add(Node(id="n:1", kind="agent", name="a", host_id="localhost"))
     store.nodes.add(Node(id="n:2", kind="tool", name="t", host_id="localhost"))

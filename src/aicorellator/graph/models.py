@@ -94,6 +94,7 @@ class Node:
     host_id: str
     attributes: dict[str, Any] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
+    observed_by: list[str] = field(default_factory=lambda: ["ast"])
     confidence: float = 1.0
     content_hash: str | None = None
     status: str = "active"
@@ -104,6 +105,7 @@ class Node:
         row = asdict(self)
         row["attributes"] = json.dumps(self.attributes)
         row["capabilities"] = json.dumps(self.capabilities)
+        row["observed_by"] = json.dumps(self.observed_by)
         return row
 
     @classmethod
@@ -115,6 +117,7 @@ class Node:
             host_id=row["host_id"],
             attributes=json.loads(row["attributes"]),
             capabilities=json.loads(row["capabilities"] or "[]"),
+            observed_by=json.loads(row["observed_by"] or '["ast"]'),
             confidence=row["confidence"],
             content_hash=row["content_hash"],
             status=row["status"],
@@ -139,6 +142,7 @@ class Edge:
     data_flow_confirmed: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
+    observed_by: list[str] = field(default_factory=lambda: ["ast"])
     confidence: float = 1.0
     status: str = "active"
     created_at: str = field(default_factory=utcnow)
@@ -148,6 +152,7 @@ class Edge:
         row = asdict(self)
         row["attributes"] = json.dumps(self.attributes)
         row["capabilities"] = json.dumps(self.capabilities)
+        row["observed_by"] = json.dumps(self.observed_by)
         return row
 
     @classmethod
@@ -163,6 +168,7 @@ class Edge:
             data_flow_confirmed=row["data_flow_confirmed"],
             attributes=json.loads(row["attributes"]),
             capabilities=json.loads(row["capabilities"] or "[]"),
+            observed_by=json.loads(row["observed_by"] or '["ast"]'),
             confidence=row["confidence"],
             status=row["status"],
             created_at=row["created_at"],

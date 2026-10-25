@@ -374,6 +374,7 @@ def _node_to_dict(store: GraphStore, node_id: str) -> dict:
         "kind": node.kind,
         "name": node.name,
         "capabilities": list(node.capabilities),
+        "observed_by": list(node.observed_by),
         "confidence": node.confidence,
         "attributes": node.attributes,
     }
@@ -385,9 +386,12 @@ def _edge_to_dict(store: GraphStore, edge_id: str) -> dict:
         return {"id": edge_id, "kind": "unknown", "flow_kind": "unknown"}
     # Edge capabilities encode transfer semantics (ADR-0009); precision
     # records how the edge was resolved (ADR-0013/0014); flow_kind
-    # separates "X calls Y" from "data from X reaches Y" (ADR-0015).
-    # The schema makes flow_kind NOT NULL, so every edge the LLM sees
-    # carries one — a missing value would be a construction bug.
+    # separates "X calls Y" from "data from X reaches Y" (ADR-0015); and
+    # observed_by says who confirmed the edge — `["ast"]` on Layer 1a,
+    # `["ast", "runtime"]` once Layer 2 has seen it (ADR-0016). Both
+    # `flow_kind` and `observed_by` are NOT NULL in the schema, so every
+    # edge the LLM sees carries them — a missing value would be a
+    # construction bug.
     d = {
         "id": edge.id,
         "kind": edge.kind,
@@ -395,12 +399,14 @@ def _edge_to_dict(store: GraphStore, edge_id: str) -> dict:
         "target_id": edge.target_id,
         "flow_kind": edge.flow_kind,
         "capabilities": list(edge.capabilities),
+        "observed_by": list(edge.observed_by),
         "precision": edge.precision,
         "attributes": edge.attributes,
     }
-    # data_flow_confirmed is populated only for has_access_to (ADR-0015).
-    # Omitted when absent rather than sent as null: a null would read as
-    # a fourth value and invite the LLM to interpret it.
+    # data_flow_confirmed is populated only by Layer 2 (ADR-0016); on an
+    # AST edge it is NULL. Omitted when absent rather than sent as null:
+    # a null would read as a fourth value and invite the LLM to
+    # interpret it.
     if edge.data_flow_confirmed is not None:
         d["data_flow_confirmed"] = edge.data_flow_confirmed
     return d

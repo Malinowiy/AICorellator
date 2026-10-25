@@ -132,7 +132,7 @@ def test_every_emitted_edge_is_control_with_unconfirmed_data_flow(
     delta = DynamicMcpInvocationStage().apply(p.delta, p.ctx)
 
     assert [e.flow_kind for e in _uses_tool(delta)] == ["control"]
-    assert [e.data_flow_confirmed for e in _uses_tool(delta)] == ["unknown"]
+    assert [e.data_flow_confirmed for e in _uses_tool(delta)] == [None]
 
 
 def test_an_agent_without_the_capability_gets_no_edges(project) -> None:

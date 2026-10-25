@@ -79,14 +79,14 @@ def test_a_server_in_the_same_file_writes_the_catalogue(project) -> None:
     assert [
         (e.kind, e.source_id, e.target_id) for e in delta.edges
     ] == [("writes_to", "mcp_server:k", "untrusted_source:1")]
-    assert delta.edges[0].data_flow_confirmed == "unknown"
+    assert delta.edges[0].data_flow_confirmed is None
 
 
 def test_flow_kind_is_control_once_the_deriving_stage_runs(project) -> None:
-    """The stage sets the evidence; `FlowKindStage` derives the kind.
+    """`FlowKindStage` pins `control`; the writer stage draws no verdict.
 
     `control`, not `data`: the edge is a declaration, and the producer
-    traced no value into the source (ADR-0015 decision 3).
+    traced no value into the source (ADR-0016, decision 3).
     """
     p = project(files={"app.py": ""})
     p.delta.nodes.append(_server("knowledge", "app.py"))
@@ -299,7 +299,7 @@ def test_a_literal_factory_path_names_its_server(project) -> None:
         ("writes_to", "mcp_server:finmail", "untrusted_source:1"),
     ]
     assert {e.flow_kind for e in delta.edges} == {"control"}
-    assert {e.data_flow_confirmed for e in delta.edges} == {"unknown"}
+    assert {e.data_flow_confirmed for e in delta.edges} == {None}
 
 
 def test_a_literal_whose_module_is_not_in_the_manifest_writes_nothing(
@@ -443,7 +443,7 @@ def test_a_literal_in_another_file_names_the_writer(project) -> None:
         ("writes_to", "mcp_server:finmail", "untrusted_source:1"),
     ]
     assert {e.flow_kind for e in delta.edges} == {"control"}
-    assert {e.data_flow_confirmed for e in delta.edges} == {"unknown"}
+    assert {e.data_flow_confirmed for e in delta.edges} == {None}
 
 
 def test_a_literal_in_the_same_file_is_one_edge_not_two(project) -> None:

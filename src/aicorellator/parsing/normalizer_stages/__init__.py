@@ -21,7 +21,7 @@ order:
      9  entry_to_sink          entry → same-file sink reachability
     10  detector_merge         detector nodes authoritative; id remap
     11  untrusted_source_writers  server → writes_to → source (1.3a.1)
-    12  flow_kind              flow_kind on every edge (ADR-0015)
+    12  flow_kind              flow_kind = control on every edge (ADR-0016)
     13  dynamic_mcp_invocation agent → uses_tool → tool (1.3a.1.2)
     14  cross_file_resolution  uses_tool across modules (Resolver 1)
     15  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
@@ -48,8 +48,9 @@ Note on the order:
     opposite reason: the `mcp_server` nodes it matches against arrive in
     two waves, and the framework-detected one — the kind that carries
     the file the rule matches on — only exists once `detector_merge` has
-    run. It runs before `flow_kind` so the one derivation classifies the
-    edge it emits.
+    run. It runs before `flow_kind` so the kind is pinned once, by
+    `FlowKindStage`, rather than the edge arriving at that stage carrying
+    a `flow_kind` of its own.
   - `dynamic_mcp_invocation` (1.3a.1.2) runs after both: it walks the
     `writes_to` edges stage 11 emitted, and it is a resolver, so it sits
     with the other post-`flow_kind` resolvers and passes `CONTROL_FLOW`

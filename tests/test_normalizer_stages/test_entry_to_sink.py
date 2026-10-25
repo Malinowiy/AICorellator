@@ -35,6 +35,6 @@ def test_entry_point_reaches_sink_through_a_helper(project) -> None:
     assert [(e.kind, e.source_id, e.target_id) for e in delta.edges] == [
         ("has_access_to", "entry:1", "sink:1"),
     ]
-    # Reachability, not dataflow (ADR-0015).
+    # Reachability, not dataflow (ADR-0016, decision 3).
     assert delta.edges[0].flow_kind == "control"
-    assert delta.edges[0].data_flow_confirmed == "unknown"
+    assert delta.edges[0].data_flow_confirmed is None

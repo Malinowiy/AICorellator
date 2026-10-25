@@ -77,8 +77,8 @@ def test_edge_kind_check(store: GraphStore) -> None:
     """`writes_to` is in the CHECK constraint; an unknown kind is not.
 
     The 1.3a.1 writer edge (ADR-0010) is the seventh kind. It is
-    `control` with `data_flow_confirmed = "unknown"` — the same pair
-    `provides_tool` carries (ADR-0015, decision 5).
+    `control` with no data-flow verdict: `data_flow_confirmed` is
+    populated only by Layer 2 (ADR-0016).
     """
     store.nodes.upsert(Node(
         id="s:1", kind="mcp_server", name="knowledge", host_id="localhost",
@@ -91,13 +91,13 @@ def test_edge_kind_check(store: GraphStore) -> None:
     store.edges.add(Edge(
         id="e:1", source_id="s:1", target_id="u:1",
         kind="writes_to", host_id="localhost",
-        data_flow_confirmed="unknown",
     ))
 
     fetched = store.edges.get("e:1")
     assert fetched is not None
     assert fetched.kind == "writes_to"
-    assert fetched.data_flow_confirmed == "unknown"
+    assert fetched.flow_kind == "control"
+    assert fetched.data_flow_confirmed is None
 
     with pytest.raises(sqlite3.IntegrityError):
         store.edges.add(Edge(
@@ -178,6 +178,62 @@ def test_edge_data_flow_confirmed_check(store: GraphStore) -> None:
         id="e:2", source_id="n:1", target_id="n:2",
         kind="has_access_to", host_id="localhost",
     ))
+
+
+def test_node_observed_by_defaults_to_ast_in_sql(store: GraphStore) -> None:
+    """The column's SQL default is `["ast"]` (ADR-0016)."""
+    store._conn.execute(
+        """
+        INSERT INTO nodes (id, kind, name, host_id)
+        VALUES ('n:1', 'agent', 'x', 'localhost')
+        """
+    )
+    row = store._conn.execute(
+        "SELECT observed_by FROM nodes WHERE id = 'n:1'"
+    ).fetchone()
+    assert row["observed_by"] == '["ast"]'
+
+
+def test_observed_by_must_be_json(store: GraphStore) -> None:
+    """`json_valid(observed_by)` is a CHECK on both tables (ADR-0016)."""
+    store.nodes.add(Node(
+        id="n:1", kind="agent", name="x", host_id="localhost",
+    ))
+    store.nodes.add(Node(
+        id="n:2", kind="sink", name="s", host_id="localhost",
+    ))
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute(
+            """
+            INSERT INTO nodes (id, kind, name, host_id, observed_by)
+            VALUES ('n:3', 'agent', 'y', 'localhost', 'ast')
+            """
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute(
+            """
+            INSERT INTO edges (id, source_id, target_id, kind, host_id,
+                               observed_by)
+            VALUES ('e:1', 'n:1', 'n:2', 'has_access_to', 'localhost', 'ast')
+            """
+        )
+
+
+def test_edge_observed_by_survives_a_round_trip(store: GraphStore) -> None:
+    """The JSON array comes back as a list, not a string (ADR-0016)."""
+    store.nodes.add(Node(
+        id="n:1", kind="agent", name="x", host_id="localhost",
+    ))
+    store.nodes.add(Node(
+        id="n:2", kind="sink", name="s", host_id="localhost",
+    ))
+    store.edges.add(Edge(
+        id="e:1", source_id="n:1", target_id="n:2",
+        kind="has_access_to", host_id="localhost",
+        observed_by=["ast", "runtime"],
+    ))
+
+    assert store.edges.get("e:1").observed_by == ["ast", "runtime"]
 
 
 def test_confidence_clamped(store: GraphStore) -> None:

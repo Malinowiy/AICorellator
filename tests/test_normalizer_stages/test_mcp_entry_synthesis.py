@@ -41,8 +41,9 @@ def test_virtual_mcp_entry_links_every_tool_of_the_server(project) -> None:
     by_target = {
         e.target_id: e for e in delta.edges if e.kind == "delegates_to"
     }
-    # The 1.2a.2 enrichment travels with the tool (step 3's rule).
-    assert by_target["tool:1"].flow_kind == "data"
-    assert by_target["tool:1"].data_flow_confirmed == "parameter_match"
+    # The virtual entry is a control edge even when the tool's signature
+    # shows data flow: the AST layer draws no verdict from it (ADR-0016).
+    assert by_target["tool:1"].flow_kind == "control"
+    assert by_target["tool:1"].data_flow_confirmed is None
     assert by_target["tool:2"].flow_kind == "control"
-    assert by_target["tool:2"].data_flow_confirmed == "no_args"
+    assert by_target["tool:2"].data_flow_confirmed is None

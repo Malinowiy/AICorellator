@@ -27,9 +27,8 @@ and it would need a `find_chains` rule of its own.
 **Position.** After `untrusted_source_writers` (11), because it walks
 the `writes_to` edges that stage emits, and after `flow_kind` (12), for
 the reason the three resolvers after it run there: they construct
-control edges and pass `CONTROL_FLOW`, which is the same mapping's
-output for `unknown`, so the one derivation stays in `FlowKindStage`
-and this stage names no `flow_kind` of its own.
+control edges and pass `CONTROL_FLOW`, so the kind is named in one place
+and this stage names no `flow_kind` of its own (ADR-0016).
 
 Side effects: none. It reads the delta only — the agent nodes and the
 three edge kinds — and creates no nodes.
@@ -186,11 +185,10 @@ def _invocation_edge(
 ) -> Edge:
     """`uses_tool` from the agent to a tool its catalogue declares.
 
-    `control` + `unknown` via `CONTROL_FLOW`, the same attributes
-    `provides_tool` carries and for the same reason: the edge is an
-    access path, and no value was traced (ADR-0015 decision 5). The
-    stage runs after `flow_kind`, so it passes the mapping's output
-    rather than leaving the edge for a derivation that has already run.
+    `control` via `CONTROL_FLOW`, the same attributes `provides_tool`
+    carries and for the same reason: the edge is an access path, and no
+    value was traced (ADR-0016, decision 3). No
+    `data_flow_confirmed` is written — the column is Layer 2's.
     """
     return Edge(
         id=edge_id(agent_id, tool_id, "uses_tool"),

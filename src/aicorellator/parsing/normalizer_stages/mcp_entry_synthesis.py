@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING
 from ...graph.models import Edge, Node
 from ..normalizer_context import NormalizeContext
 from ..normalizer_helpers import (
+    CONTROL_FLOW,
     HOST_ID,
     edge_id,
-    flow_for_tool_node,
     mcp_entry_point_id,
 )
 
@@ -78,11 +78,12 @@ def link_mcp_entries_to_tools(delta: GraphDelta) -> list[Edge]:
                 kind="delegates_to",
                 host_id=HOST_ID,
                 attributes={"resolved_via": "mcp_entry"},
-                # The MCP client → tool path is the protocol channel:
-                # the detector recorded whether the tool takes arguments
-                # (1.2a.2). Without that attribute the edge stays the
-                # control default (ADR-0015, decisions 4 and 5).
-                **flow_for_tool_node(tool_node),
+                # The MCP client → tool path is the protocol channel.
+                # Control, and no data-flow claim: a detector may have
+                # recorded whether the tool takes arguments (1.2a.2),
+                # but that result stays on the node — it does not land
+                # on the edge (ADR-0016, decision 3).
+                **CONTROL_FLOW,
             ))
 
     return edges

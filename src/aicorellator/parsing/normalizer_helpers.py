@@ -24,7 +24,7 @@ from ..graph.models import Edge, Node
 from ..patterns import MCP_DIR_SEGMENT, MCP_SERVERS_SEGMENT
 from .capability_extractor import FileCapabilities
 from .classification import Classification
-from .flow import FunctionNode, FlowDecision, VALID_KINDS, flow_kind_for
+from .flow import FunctionNode
 from .models import TSASymbol
 
 
@@ -35,11 +35,14 @@ HOST_ID = "localhost"       # Phase 0/1 — single host
 
 
 # Flow-kind values for edges whose kind fixes the classification
-# (ADR-0015, decisions 4 and 5).
+# (ADR-0015, decisions 4 and 5; ADR-0016, decision 3).
 #
-# `uses_model`, `uses_tool`, `provides_tool` and `delegates_to` are
-# control flow with no confirmed data flow: `control` +
-# `data_flow_confirmed = "unknown"`.
+# The AST layer produces control edges: it knows that one symbol reaches
+# another, not whether data moves along the path. `data_flow_confirmed`
+# is therefore `NULL` on an AST edge — Layer 2 fills it in, once runtime
+# has observed the pair (ADR-0016) — and nothing in this module writes
+# it. `CONTROL_FLOW` carries the kind alone, so spreading it into an
+# `Edge(...)` leaves the column at its schema default.
 #
 # `provides_tool` is control, not structural: "the agent can call the
 # tool" is, for attack-path purposes, the same as "the agent calls the
@@ -51,42 +54,7 @@ HOST_ID = "localhost"       # Phase 0/1 — single host
 # that edge yet; the constant is kept so the kind has one declared
 # source of truth.
 STRUCTURAL_FLOW: dict[str, str] = {"flow_kind": "structural"}
-CONTROL_FLOW: dict[str, str] = {
-    "flow_kind": "control",
-    "data_flow_confirmed": "unknown",
-}
-
-
-def flow_for_tool_node(tool_node: Node) -> dict[str, str]:
-    """Flow attributes for a server → tool edge (1.2a.2).
-
-    A framework detector records the tool's signature result on the tool
-    node as `tool_data_flow` (`parameter_match` / `no_args`). The edge
-    that exposes the tool inherits it: the MCP protocol is the channel,
-    so a tool with parameters is handed the client's data by the
-    framework itself.
-
-    A tool node without the attribute — every node the normalizer
-    creates from TSA symbols — keeps the control default. Enrichment
-    never invents a value the detector did not record.
-
-    The node attribute is the decision's `kind` (attributes are JSON,
-    so the object itself cannot be stored); the decision is rebuilt
-    here, with the node's `framework` attribute supplying the
-    provenance — the same `enrichment:<framework>` source the detector
-    used when it made the decision.
-    """
-    data_flow = tool_node.attributes.get("tool_data_flow")
-    if not isinstance(data_flow, str) or data_flow not in VALID_KINDS:
-        return CONTROL_FLOW
-    framework = tool_node.attributes.get("framework", "unknown")
-    decision = FlowDecision(
-        data_flow, source=f"enrichment:{framework}"
-    )
-    return {
-        "flow_kind": flow_kind_for(decision),
-        "data_flow_confirmed": decision.kind,
-    }
+CONTROL_FLOW: dict[str, str] = {"flow_kind": "control"}
 
 # ============================================================
 # Capability lookup

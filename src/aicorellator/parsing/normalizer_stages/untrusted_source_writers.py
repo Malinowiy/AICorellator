@@ -22,9 +22,9 @@ edge to walk.
     path-heuristic, and the two corpora that contribute the other 9
     (dvmcp, mcploitable) are exactly the ones whose server nodes carry
     the file this rule matches on.
-  - It must run before `flow_kind` (stage 12), so the one derivation
-    (ADR-0015 decision 3) classifies the new edge instead of this stage
-    naming a `flow_kind` of its own.
+  - It must run before `flow_kind` (stage 12), so the edge it emits
+    reaches `FlowKindStage` without a kind of its own and the kind is
+    pinned in exactly one place (ADR-0016, decision 3).
 
 **The writer is the server, and for one source family only.** Of the
 five families in ADR-0010's table, exactly one is evidenced on the four
@@ -390,15 +390,12 @@ def _write_edge(
     the catalogue is produced by the server and flows into the client, so
     the write chain ends at the source and the read chain leaves it.
 
-    `data_flow_confirmed = "unknown"` is the honest value. The rule is
-    structural — a server and a source visible from the same file — and
-    the producer never traced a value into the source. `literal_only`
-    would claim the catalogue's text is a literal and `call_result_match`
-    would claim it is the result of a call; neither was checked, and
-    ADR-0015 decision 3 maps the latter to `flow_kind = "data"`, which
-    would assert a dataflow the evidence does not contain. `unknown` is
-    what `provides_tool` — the parallel server → declared-artifact edge —
-    carries (ADR-0015, decision 5).
+    The rule is structural — a server and a source visible from the same
+    file — and the producer never traced a value into the source, so the
+    edge makes no data-flow claim: `data_flow_confirmed` stays at its
+    schema default (`NULL`) and the edge is control, like `provides_tool`
+    — the parallel server → declared-artifact edge (ADR-0015, decision 5;
+    ADR-0016, decision 3).
     """
     return Edge(
         id=edge_id(server.id, source.id, "writes_to"),
@@ -406,7 +403,6 @@ def _write_edge(
         target_id=source.id,
         kind="writes_to",
         host_id=ctx.host_id,
-        data_flow_confirmed="unknown",
     )
 
 

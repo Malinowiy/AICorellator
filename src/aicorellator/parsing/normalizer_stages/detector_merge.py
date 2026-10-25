@@ -8,7 +8,8 @@ the detector node replaces the TSA node. Capabilities are merged from
 the TSA node if the detector node has none. Edges pointing at the
 removed node are re-pointed to the replacement, and their IDs are
 recomputed and deduplicated. `flow_kind` and `data_flow_confirmed` are
-preserved across the merge."
+not copied: every AST edge is control with no verdict, so both columns
+keep their schema defaults (ADR-0016, decision 3)."
 
 How the id remap and the edge re-point work, in order:
 
@@ -28,8 +29,11 @@ How the id remap and the edge re-point work, in order:
    id — a TSA edge and a detector edge that now describe the same
    relationship — so the loop keeps the first and drops the rest. Every
    other edge field (`precision`, `attributes`, `capabilities`,
-   `confidence`, `status`, `flow_kind`, `data_flow_confirmed`) is copied
-   across, which is what "preserved" means in the C4 sentence.
+   `confidence`, `status`) is copied across, which is what "preserved"
+   means in the C4 sentence. `flow_kind` and `data_flow_confirmed` are
+   the two fields that are dropped instead: an AST edge is control and
+   has no verdict to preserve, and `FlowKindStage` re-pins the kind for
+   the edge that survives (ADR-0016, decision 3).
 4. **Detector edges** are appended last, skipping ids the delta already
    has.
 
@@ -129,8 +133,11 @@ class DetectorMergeStage:
                     capabilities=edge.capabilities,
                     confidence=edge.confidence,
                     status=edge.status,
-                    flow_kind=edge.flow_kind,
-                    data_flow_confirmed=edge.data_flow_confirmed,
+                    # `flow_kind` is not copied either: every AST edge is
+                    # control, so the schema default is the right value.
+                    # `data_flow_confirmed` is deliberately not copied:
+                    # no AST edge carries a data-flow claim, and the
+                    # rebuild must not resurrect one (ADR-0016, decision 3).
                 )
                 seen.add(new_id)
             new_edges.append(edge)

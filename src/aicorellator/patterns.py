@@ -94,8 +94,8 @@ FLOW_KINDS: frozenset[str] = frozenset({"control", "data", "structural"})
 # path until runtime monitoring (Phase 2) can tell the two apart.
 STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({"guards"})
 
-# Edge kinds that carry flow_kind = "control" and data_flow_confirmed
-# = "unknown" unless a framework detector enriches them (ADR-0015).
+# Edge kinds that carry flow_kind = "control" and no confirmed data flow
+# (ADR-0015; ADR-0016, decision 3).
 #
 # `writes_to` (1.3a.1) is here for the same reason `provides_tool` is:
 # "this server produces this catalogue" is a declaration, and the

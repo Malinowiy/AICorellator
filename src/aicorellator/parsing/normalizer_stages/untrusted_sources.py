@@ -15,9 +15,10 @@ reasons:
     re-points these edges to the detector nodes, which is the same
     reason `entry_to_sink` runs before the merge.
 
-`flow_kind` is not set here. The edge carries `data_flow_confirmed` and
-`FlowKindStage` derives the kind from it, once, for every edge (ADR-0015
-decision 3) — the same division of labour as `intra_file_edges`.
+`flow_kind` is not set here, and neither is `data_flow_confirmed`: the
+edge is control and makes no data-flow claim (ADR-0016, decision 3).
+`FlowKindStage` pins the kind, once, for every edge — the same division
+of labour as `intra_file_edges`.
 
 Side effects: none. The stage reads the module cache (`ctx.module_for`,
 one parse per file per scan) and the delta built so far.
@@ -124,12 +125,12 @@ def _read_edge(
     the direction `find_chains` traverses, so a chain that starts at an
     untrusted source and ends at a sink is a path through the reader.
 
-    `call_result_match` is the honest `data_flow_confirmed` value — the
-    reader's data is the result of this call (`flow/arguments.py`: an
-    `ast.Call` expression classifies as `call_result_match`) — and it is
-    the decision ADR-0015 decision 3 maps to `flow_kind = "data"`, which
-    is what the read is. Nothing here is inferred from names beyond the
-    call site itself.
+    Nothing here is inferred from names beyond the call site itself, and
+    nothing here claims data flow: the read is control. `flow_kind` is
+    pinned by `FlowKindStage` and `data_flow_confirmed` stays `NULL`
+    (ADR-0016, decision 3), even though the reader's data does come from
+    this call — the AST layer does not answer that question, Layer 2
+    does.
     """
     return Edge(
         id=edge_id(source_id, reader_id, "has_access_to"),
@@ -137,7 +138,6 @@ def _read_edge(
         target_id=reader_id,
         kind="has_access_to",
         host_id=ctx.host_id,
-        data_flow_confirmed="call_result_match",
     )
 
 

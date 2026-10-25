@@ -30,11 +30,11 @@ class NodesRepository:
             """
             INSERT INTO nodes (
                 id, kind, name, host_id, attributes, capabilities,
-                confidence, content_hash, status,
+                observed_by, confidence, content_hash, status,
                 created_at, updated_at
             ) VALUES (
                 :id, :kind, :name, :host_id, :attributes, :capabilities,
-                :confidence, :content_hash, :status,
+                :observed_by, :confidence, :content_hash, :status,
                 :created_at, :updated_at
             )
             """,
@@ -49,6 +49,8 @@ class NodesRepository:
             existing keys are overwritten.
           - capabilities are UNIONED (not replaced): capabilities
             accumulated from different sources are preserved.
+          - observed_by is UNIONED (not replaced): who confirmed the
+            node accumulates across sources (ADR-0016).
           - confidence takes the max of old and new.
           - content_hash, status, kind, name, host_id are overwritten.
         """
@@ -59,6 +61,7 @@ class NodesRepository:
 
         merged_attrs = {**existing.attributes, **node.attributes}
         merged_caps = sorted(set(existing.capabilities) | set(node.capabilities))
+        merged_observed = sorted(set(existing.observed_by) | set(node.observed_by))
         merged_confidence = max(existing.confidence, node.confidence)
 
         self._conn.execute(
@@ -69,6 +72,7 @@ class NodesRepository:
                 host_id      = :host_id,
                 attributes   = :attributes,
                 capabilities = :capabilities,
+                observed_by  = :observed_by,
                 confidence   = :confidence,
                 content_hash = :content_hash,
                 status       = :status
@@ -81,6 +85,7 @@ class NodesRepository:
                 "host_id": node.host_id,
                 "attributes": json.dumps(merged_attrs),
                 "capabilities": json.dumps(merged_caps),
+                "observed_by": json.dumps(merged_observed),
                 "confidence": merged_confidence,
                 "content_hash": node.content_hash,
                 "status": node.status,

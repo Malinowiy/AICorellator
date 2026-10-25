@@ -36,12 +36,12 @@ class EdgesRepository:
             INSERT INTO edges (
                 id, source_id, target_id, kind, host_id, precision,
                 flow_kind, data_flow_confirmed,
-                attributes, capabilities, confidence, status,
+                attributes, capabilities, observed_by, confidence, status,
                 created_at, updated_at
             ) VALUES (
                 :id, :source_id, :target_id, :kind, :host_id, :precision,
                 :flow_kind, :data_flow_confirmed,
-                :attributes, :capabilities, :confidence, :status,
+                :attributes, :capabilities, :observed_by, :confidence, :status,
                 :created_at, :updated_at
             )
             """,
@@ -54,6 +54,8 @@ class EdgesRepository:
         On conflict:
           - attributes are MERGED.
           - capabilities are UNIONED.
+          - observed_by is UNIONED: who confirmed the edge accumulates
+            across sources (ADR-0016).
           - precision is upgraded: 'compiler-verified' wins over
             'syntactic'.
           - flow_kind is upgraded: 'data'/'structural' win over the
@@ -70,6 +72,7 @@ class EdgesRepository:
 
         merged_attrs = {**existing.attributes, **edge.attributes}
         merged_caps = sorted(set(existing.capabilities) | set(edge.capabilities))
+        merged_observed = sorted(set(existing.observed_by) | set(edge.observed_by))
         merged_confidence = max(existing.confidence, edge.confidence)
         merged_precision = (
             "compiler-verified"
@@ -101,6 +104,7 @@ class EdgesRepository:
                 data_flow_confirmed = :data_flow_confirmed,
                 attributes   = :attributes,
                 capabilities = :capabilities,
+                observed_by  = :observed_by,
                 confidence   = :confidence,
                 status       = :status
             WHERE id = :id
@@ -116,6 +120,7 @@ class EdgesRepository:
                 "data_flow_confirmed": merged_data_flow,
                 "attributes": json.dumps(merged_attrs),
                 "capabilities": json.dumps(merged_caps),
+                "observed_by": json.dumps(merged_observed),
                 "confidence": merged_confidence,
                 "status": edge.status,
             },
