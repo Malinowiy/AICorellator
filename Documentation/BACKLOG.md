@@ -232,6 +232,26 @@ Roll them into `is_chain_valid`. Report which check failed.
 
 **References:** ADR-0007; ADR-0015 (structural edges excluded from `find_chains`); 1.4.
 
+### Log rotation on --clean
+
+**Priority:** Medium
+**Status:** Not started
+**Depends on:** scan.yaml
+
+`--clean` currently deletes the whole workspace (including config/) — a
+bug fixed in the same change that introduces `scan.yaml`. The fixed
+`clean()` removes state (db, reports, cache) and keeps `config/`, but
+the log handling is deferred:
+
+- current `aicorellator.log` → renamed to `aicorellator.log.<UTC ts>`
+- archives beyond `logs.keep_archives` (default 5) pruned
+- `keep_archives` lives in `scan.yaml`, which means `run_scan.py` must
+  load the config BEFORE calling `clean()` — hence this is a larger
+  change than it looks, and it is deferred until `scan.yaml` exists.
+
+Until then, `--clean` deletes `logs/` along with the rest of the state
+(simple, honest, and does not accumulate).
+
 ---
 
 ## Phase B — Close the coverage gaps that silently break features
