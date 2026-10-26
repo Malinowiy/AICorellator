@@ -28,7 +28,8 @@ Plus two coverage gaps that ADR-0016 does not close:
 
 **Fix the foundation, then build.** Concretely:
 
-- **Phase A (now):** ADR-0016 and ADR-0017 are accepted; the implementation follows. Schema (`observed_by`), scan policy (`scan.yaml`), removal of class-A heuristics, Layer 3 semantic validation. These are the changes that make the graph honest.
+- **Phase A (now):** ADR-0016 and ADR-0017 are accepted. A.1 (schema, `observed_by`) and A.2 (one `config/config.yaml`,
+`--clean` keeps config) are done. Remaining: A.3 (remove class-A heuristics), A.4 (Layer 3 semantic validation).
 - **Phase B (next):** close the coverage gaps that make existing features work — cross-file `tool → sink`, write-side for the remaining source families, guardrails as load-bearing, judge determinism.
 - **Phase C (then):** Layer 2 runtime for Python. This is the only path to `data_edges_only > 0` on a real corpus, and it is the largest single piece of work in the project.
 - **Phase D (then):** resume the roadmap — `openai_agents` detector, prompt engineering on a graph where the data exists.
@@ -42,7 +43,7 @@ Plus two coverage gaps that ADR-0016 does not close:
 | # | Item | Priority | Why it is here |
 |---|---|---|---|
 | 1 | **Schema + `observed_by`** (ADR-0016 implementation) | **Critical** | The foundation. Everything else writes into this field. |
-| 2 | **`scan.yaml` + `--clean` fix** (ADR-0016 implementation) | **Critical** | Scan policy must be a file, not flags. `--clean` currently deletes config — a bug. |
+| 2 | **Remove class-A heuristics** (ADR-0016 implementation) | **Critical** | `SINK_METHOD_NAMES`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES` are FinBot-specific. Their removal is the point of ADR-0016. |
 | 3 | **Remove class-A heuristics** (ADR-0016 implementation) | **Critical** | `SINK_METHOD_NAMES`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES` are FinBot-specific. Their removal is the point of ADR-0016. |
 | 4 | **Layer 3 semantic validation** | **High** | `validated: true` currently does not mean "correct". |
 | 5 | **Cross-file `tool → sink`** | **High** | Without it, chain enumeration misses real paths. |
@@ -76,6 +77,28 @@ Plus two coverage gaps that ADR-0016 does not close:
 
 ## Recently done
 
+ ### 2026-10-25 — A.2: one config file, `--clean` keeps `config/`
+
+- `config/config.yaml` replaces `config/scan.yaml` +
+  `config/models.yaml`. Sections: `detectors`, `llm_classifier`,
+  `runtime`, `evaluation`, `llm_classifier_model`, `unclassified`,
+  `logs`.
+- `scan_config.py`: `ScanConfig` + loader read the scan-side
+  sections from the same file; `write_default_config` writes the
+  full template.
+- `analysis/config_loader.py`: `load_config` reads `evaluation:`;
+  `default_mode` renamed to `evaluation.mode`.
+- `workspace.py`: `config_path` replaces `scan_config_path` and
+  `models_config_path`; `ensure()` creates one template with one
+  warning.
+- `run_scan.py`, `run_eval.py`: `--config` defaults to
+  `<workdir>/config/config.yaml`.
+- `--clean` keeps `config/`; to reset config too, remove the
+  workspace directory.
+- v0.1 is early alpha: legacy `config/models.yaml` and
+  `config/scan.yaml` are ignored, not migrated.
+- Tests: 985 passed.
+
 ### 2026-10-25 — Schema + `observed_by` + `FlowKindStage` (A.1)
 
 The ADR-0016 foundation. The AST layer is control-only; `observed_by` is on every node and edge.
@@ -87,10 +110,10 @@ The ADR-0016 foundation. The AST layer is control-only; `observed_by` is on ever
 
 ### 2026-10-25 — ADR-0016 and ADR-0017
 
-- **ADR-0016** — control-only AST layer; `observed_by` on every node and edge; classification layers; scan policy in `scan.yaml`; removal of class-A name heuristics.
+- **ADR-0016** — control-only AST layer; `observed_by` on every node and edge; classification layers; scan policy in `evaluation: in config/config.yaml`; removal of class-A name heuristics.
 - **ADR-0017** — Layer 1 / Layer 2 stitching; key `(file_path, line_start, name)`; no new edge kind (`has_access_to` + `observed_by`); idempotent; multiple runs distinguished by `runtime:<run_id>`.
 - **README.md** — rewritten §"How It Works" for users; §"Status" reframed (`data_edges_only = []` is the correct answer, not a failure); §"Roadmap" updated.
-- **Documentation/Architecture/OVERVIEW.md** — new; four layers, two attributes, `scan.yaml`, module layout, Mermaid diagrams.
+- **Documentation/Architecture/OVERVIEW.md** — new; four layers, two attributes, `evaluation: in config/config.yaml`, module layout, Mermaid diagrams.
 
 ### 2026-10-22 — Chain groups, end to end (1.3b, 1.3c, 1.3c.1, 1.3d, 1.3e)
 
@@ -173,7 +196,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 
 **Risks:** `open_workspace(clean=...)` loses the parameter; callers are updated. `run_scan.py` and `run_eval.py` change behavior; their tests are updated.
 
-**References:** ADR-0016 §Scan policy.
+**References:** ADR-0016 §Scan policy. - changed to `evaluation: in config/config.yaml`
 
 ### A.3 — Remove class-A heuristics
 
@@ -352,8 +375,8 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 - `runtime/python/frame_mapper.py` — `(co_filename, co_firstlineno, co_name)` → `(file_path, line_start, name)` via `Target.root`.
 - `runtime/python/observer.py` — collects observations, writes `observed_by` additions.
 - `runtime/python/stitcher.py` — matches by `(file_path, line_start, name)`; adds `"runtime"` and `"runtime:<run_id>"`; creates `has_access_to` with `observed_by = ["runtime"]` when no AST match.
-- `runtime/python/runner.py` — runs `runtime.test_command` from `scan.yaml`, collects observations, invokes the stitcher.
-- `scan.yaml`: `runtime.mode: off | python`, `runtime.test_command`.
+- `runtime/python/runner.py` — runs `runtime.test_command` from `evaluation: in config/config.yaml`, collects observations, invokes the stitcher.
+- `evaluation: in config/config.yaml`: `runtime.mode: off | python`, `runtime.test_command`.
 - `run_scan.py`: after writing the AST graph, if `runtime.mode == "python"`, run the runtime module and stitch.
 
 **Size:** ~7–10 days.
@@ -366,8 +389,8 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 
 **Priority:** **Medium**
 **Status:** Not started
-**Depends on:** `scan.yaml` (Phase A.2)
-**Rationale:** `--clean` currently deletes `logs/` along with the rest of the state. Once `scan.yaml` exists, log rotation becomes possible: current log → `aicorellator.log.<UTC ts>`, archives beyond `logs.keep_archives` (default 5) pruned. The `run_scan.py` flow must load `scan.yaml` before `clean()`, which is a small change on top of A.2.
+**Depends on:** `evaluation: in config/config.yaml` (Phase A.2)
+**Rationale:** `--clean` currently deletes `logs/` along with the rest of the state. Once `evaluation: in config/config.yaml` exists, log rotation becomes possible: current log → `aicorellator.log.<UTC ts>`, archives beyond `logs.keep_archives` (default 5) pruned. The `run_scan.py` flow must load `evaluation: in config/config.yaml` before `clean()`, which is a small change on top of A.2.
 
 **Size:** ~0.5 day.
 
@@ -394,7 +417,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 **Priority:** **Medium**
 **Status:** Not started
 **ADR:** ADR-0016
-**Rationale:** The replacement for class-A heuristics on projects with custom SDKs. Opt-in (`mode: auto | required | off` in `scan.yaml`). When `mode: auto`, invoked only for symbols the deterministic layers did not classify.
+**Rationale:** The replacement for class-A heuristics on projects with custom SDKs. Opt-in (`mode: auto | required | off` in `evaluation: in config/config.yaml`). When `mode: auto`, invoked only for symbols the deterministic layers did not classify.
 
 **What changes:**
 - `parsing/llm_classifier/prompt.py` — prompt with `[UNTRUSTED_DATA]` markers; its own `PROMPT_VERSION`.
@@ -713,7 +736,7 @@ These are not backlog items; they are decisions the next planning session should
 
 | Phase | What | Stops at |
 |---|---|---|
-| A | Implement ADR-0016 and ADR-0017 (schema, `scan.yaml`, class-A removal, Layer 3 semantic) | v0.2 — the graph is honest |
+| A | Implement ADR-0016 and ADR-0017 (schema, `evaluation: in config/config.yaml`, class-A removal, Layer 3 semantic) | v0.2 — the graph is honest |
 | B | Close the coverage gaps (cross-file tool → sink, write-side, guardrails, judge determinism) | — |
 | C | Layer 2 runtime (Python) | v1.0 — `data_edges_only > 0` on a real corpus |
 | D | Resume the roadmap (`openai_agents`, LLM classifier, prompt engineering) | v1.1 — framework-agnostic, grounded prompt |

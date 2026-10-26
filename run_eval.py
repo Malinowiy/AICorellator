@@ -1,11 +1,15 @@
 """Phase 3 evaluation run: candidate chains, or selected chain groups.
 
-    python run_eval.py --mode fast --limit 5
+    python run_eval.py --limit 5
         evaluate the first 5 linear candidate chains
 
-    python run_eval.py --groups --mode fast --limit 5
+    python run_eval.py --groups --limit 5
         enumerate, score and select chain groups (1.3c), then evaluate
         the first 5 of them (1.3e)
+
+Mode, voters and judge come from the `evaluation` section of
+`config/config.yaml` — including its `mode` — not from a flag.
+`--config` points at another config file (ADR-0016).
 """
 
 import argparse
@@ -28,10 +32,13 @@ from aicorellator.workspace import open_workspace
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-    "--mode",
-    default="fast",
-    choices=["fast", "solo", "full", "custom"],
-    help="ensemble mode",
+    "--config",
+    default=None,
+    help=(
+        "path to the config file (default: <workdir>/config/"
+        "config.yaml). The ensemble config is `evaluation:` in that "
+        "file; this flag points at the file, not a section"
+    ),
 )
 parser.add_argument(
     "--limit",
@@ -69,7 +76,7 @@ parser.add_argument(
 args = parser.parse_args()
 
 ws = open_workspace(root=args.workdir)
-config = load_config(ws.models_config_path, mode=args.mode)
+config = load_config(args.config or ws.config_path)
 
 print(f"Mode: {config.mode}")
 print(f"Voters: {len(config.voters)}")

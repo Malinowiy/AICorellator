@@ -22,8 +22,10 @@ from aicorellator.parsing import (
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
 from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.entry_points import run as run_entry_points
+from aicorellator.parsing.framework_detectors.registry import all_names
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.reporting import write_bundle
+from aicorellator.scan_config import ScanConfigError, load_scan_config
 from aicorellator.workspace import open_workspace
 
 
@@ -42,15 +44,16 @@ def main() -> int:
         help="workspace directory (default: ./aicorellator_data/)",
     )
     parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="wipe the workspace before scanning",
+        "--config",
+        default=None,
+        help="path to the config file "
+             "(default: <workdir>/config/config.yaml)",
     )
     parser.add_argument(
-        "--frameworks",
-        default=None,
-        help="comma-separated list of framework detectors "
-             "(default: all registered)",
+        "--clean",
+        action="store_true",
+        help="wipe the workspace state (db, reports, cache, logs) "
+             "before scanning; config/ is kept",
     )
     args = parser.parse_args()
 
@@ -62,15 +65,29 @@ def main() -> int:
         print(f"error: target is not a directory: {target_path}", file=sys.stderr)
         return 1
 
-    enabled_frameworks: list[str] | None = None
-    if args.frameworks:
-        enabled_frameworks = [
-            name.strip() for name in args.frameworks.split(",") if name.strip()
-        ]
-
-    ws = open_workspace(root=args.workdir, clean=args.clean)
+    ws = open_workspace(root=args.workdir)
     print(f"Workspace: {ws.root}")
     print(f"Target:    {target_path}")
+
+    # Policy is a file, not flags: the scan-side sections of
+    # `<workdir>/config/config.yaml`, unless `--config` points
+    # somewhere else (ADR-0016).
+    config_path = Path(args.config) if args.config else ws.config_path
+    try:
+        scan = load_scan_config(config_path)
+    except (FileNotFoundError, ScanConfigError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"Policy:    {config_path}")
+
+    # State is wiped after the policy is read, so a bad `--config`
+    # never costs the workspace its database (`clean()` keeps
+    # `config/` either way).
+    if args.clean:
+        ws.clean()
+
+    enabled_frameworks = scan.resolve_detectors(all_names())
+    print(f"Detectors: {', '.join(enabled_frameworks) or '(none)'}")
     print()
 
     # --- Ingestion ---

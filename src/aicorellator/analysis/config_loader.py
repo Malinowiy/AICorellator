@@ -4,44 +4,51 @@ The set of voters and judges is explicit, not auto-discovered.
 Auto-discovery leads to surprises: new models appear in LMStudio,
 voters change between runs, results become non-reproducible.
 
-Config schema (YAML):
-    default_mode: "fast"          # fast | solo | full | custom
+This reads the `evaluation` section of `config/config.yaml`: one
+file per workspace, sections per subsystem (ADR-0016). The scan
+policy lives in the same file and is read by `scan_config.py`; the
+sections are independent, so neither module sees the other's keys.
 
-    defaults:
-      base_url: "http://localhost:1234/v1"
-      temperature: 0.0
-      max_tokens: 2000
-      timeout: 600
-      reasoning_effort: "none"
+Config schema (YAML, inside `evaluation:`):
 
-    models:
-      - name: "qwen/qwen3-4b-2507"
-        role: "fast"              # fast | solo | voter | judge
+    evaluation:
+      mode: "fast"                # fast | solo | full | custom
+
+      defaults:
+        base_url: "http://localhost:1234/v1"
+        temperature: 0.0
         max_tokens: 2000
-        timeout: 300
+        timeout: 600
+        reasoning_effort: "none"
 
-      - name: "qwen3.6-35b-a3b"
-        role: "solo"
-        reasoning_effort: "medium"
-        temperature: 0.6
-        max_tokens: 16000
-        timeout: 900
+      models:
+        - name: "qwen/qwen3-4b-2507"
+          role: "fast"            # fast | solo | voter | judge
+          max_tokens: 2000
+          timeout: 300
 
-      - name: "qwen/qwen3-4b-2507"
-        role: "voter"
+        - name: "qwen3.6-35b-a3b"
+          role: "solo"
+          reasoning_effort: "medium"
+          temperature: 0.6
+          max_tokens: 16000
+          timeout: 900
 
-      - name: "google/gemma-4-12b"
-        role: "voter"
+        - name: "qwen/qwen3-4b-2507"
+          role: "voter"
 
-      - name: "nvidia/nemotron-3-nano-4b"
-        role: "voter"
+        - name: "google/gemma-4-12b"
+          role: "voter"
 
-      - name: "qwen3.6-35b-a3b"
-        role: "judge"
-        reasoning_effort: "medium"
-        temperature: 0.6
-        max_tokens: 16000
-        timeout: 1800
+        - name: "nvidia/nemotron-3-nano-4b"
+          role: "voter"
+
+        - name: "qwen3.6-35b-a3b"
+          role: "judge"
+          reasoning_effort: "medium"
+          temperature: 0.6
+          max_tokens: 16000
+          timeout: 1800
 
 Roles:
   fast  — used when mode=fast. One voter, no judge.
@@ -53,10 +60,10 @@ A model may appear multiple times with different roles and
 different parameters (e.g. qwen3.6 as both solo and judge).
 
 Mode determination:
-  --mode fast   → role="fast"  only
-  --mode solo   → role="solo"  only
-  --mode full   → all role="voter" + one role="judge"
-  --mode custom → same as full (no preset filtering)
+  mode=fast   → role="fast"  only
+  mode=solo   → role="solo"  only
+  mode=full   → all role="voter" + one role="judge"
+  mode=custom → same as full (no preset filtering)
 """
 
 from __future__ import annotations
@@ -118,7 +125,7 @@ def load_config(
 
     Args:
         path: path to the YAML config.
-        mode: overrides the 'default_mode' field from the config file.
+        mode: overrides `evaluation.mode` from the config file.
               Valid values: "fast", "solo", "full", "custom".
 
     Raises:
@@ -140,8 +147,15 @@ def load_config(
             f"config root must be a mapping, got {type(data).__name__}"
         )
 
+    # --- The ensemble's own section ---
+    evaluation = data.get("evaluation")
+    if evaluation is None:
+        raise ConfigError("config must define an 'evaluation' section")
+    if not isinstance(evaluation, dict):
+        raise ConfigError("evaluation must be a mapping")
+
     # --- Defaults ---
-    defaults = data.get("defaults", {}) or {}
+    defaults = evaluation.get("defaults", {}) or {}
     if not isinstance(defaults, dict):
         raise ConfigError("'defaults' must be a mapping")
 
@@ -152,7 +166,7 @@ def load_config(
     default_reasoning = defaults.get("reasoning_effort")  # str | None
 
     # --- Models ---
-    models = data.get("models")
+    models = evaluation.get("models")
     if not isinstance(models, list) or not models:
         raise ConfigError("config must define a non-empty 'models' list")
 
@@ -167,7 +181,7 @@ def load_config(
 
     # --- Determine effective mode ---
     if mode is None:
-        mode = str(data.get("default_mode", DEFAULT_MODE))
+        mode = str(evaluation.get("mode", DEFAULT_MODE))
     if mode not in VALID_MODES:
         raise ConfigError(
             f"unknown mode {mode!r} (expected one of {sorted(VALID_MODES)})"
@@ -292,87 +306,3 @@ def _parse_model_entry(
         temperature=temperature_override,
         max_tokens=max_tokens_override,
     )
-
-
-# ============================================================
-# Example config
-# ============================================================
-
-DEFAULT_CONFIG_FILENAME = "models.yaml"
-
-
-def default_config_path(workspace_root: Path | None = None) -> Path:
-    """Return the default path for the models config."""
-    if workspace_root is not None:
-        return workspace_root / "config" / DEFAULT_CONFIG_FILENAME
-    return Path("config") / DEFAULT_CONFIG_FILENAME
-
-
-def write_example_config(path: str | Path) -> None:
-    """Write an example config to the given path."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_EXAMPLE_CONFIG, encoding="utf-8")
-
-
-_EXAMPLE_CONFIG = """\
-# AICorellator ensemble config.
-#
-# Roles:
-#   fast  — used in --mode fast (one voter, no reasoning)
-#   solo  — used in --mode solo (one voter, reasoning, solo prompt)
-#   voter — used in --mode full (ensemble voters)
-#   judge — used in --mode full (final verdict)
-#
-# A model may appear multiple times with different roles and
-# different parameters (e.g. qwen3.6 as both solo and judge).
-
-default_mode: "fast"
-
-defaults:
-  base_url: "http://localhost:1234/v1"
-  temperature: 0.0
-  max_tokens: 2000
-  timeout: 600
-  reasoning_effort: "none"
-
-models:
-
-  # --- FAST ---
-  - name: "qwen/qwen3-4b-2507"
-    role: "fast"
-    max_tokens: 2000
-    timeout: 300
-
-  # --- SOLO ---
-  - name: "qwen3.6-35b-a3b"
-    role: "solo"
-    reasoning_effort: "medium"
-    temperature: 0.6
-    max_tokens: 16000
-    timeout: 900
-
-  # --- VOTERS (for --full) ---
-  - name: "qwen/qwen3-4b-2507"
-    role: "voter"
-    max_tokens: 2000
-    timeout: 300
-
-  - name: "google/gemma-4-12b"
-    role: "voter"
-    max_tokens: 4000
-    timeout: 600
-
-  - name: "nvidia/nemotron-3-nano-4b"
-    role: "voter"
-    max_tokens: 2000
-    timeout: 300
-
-  # --- JUDGE (for --full) ---
-  - name: "qwen3.6-35b-a3b"
-    role: "judge"
-    reasoning_effort: "medium"
-    temperature: 0.6
-    max_tokens: 16000
-    timeout: 1800
-"""

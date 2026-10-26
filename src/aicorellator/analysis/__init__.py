@@ -6,12 +6,7 @@ Three layers per ADR-0005 and ADR-0006:
   - Layer 3: deterministic validation (QueryLayer.is_chain_valid)
 """
 
-from .config_loader import (
-    EnsembleConfig,
-    ConfigError,
-    load_config,
-    write_example_config,
-)
+from .config_loader import EnsembleConfig, ConfigError, load_config
 from .evaluator import evaluate_chains
 from .models import (
     EvaluationResult,
@@ -24,7 +19,6 @@ __all__ = [
     "EnsembleConfig",
     "ConfigError",
     "load_config",
-    "write_example_config",
     "evaluate_chains",
     "EvaluationResult",
     "JudgeResponse",

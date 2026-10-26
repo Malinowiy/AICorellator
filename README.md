@@ -108,12 +108,7 @@ pip install -e .
 
 ### Configure
 
-The first run creates a workspace under `./aicorellator_data/` and writes two configuration templates:
-
-- `config/scan.yaml` — scan policy: which detectors, LLM classifier mode, runtime mode.
-- `config/models.yaml` — the ensemble used for chain evaluation.
-
-Both are created with a warning. **They are templates, not recommendations** — edit them to match your environment.
+The first run creates a workspace under `./aicorellator_data/` and writes one configuration template: `config/config.yaml`. It holds the scan policy, the evaluation ensemble, and the LLM classifier model — one file, sections per subsystem. Edit it here, or point at another file with --config.
 
 ### Scan a target
 
@@ -131,8 +126,7 @@ aicorellator_data/
 │ ├── report.md # human-readable
 │ └── chains.json # machine-readable
 ├── config/
-│ ├── scan.yaml # scan policy (auto-created)
-│ └── models.yaml # ensemble config (auto-created)
+│ ├── config.yaml # config (auto-created)
 ├── cache/
 │ └── tree-sitter/ # TSA cache
 └── logs/
@@ -190,7 +184,7 @@ The roadmap is a **restart of the AST layer**, not an incremental improvement. T
 |---|---|---|---|
 | 0 | Freeze v0.1; write ADR-0016 (`data_flow_confirmed` is enrichment metadata, not a promise; `observed_by` as a JSON array) | 0.5 day | v0.1 tagged |
 | 1 | Add `observed_by` to schema and models; `FlowKindStage` sets `control` only; `data_edges_only` filters on `"runtime"` | 0.5 day | — |
-| 2 | `scan.yaml` + `--config` flag; fix `--clean` to keep `config/` | 1 day | **v0.2** — reproducible scans |
+| 2 | `config.yaml` + `--config` flag; fix `--clean` to keep `config/` | 1 day | **v0.2** — reproducible scans |
 | 3 | Remove class-A heuristics (name-based) | 0.5 day | — |
 | 4 | `framework_detectors/loader.py` — load user detectors from paths | 0.5 day | — |
 | 5 | **Layer 1b** — LLM classification (kind + capability, cached, opt-in) | 2–3 days | **v0.3** — framework-agnostic |
