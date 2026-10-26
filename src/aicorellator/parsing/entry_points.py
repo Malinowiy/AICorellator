@@ -32,15 +32,42 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..patterns import (
-    EXTRA_AGENT_CLASSES,
     HTTP_METHODS,
     MCP_CONNECT_FUNCTION,
-    RUNNER_TO_AGENT,
     WEBSOCKET_METHOD,
 )
 
 
 log = logging.getLogger(__name__)
+
+
+# ============================================================
+# Class-A name tables — on loan, pending BACKLOG A.3 (entry points)
+# ============================================================
+# These two tables are the last surviving class-A name heuristics.
+# `patterns.py` no longer holds them (ADR-0016, decision 7): the
+# classification layer classifies by capability and framework
+# provenance, and the pattern registry holds no name that grants a
+# kind. They are still read by the four agent-call heuristics below,
+# which the A.3 work replaces with entry-point resolution over
+# framework-detector provenance; the replacement is pending review.
+# Until then they live here, next to their only reader, and they die
+# with it.
+
+# Classes that are agents despite not ending in `*Agent`.
+EXTRA_AGENT_CLASSES: frozenset[str] = frozenset({
+    "CoPilotAssistant",
+})
+
+# Runner function name → agent class name.
+RUNNER_TO_AGENT: dict[str, str] = {
+    "run_orchestrator_agent": "OrchestratorAgent",
+    "run_invoice_agent": "InvoiceAgent",
+    "run_payments_agent": "PaymentsAgent",
+    "run_fraud_agent": "FraudComplianceAgent",
+    "run_onboarding_agent": "VendorOnboardingAgent",
+    "run_communication_agent": "CommunicationAgent",
+}
 
 
 # Module names that contain agent classes. Used to detect agent-to-agent calls.

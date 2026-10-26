@@ -54,6 +54,9 @@ from aicorellator.workspace import Workspace
 # ============================================================
 
 PROJECT_FILES: dict[str, str] = {
+    # The agents are agents because their bodies call an LLM
+    # (`self.llm.invoke` → `calls_llm`), not because their names end in
+    # `Agent` — the class-A suffix rule is gone (ADR-0016, decision 7).
     "agents/invoice_agent.py": '''\
 """Invoice agent — processes invoices."""
 
@@ -66,7 +69,8 @@ class InvoiceAgent:
         self.name = "invoice"
 
     async def process(self, invoice_id: str) -> dict:
-        return {"status": "ok", "id": invoice_id}
+        summary = self.llm.invoke(f"Summarize invoice {invoice_id}")
+        return {"status": "ok", "id": invoice_id, "summary": summary}
 ''',
 
     "agents/orchestrator.py": '''\
@@ -81,7 +85,8 @@ class OrchestratorAgent:
 
     async def delegate_to_invoice(self, request: str) -> dict:
         from finbot.agents.runner import run_invoice_agent
-        return await run_invoice_agent(request)
+        plan = self.llm.invoke(f"Route this request: {request}")
+        return await run_invoice_agent(plan)
 ''',
 
     "mcp/servers/findrive/server.py": '''\
@@ -192,7 +197,19 @@ def test_phase1_full_pipeline(
     assert "openai" in providers
 
     # 5. Normalization
-    delta = normalize(make_context(manifest, tsa, ep, llm))
+    #   Capabilities are an input to the normalizer, not a name lookup:
+    #   the agents below are agents because their bodies call an LLM
+    #   (`self.llm.invoke` → `calls_llm`), which is the only agent
+    #   trigger left after the class-A name rules were removed
+    #   (ADR-0016, decision 7).
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    delta = normalize(make_context(
+        manifest, tsa, ep, llm, capabilities=capabilities,
+    ))
     node_kinds = {n.kind for n in delta.nodes}
     assert "agent" in node_kinds
     assert "mcp_server" in node_kinds
@@ -485,17 +502,20 @@ def test_pipeline_finds_no_chain_groups_yet(
             assert store.edges.list(target_id=source.id) == []
         assert store.edges.list(kind="writes_to") == []
 
-        # Why: no server is visible from the catalogue's file. The two
-        # server nodes this project has are the class-detected
-        # `KnowledgeServer` and the path-heuristic `knowledge`, both in
-        # `mcp/servers/knowledge/` — neither in `apps/chat.py`.
+        # Why: no server is visible from the catalogue's file. The only
+        # server node this project has is the path-heuristic `knowledge`
+        # in `mcp/servers/knowledge/` — not in `apps/chat.py`. The
+        # `KnowledgeServer` class no longer adds a second one: the
+        # `*Server` suffix rule was a class-A heuristic and is gone
+        # (ADR-0016, decision 7), and no detector claims a hand-rolled
+        # class like this one.
         by_name = {n.name: n for n in sources}
         catalogue = by_name["mcp_tool_description:client.list_tools"]
         assert catalogue.attributes["source_file"] == "apps/chat.py"
         assert sorted(
             n.attributes.get("source_file", "")
             for n in store.nodes.list(kind="mcp_server")
-        ) == ["", "mcp/servers/knowledge/server.py"]
+        ) == [""]
 
         # And no sink exists anywhere for a read chain to reach.
         assert store.nodes.list(kind="sink") == []
@@ -564,19 +584,19 @@ def test_pipeline_writer_edge_reaches_the_store(
 ) -> None:
     """1.3a.1 end to end: `mcp_server → writes_to → untrusted_source`.
 
-    Two writers per file, because the graph has more than one kind of
-    `mcp_server` node and the rule is "every server visible from the
-    source's file":
+    Two writers, one per file, because the rule is "every server visible
+    from the source's file":
 
-      - `mcp/servers/knowledge/server.py` yields **two** server nodes —
-        `KnowledgeServer` (a `*Server` class under `mcp/servers/`,
-        classified by `class_nodes`, stage 2) and `knowledge` (the path
-        heuristic, stage 1). Both declare the catalogue read in the same
-        file, so both write it;
-      - `mcp/fastserver.py` yields `fastknowledge`, detected from
-        `FastMCP("fastknowledge")` — and that node only exists once
-        `detector_merge` has run, which is why the writer stage runs
-        after the merge.
+      - `knowledge`, the path heuristic from `mcp/servers/knowledge/`
+        (stage 1 — the directory names the server). The
+        `KnowledgeServer` class in the same file used to add a second
+        `mcp_server` node through the `*Server` suffix rule; that rule
+        was a class-A heuristic and is gone (ADR-0016, decision 7), and
+        no detector claims a hand-rolled class, so the file's server is
+        the path-heuristic one only;
+      - `fastknowledge`, detected from `FastMCP("fastknowledge")` — and
+        that node only exists once `detector_merge` has run, which is
+        why the writer stage runs after the merge.
 
     The `rag_corpus` read in the first file gets no writer edge: the
     server reads its store, it does not declare the corpus. That gate is
@@ -606,7 +626,7 @@ def test_pipeline_writer_edge_reaches_the_store(
         assert len(sources) == 3
 
         edges = store.edges.list(kind="writes_to")
-        assert len(edges) == 3
+        assert len(edges) == 2
         # Control, with no traced dataflow (ADR-0016, decision 3).
         assert {e.flow_kind for e in edges} == {"control"}
         assert {e.data_flow_confirmed for e in edges} == {None}
@@ -614,7 +634,6 @@ def test_pipeline_writer_edge_reaches_the_store(
             (nodes[e.source_id].name, nodes[e.target_id].name)
             for e in edges
         ) == [
-            ("KnowledgeServer", "mcp_tool_description:client.list_tools"),
             ("fastknowledge", "mcp_tool_description:server.list_tools"),
             ("knowledge", "mcp_tool_description:client.list_tools"),
         ]
@@ -627,10 +646,11 @@ def test_pipeline_writer_edge_reaches_the_store(
         assert store.edges.list(target_id=rag.id) == []
 
         # The dynamic invocation stage finds nothing to link: the project
-        # has no agent node at all (the `*Server` class is an
-        # `mcp_server`, and the catalogue readers are a method and a
-        # plain function), so no reader has the `reads_untrusted`
-        # capability the rule gates on.
+        # has no agent node at all (neither `KnowledgeServer` nor the
+        # catalogue readers is one — a class is an agent when its body
+        # carries `calls_llm`, not when its name ends in `Server` or
+        # `Agent`), so no reader has the `reads_untrusted` capability the
+        # rule gates on.
         assert store.nodes.list(kind="agent") == []
         assert store.edges.list(kind="uses_tool") == []
 
@@ -682,8 +702,9 @@ _SERVER_INTROSPECTORS = {
 class ToolProviderAgent:
     """Discovers the tools of the MCP servers it connects to."""
 
-    def __init__(self):
+    def __init__(self, llm_client):
         self.servers = {}
+        self.llm = llm_client
 
     def connect_servers(self):
         self.servers["knowledge"] = create_mcp_server("knowledge")
@@ -691,6 +712,10 @@ class ToolProviderAgent:
     async def connect(self, client):
         """Read a server's tool catalogue."""
         return await client.list_tools()
+
+    async def answer(self, question: str) -> str:
+        """`self.llm.invoke` -> `calls_llm`: the agent trigger."""
+        return await self.llm.invoke(question)
 ''',
 
     # The route, in a file that is not an `agents/` module: that is what
@@ -738,8 +763,9 @@ from app.services.mcp import create_mcp_server
 class ToolProviderAgent:
     """Discovers the tools of the MCP servers it connects to."""
 
-    def __init__(self):
+    def __init__(self, llm_client):
         self.servers = {}
+        self.llm = llm_client
 
     def connect_servers(self):
         self.servers["knowledge"] = create_mcp_server("knowledge")
@@ -747,6 +773,10 @@ class ToolProviderAgent:
     async def connect(self, client):
         """Read a server's tool catalogue."""
         return await client.list_tools()
+
+    async def answer(self, question: str) -> str:
+        """`self.llm.invoke` -> `calls_llm`: the agent trigger."""
+        return await self.llm.invoke(question)
 '''
 
 SPLIT_REGISTRY = '''\

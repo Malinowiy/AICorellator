@@ -5,12 +5,17 @@ This module is the canonical source for:
   - Node and edge kinds (mirrors graph/schema.sql and graph/models.py)
   - File path segments that identify entity types (agents/, mcp/servers/, ...)
   - File discovery filters (excluded dirs, extensions, language map)
-  - Class name suffixes and exact names (Agent, LLMClient, ...)
-  - Method name prefixes and exact names (get_, update_, execute_script, ...)
+  - Class name exclusions (*Detector, *Schema, BaseAgent, ...)
   - HTTP/WebSocket route decorators
-  - Function name hints (create_mcp_server, delegate_to_*, run_*_agent)
+  - Function name hints (create_mcp_server)
   - Config key patterns for LLM extraction (LLM_PROVIDER, OLLAMA_*, ...)
-  - Provider hints from class names (openai, anthropic, ollama, ...)
+
+The class-A name heuristics are gone (ADR-0016, decision 7): no class
+name, method name, or provider name in this file decides a node kind.
+Kinds come from capabilities (`CAPABILITY_*` below, via
+`parsing/capability_extractor.py`) and from framework provenance
+(`parsing/framework_detectors/`). The name tables that remain here are
+exclusions — they suppress false positives, they never classify.
 
 Centralizing these gives a single overview of what the system can
 recognize. Adding a new language, framework, or AI provider means
@@ -244,20 +249,14 @@ MCP_SERVERS_SEGMENT = "servers"
 # Class name patterns
 # ============================================================
 
-# Class name suffix → node kind.
-# Order matters: most specific first.
-CLASS_SUFFIX_KINDS: tuple[tuple[str, str], ...] = (
-    ("Orchestrator", "agent"),
-    ("Agent", "agent"),
-    ("LLMClient", "llm_endpoint"),
-    ("LLMJudge", "llm_endpoint"),
-    ("GuardrailHookService", "guardrail"),
-    ("GuardrailService", "guardrail"),
-    ("HookService", "guardrail"),
-    ("Guardrail", "guardrail"),
-    ("Server", "mcp_server"),      # only inside mcp/servers/
-    ("Service", "mcp_server"),     # only inside mcp/servers/
-)
+# Class name suffix → node kind is *not* here any more. `*Agent`,
+# `*Orchestrator`, `*LLMClient`, `*Guardrail*`, `*Server`/`*Service`
+# under mcp/servers/ were the class-A heuristics of ADR-0016 decision 7;
+# they classified FinBot and nothing else. A class becomes an `agent`,
+# `llm_endpoint`, `mcp_server` or `guardrail` node when its body carries
+# the capability, or when a framework detector recognized it. Adding a
+# project detector: a file in `parsing/framework_detectors/` plus a line
+# in `registry.py` (ADR-0016, decision 5).
 
 # Class name suffixes explicitly excluded from classification.
 EXCLUDED_CLASS_SUFFIXES: tuple[str, ...] = (
@@ -281,26 +280,12 @@ EXCLUDED_CLASSES: frozenset[str] = frozenset({
     "BaseRepository",
 })
 
-# Classes that are agents despite not ending in `*Agent`.
-EXTRA_AGENT_CLASSES: frozenset[str] = frozenset({
-    "CoPilotAssistant",
-})
-
-# Classes that are LLM clients despite not ending in `*Client`.
-EXTRA_LLM_CLASSES: frozenset[str] = frozenset({
-    "LLMJudge",
-})
-
-# Provider hints from class names (lowercase substring → provider).
-# Checked in order.
-PROVIDER_HINTS: tuple[tuple[str, str], ...] = (
-    ("openai", "openai"),
-    ("anthropic", "anthropic"),
-    ("ollama", "ollama"),
-    ("contextual", "contextual"),
-    ("mock", "mock"),
-    ("judge", "judge"),
-)
+# `EXTRA_AGENT_CLASSES` ("CoPilotAssistant"), `EXTRA_LLM_CLASSES`
+# ("LLMJudge") and `PROVIDER_HINTS` (a class-name substring → provider)
+# were class-A heuristics and are removed (ADR-0016, decision 7). The
+# `provider` attribute on an `llm_endpoint` node now comes from the
+# configuration that declares the endpoint (`parsing/llm_extractor.py`)
+# or from the framework detector that recognized the client class.
 
 # ============================================================
 # Capabilities (ADR-0009)
@@ -1172,45 +1157,16 @@ TOOL_CAPABILITIES: frozenset[str] = frozenset({
 })
 
 # ============================================================
-# Method name patterns
+# Method name patterns — removed (ADR-0016, decision 7)
 # ============================================================
-
-# Method names that indicate a dangerous sink.
-SINK_METHOD_NAMES: frozenset[str] = frozenset({
-    "execute_script",
-    "run_script",
-    "run_command",
-    "network_request",
-    "upload_file",
-    "delete_file",
-    "download_file",
-    "make_request",
-    "send_request",
-})
-
-# Sink category by substring in method name.
-# Checked in order.
-SINK_CATEGORY_HINTS: tuple[tuple[str, str], ...] = (
-    ("script", "code_execution"),
-    ("command", "code_execution"),
-    ("network", "network"),
-    ("request", "network"),
-    ("file", "filesystem"),
-)
-
-# Method name prefixes that indicate a tool (inside tools/ or MCP servers).
-TOOL_METHOD_PREFIXES: tuple[str, ...] = (
-    "get_", "update_", "create_", "delete_", "process_",
-    "handle_", "call_", "fetch_", "send_", "list_",
-)
-
-# Method names to skip even if they look like tools.
-SKIP_METHOD_NAMES: frozenset[str] = frozenset({
-    "to_dict",
-    "to_summary_dict",
-    "to_json",
-    "to_yaml",
-})
+# `SINK_METHOD_NAMES` (execute_script, network_request, upload_file, ...),
+# `SINK_CATEGORY_HINTS` (a name substring → sink category),
+# `TOOL_METHOD_PREFIXES` (get_, update_, ...) and `SKIP_METHOD_NAMES`
+# (to_dict, to_json, ...) were the class-A method heuristics. A method is
+# a sink because its body executes, writes or sends (`SINK_CAPABILITIES`);
+# it is a tool because a framework detector declared it, or because it is
+# a public method of an MCP server. Serialization helpers are not tools
+# for the same reason they are not anything else: no capability, no node.
 
 
 # ============================================================
@@ -1233,18 +1189,12 @@ WEBSOCKET_METHOD = "websocket"
 # Function name that creates an MCP client connection.
 MCP_CONNECT_FUNCTION = "create_mcp_server"
 
-# Prefix for orchestrator delegation methods.
-DELEGATE_METHOD_PREFIX = "delegate_to_"
-
-# Runner function name → agent class name.
-RUNNER_TO_AGENT: dict[str, str] = {
-    "run_orchestrator_agent": "OrchestratorAgent",
-    "run_invoice_agent": "InvoiceAgent",
-    "run_payments_agent": "PaymentsAgent",
-    "run_fraud_agent": "FraudComplianceAgent",
-    "run_onboarding_agent": "VendorOnboardingAgent",
-    "run_communication_agent": "CommunicationAgent",
-}
+# `DELEGATE_METHOD_PREFIX` ("delegate_to_") and `RUNNER_TO_AGENT`
+# (`run_invoice_agent` → `InvoiceAgent`) were the class-A delegation
+# heuristics and are removed (ADR-0016, decision 7). A call is a
+# delegation because the callee (or the argument passed to it) is an
+# `agent` node in the graph — a node a framework detector, a capability
+# or a user detector produced — not because its name matches a table.
 
 
 # ============================================================

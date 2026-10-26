@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import ast
 
+from aicorellator.parsing.capability_extractor import (
+    FileCapabilities,
+    SymbolCapabilities,
+)
 from aicorellator.parsing.models import TSASymbol
 from aicorellator.parsing.normalizer_stages import (
     McpServerNodeStage,
@@ -43,6 +47,26 @@ def _symbol(name: str, kind: str, line: int) -> TSASymbol:
     )
 
 
+def _sink_caps() -> dict[str, FileCapabilities]:
+    """`delete_file` is a sink because its body calls `os.remove`.
+
+    The name table that used to make it one is gone (ADR-0016,
+    decision 7); the capability is the behaviour the body shows.
+    """
+    return {
+        SERVER: FileCapabilities(
+            file_path=SERVER,
+            symbols=[
+                SymbolCapabilities(
+                    symbol_name="delete_file",
+                    file_path=SERVER,
+                    capabilities={"writes_filesystem"},
+                ),
+            ],
+        ),
+    }
+
+
 def _prepared(project):
     """A project with the node stages already run (the real order)."""
     p = project(
@@ -51,6 +75,7 @@ def _prepared(project):
             _symbol("get_file", "method", _line_of("get_file")),
             _symbol("delete_file", "method", _line_of("delete_file")),
         ],
+        capabilities=_sink_caps(),
     )
     McpServerNodeStage().apply(p.delta, p.ctx)
     MethodNodeStage().apply(p.delta, p.ctx)

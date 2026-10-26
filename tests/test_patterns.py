@@ -52,18 +52,32 @@ def test_writes_to_is_a_registered_edge_kind() -> None:
     assert "writes_to" not in patterns.STRUCTURAL_EDGE_KINDS
 
 
-def test_class_suffix_kinds_unique() -> None:
-    """No duplicate suffixes in CLASS_SUFFIX_KINDS."""
-    suffixes = [s for s, _ in patterns.CLASS_SUFFIX_KINDS]
-    assert len(suffixes) == len(set(suffixes))
+def test_class_a_name_tables_are_gone() -> None:
+    """No name in the registry grants a kind (ADR-0016, decision 7).
+
+    Kinds come from capabilities and framework provenance. A table that
+    maps a class name, method name or provider name to a kind is a
+    class-A heuristic, and there are none left here.
+    """
+    for name in (
+        "CLASS_SUFFIX_KINDS",
+        "EXTRA_AGENT_CLASSES",
+        "EXTRA_LLM_CLASSES",
+        "PROVIDER_HINTS",
+        "SINK_METHOD_NAMES",
+        "SINK_CATEGORY_HINTS",
+        "TOOL_METHOD_PREFIXES",
+        "SKIP_METHOD_NAMES",
+        "RUNNER_TO_AGENT",
+        "DELEGATE_METHOD_PREFIX",
+    ):
+        assert not hasattr(patterns, name), name
 
 
-def test_sink_method_names_not_empty() -> None:
-    assert len(patterns.SINK_METHOD_NAMES) > 0
-
-
-def test_runner_to_agent_known() -> None:
-    assert patterns.RUNNER_TO_AGENT["run_invoice_agent"] == "InvoiceAgent"
+def test_exclusions_remain() -> None:
+    """A name may still withhold a node — the removal covered grants."""
+    assert "BaseAgent" in patterns.EXCLUDED_CLASSES
+    assert "Detector" in patterns.EXCLUDED_CLASS_SUFFIXES
 
 
 def test_provider_by_key_known() -> None:

@@ -230,7 +230,9 @@ def test_normalize_mcp_server_dedup(
 def test_normalize_agent_node(tsa_with_agent: TSAOutput, target: Target) -> None:
     """A single InvoiceAgent class → one agent node."""
     empty_manifest = FileManifest(target=target)
-    delta = normalize(make_context(empty_manifest, tsa_with_agent))
+    delta = normalize(make_context(
+        empty_manifest, tsa_with_agent, capabilities=_caps("agents/invoice.py", ("InvoiceAgent", "calls_llm"))
+    ))
     assert len(delta.nodes) == 1
     assert delta.nodes[0].kind == "agent"
     assert delta.nodes[0].name == "InvoiceAgent"
@@ -307,7 +309,7 @@ def test_normalize_has_access_to_edge(target: Target) -> None:
             class_name="SystemUtilsServer",
         ),
     ])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps("mcp/servers/systemutils/server.py", ("execute_script", "executes_shell"))))
 
     # Expect: 1 mcp_server, 1 tool, 1 sink, 1 provides_tool edge,
     # 1 has_access_to edge
@@ -388,7 +390,7 @@ def test_normalize_entry_to_agent_edge(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(make_context(manifest, tsa, ep))
+    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("agents/invoice.py", ("InvoiceAgent", "calls_llm"))))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
@@ -434,7 +436,7 @@ def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(make_context(manifest, tsa, ep))
+    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("agents/invoice.py", ("InvoiceAgent", "calls_llm"))))
 
     agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
     mcp_nodes = [n for n in delta.nodes if n.kind == "mcp_server"]
@@ -633,7 +635,10 @@ def test_orphan_entry_not_relinked_when_already_linked(target: Target) -> None:
         ),
     ]
     delta = normalize(
-        make_context(manifest, tsa, ep, framework_detection=detection)
+        make_context(
+            manifest, tsa, ep, framework_detection=detection,
+            capabilities=_caps("agents/invoice.py", ("InvoiceAgent", "calls_llm")),
+        )
     )
     delegates = [e for e in delta.edges if e.kind == "delegates_to"]
     # Two edges total: one from agent_calls (entry → InvoiceAgent),
@@ -663,7 +668,7 @@ def test_entry_point_to_sink_direct_handler(target: Target) -> None:
         ],
         call_graph={"upload_file": set()},
     )
-    delta = normalize(make_context(manifest, tsa, ep))
+    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("app.py", ("upload_file", "executes_shell"))))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     sink_nodes = [n for n in delta.nodes if n.kind == "sink"]
@@ -714,7 +719,7 @@ def test_entry_point_to_sink_via_helper(target: Target) -> None:
             "execute_script": set(),
         },
     )
-    delta = normalize(make_context(manifest, tsa, ep))
+    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("app.py", ("execute_script", "executes_shell"))))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     sink_nodes = [n for n in delta.nodes if n.kind == "sink"]
@@ -785,7 +790,7 @@ def test_entry_point_to_sink_cycle_safe(target: Target) -> None:
             "execute_script": set(),
         },
     )
-    delta = normalize(make_context(manifest, tsa, ep))
+    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("app.py", ("execute_script", "executes_shell"))))
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 1
 
@@ -935,7 +940,9 @@ def test_cli_entry_fallback_to_all_sinks(target: Target) -> None:
             ),
         ],
     )
-    delta = normalize(make_context(manifest, tsa, ep))
+    delta = normalize(
+        make_context(manifest, tsa, ep, capabilities=_caps("helpers.py", ("execute_script", "executes_shell")))
+    )
 
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 1
@@ -1027,6 +1034,31 @@ def _has_access_edges(delta: GraphDelta, tool_name: str) -> list:
     ]
 
 
+def _caps(file_path: str, *pairs: tuple[str, str]) -> dict[str, FileCapabilities]:
+    """Capabilities for named symbols in one file (ADR-0009).
+
+    `_caps("app.py", ("upload_file", "executes_shell"))`. A method is a
+    sink because its body carries the capability and a class is an agent
+    because its body calls an LLM — there is no name table to fall back on
+    any more (ADR-0016, decision 7). These tests assert on the stages, not
+    on the extractor, so the capability is written by hand, the same way
+    `_class_sink_caps` does for a class-kind sink.
+    """
+    return {
+        file_path: FileCapabilities(
+            file_path=file_path,
+            symbols=[
+                SymbolCapabilities(
+                    symbol_name=name,
+                    file_path=file_path,
+                    capabilities={capability},
+                )
+                for name, capability in pairs
+            ],
+        ),
+    }
+
+
 def test_has_access_to_forwards_its_parameter_still_carries_no_verdict(
     target: Target,
 ) -> None:
@@ -1039,7 +1071,7 @@ def test_has_access_to_forwards_its_parameter_still_carries_no_verdict(
     """
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1051,7 +1083,7 @@ def test_has_access_to_literal_is_control(target: Target) -> None:
     """A literal-only call is control, and records nothing either."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     edges = _has_access_edges(delta, "list_files")
     assert len(edges) == 1
@@ -1063,7 +1095,7 @@ def test_two_has_access_to_edges_are_both_control(target: Target) -> None:
     """One file, one sink, two tools → two control edges."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     has_access = [e for e in delta.edges if e.kind == "has_access_to"]
     assert len(has_access) == 2
@@ -1083,7 +1115,7 @@ class SystemUtilsServer:
 """
     manifest = _server_manifest(target, source)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1103,7 +1135,7 @@ class SystemUtilsServer:
 """
     manifest = _server_manifest(target, source)
     tsa = _systemutils_tsa(["process_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     edges = _has_access_edges(delta, "process_file")
     assert len(edges) == 1
@@ -1116,7 +1148,7 @@ def test_has_access_to_missing_file_is_still_control(target: Target) -> None:
     """abs_path does not exist on disk → the edge is unaffected."""
     manifest = _server_manifest(target, None)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1128,7 +1160,7 @@ def test_has_access_to_syntax_error_is_still_control(target: Target) -> None:
     """Unparseable file → control, no verdict, no crash."""
     manifest = _server_manifest(target, "def broken(:\n")
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     edges = _has_access_edges(delta, "read_file")
     assert len(edges) == 1
@@ -1156,7 +1188,7 @@ def test_source_file_parsed_at_most_once_per_scan(
         return real_parse(source, *args, **kwargs)
 
     monkeypatch.setattr(ast, "parse", counting_parse)
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     assert len([e for e in delta.edges if e.kind == "has_access_to"]) == 2
     assert len(calls) <= 1
@@ -1194,7 +1226,7 @@ def test_provides_tool_is_control(target: Target) -> None:
     """A parseable file does not change provides_tool's flow_kind."""
     manifest = _server_manifest(target, TWO_TOOLS_ONE_SINK)
     tsa = _systemutils_tsa(["read_file", "list_files", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     provides = [e for e in delta.edges if e.kind == "provides_tool"]
     assert len(provides) == 2
@@ -1259,7 +1291,7 @@ def test_sink_node_records_parameter_match(target: Target) -> None:
     """A sink that forwards its parameter to `os.remove` (1.2a.1)."""
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     sink = _node(delta, "delete_file")
     assert sink.kind == "sink"
@@ -1276,7 +1308,7 @@ def test_sink_node_records_parameter_attribute(target: Target) -> None:
     """
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER_ATTRIBUTE)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     sink = _node(delta, "delete_file")
     assert sink.kind == "sink"
@@ -1307,7 +1339,7 @@ def test_sink_node_records_literal_only(target: Target) -> None:
     """A sink whose dangerous call takes a constant only (1.2a.1)."""
     manifest = _server_manifest(target, SINK_FORWARDS_LITERAL)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     assert _node(delta, "delete_file").attributes["sink_data_flow"] == "literal_only"
 
@@ -1316,7 +1348,7 @@ def test_sink_node_without_body_is_unknown(target: Target) -> None:
     """A heuristic sink node with no function of that name (1.2a.1)."""
     manifest = _server_manifest(target, SINK_WITHOUT_BODY)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     assert _node(delta, "delete_file").attributes["sink_data_flow"] == "unknown"
 
@@ -1325,7 +1357,7 @@ def test_sink_node_missing_file_is_unknown(target: Target) -> None:
     """abs_path does not exist on disk → unknown, no crash."""
     manifest = _server_manifest(target, None)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     assert _node(delta, "delete_file").attributes["sink_data_flow"] == "unknown"
     assert _node(delta, "read_file").attributes["returns_data"] is False
@@ -1365,7 +1397,7 @@ def test_body_attributes_do_not_change_flow_kind(target: Target) -> None:
     """
     manifest = _server_manifest(target, SINK_FORWARDS_PARAMETER)
     tsa = _systemutils_tsa(["read_file", "delete_file"])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     sink = _node(delta, "delete_file")
     assert sink.attributes["sink_data_flow"] == "parameter_match"
@@ -1695,7 +1727,7 @@ def test_duplicate_method_names_resolve_by_line_start(target: Target) -> None:
     """
     manifest = _server_manifest(target, DUPLICATE_SINK_METHODS)
     tsa = _tsa_from_source(DUPLICATE_SINK_METHODS, SYSTEMUTILS_PATH)
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     lines = _definition_lines(DUPLICATE_SINK_METHODS, "delete_file")
     assert len(lines) == 2
@@ -1763,7 +1795,7 @@ def test_approximate_line_start_uses_the_closest_preceding_definition(
         line_end=approximate + 1,
         class_name="SecondRepository",
     )])
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     sink = _node(delta, "delete_file")
     assert sink.attributes["line_start"] == approximate
@@ -1778,7 +1810,7 @@ def test_duplicate_tool_names_resolve_by_line_start(target: Target) -> None:
     """
     manifest = _server_manifest(target, DUPLICATE_TOOL_NAMES)
     tsa = _tsa_from_source(DUPLICATE_TOOL_NAMES, SYSTEMUTILS_PATH)
-    delta = normalize(make_context(manifest, tsa))
+    delta = normalize(make_context(manifest, tsa, capabilities=_caps(SYSTEMUTILS_PATH, ("delete_file", "writes_filesystem"))))
 
     lines = _definition_lines(DUPLICATE_TOOL_NAMES, "read_file")
     assert len(lines) == 2

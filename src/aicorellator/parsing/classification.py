@@ -1,21 +1,36 @@
-"""Classification heuristics for AI infrastructure components.
+"""Classification of AI infrastructure components.
 
-Heuristics are intentionally conservative: false positives are
-cheaper than false negatives here, because Phase 3 (LLM analysis)
-filters noise. A missed agent is worse than a spurious one.
+A symbol is classified from two inputs, and only two:
 
-Two signals are used:
+  1. Capabilities (ADR-0009) — AST-derived behaviour, extracted from
+     the symbol body by `parsing/capability_extractor.py`.
+  2. Framework provenance (ADR-0011, ADR-0016) — a framework detector
+     recognized the symbol and emitted a node for it. Detector nodes are
+     authoritative for kind (`normalizer_stages/detector_merge.py`), so
+     this module does not have to guess what a detector already knows.
 
-  1. Name-based heuristics (class names, method names, file paths).
-  2. Capability-based refinement (ADR-0009): AST-derived
-     capabilities override or reinforce name-based decisions.
+Class names and method names are not read to *decide* a kind. The
+class-A name heuristics — `SINK_METHOD_NAMES`, `SINK_CATEGORY_HINTS`,
+`RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES`, `PROVIDER_HINTS`,
+`TOOL_METHOD_PREFIXES`, `SKIP_METHOD_NAMES`, and the class-name suffix
+table `CLASS_SUFFIX_KINDS` — were removed in ADR-0016, decision 7: they
+described FinBot's layout and mislabelled every other project. A project
+no built-in detector covers is covered by a user detector (a file in
+`parsing/framework_detectors/` plus a line in `registry.py`,
+ADR-0016 decision 5) or by the optional LLM classifier.
 
-Capabilities take precedence when they conflict with names.
-A class named `execute_script` without `executes_shell` is not a
-sink. A class named `RandomHelper` with `executes_shell` is.
+Names still appear here as *exclusions* — `EXCLUDED_CLASSES`,
+`EXCLUDED_CLASS_SUFFIXES`, the `_private` and `create_*_server` guards.
+An exclusion withholds a node; it never grants one. The same is true of
+the two path rules that remain: `mcp/servers/<name>/` is the structural
+convention the MCP framework detectors use (ADR-0013), and it is a
+layout, not a class name.
 
-Rules are tuned against real projects (FinBot CTF). Update when
-new patterns emerge.
+Capabilities take precedence when they conflict with a path: a public
+method of an MCP server is a tool unless its body is a sink.
+
+The rules are intentionally conservative: a missed component is worse
+than a spurious one, because Phase 3 (LLM analysis) filters noise.
 """
 
 from __future__ import annotations
@@ -26,15 +41,9 @@ from ..patterns import (
     AGENT_CAPABILITIES,
     EXCLUDED_CLASSES,
     EXCLUDED_CLASS_SUFFIXES,
-    EXTRA_AGENT_CLASSES,
     LLM_ENDPOINT_CAPABILITIES,
-    PROVIDER_HINTS,
     SINK_CAPABILITIES,
-    SINK_CATEGORY_HINTS,
-    SINK_METHOD_NAMES,
-    SKIP_METHOD_NAMES,
     TOOL_CAPABILITIES,
-    TOOL_METHOD_PREFIXES,
 )
 
 
@@ -54,16 +63,20 @@ def classify_class(
     file_path: str,
     capabilities: list[str] | None = None,
 ) -> Classification | None:
-    """Classify a class symbol.
+    """Classify a class symbol from the capabilities in its body.
 
     Args:
-        class_name: name of the class.
-        file_path: relative path.
-        capabilities: optional list of capabilities extracted from
-                      the class body (ADR-0009). When provided, they
-                      take precedence over name-based heuristics.
+        class_name: name of the class. Read for exclusions only.
+        file_path: relative path. Not read: deciding a kind from a path
+                   was a class-A heuristic (ADR-0016, decision 7). The
+                   parameter stays because every caller passes the
+                   symbol's location and `classify_method` still reads it
+                   for the MCP server layout.
+        capabilities: capabilities extracted from the class body
+                      (ADR-0009). This is the input that decides a kind.
 
-    Returns None if the class is not an AI infrastructure component.
+    Returns None when the class carries no classifying capability, or
+    when its name is excluded.
     """
     caps = set(capabilities or ())
 
@@ -73,7 +86,7 @@ def classify_class(
     if class_name.endswith(EXCLUDED_CLASS_SUFFIXES):
         return None
 
-    # --- Capability-based refinement (highest priority) ---
+    # --- Capabilities — the only positive signal ---
     if caps & SINK_CAPABILITIES:
         # executes_shell / executes_code / writes_* → sink.
         # No name is required.
@@ -87,53 +100,11 @@ def classify_class(
         return Classification(kind="agent")
 
     if caps & LLM_ENDPOINT_CAPABILITIES:
-        # calls_llm alone, without MCP → llm_endpoint.
-        provider = _provider_from_name(class_name)
-        return Classification(
-            kind="llm_endpoint",
-            attributes={"provider": provider},
-        )
-
-    # --- Name-based heuristics (fall through if capabilities empty) ---
-
-    # Agents
-    if class_name.endswith(("Agent", "Orchestrator")):
-        return Classification(kind="agent")
-    if class_name in EXTRA_AGENT_CLASSES:
-        return Classification(kind="agent")
-
-    # LLM endpoints (by explicit name)
-    if class_name in (
-        "LLMClient",
-        "OllamaClient",
-        "OpenAIClient",
-        "ContextualLLMClient",
-        "MockLLMClient",
-        "LLMJudge",
-    ):
-        provider = _provider_from_name(class_name)
-        return Classification(
-            kind="llm_endpoint",
-            attributes={"provider": provider},
-        )
-
-    # LLM endpoints (by path + suffix)
-    if _has_path_segment(file_path, "llm") and class_name.endswith(("Client", "Judge")):
-        provider = _provider_from_name(class_name)
-        return Classification(
-            kind="llm_endpoint",
-            attributes={"provider": provider},
-        )
-
-    # MCP servers (by path)
-    if _has_path_segment(file_path, "servers") and _has_path_segment(file_path, "mcp"):
-        if class_name.endswith(("Server", "Service")):
-            return Classification(kind="mcp_server")
-
-    # Guardrails (by path + name keyword)
-    if _has_path_segment(file_path, "guardrails"):
-        if any(kw in class_name for kw in ("Guardrail", "Guard", "Hook")):
-            return Classification(kind="guardrail")
+        # calls_llm alone, without MCP → llm_endpoint. No `provider`
+        # attribute: the provider is a configuration fact, known to the
+        # LLM config extractor or to the framework detector that
+        # recognized the client class — never to the class name.
+        return Classification(kind="llm_endpoint")
 
     return None
 
@@ -148,32 +119,34 @@ def classify_method(
     class_name: str | None,
     capabilities: list[str] | None = None,
 ) -> Classification | None:
-    """Classify a method symbol.
+    """Classify a method symbol from its capabilities and its layout.
 
     Args:
-        method_name: name of the method or function.
-        file_path: relative path.
+        method_name: name of the method or function. Read for exclusions
+                     only — `_private` methods and `create_*_server`
+                     factories are withheld.
+        file_path: relative path. Read for one layout rule: a public
+                   method of an MCP server is a tool (ADR-0013). The
+                   `tools/` + `get_`/`update_`/... rule, the sink-name
+                   table and the serialization-helper skip were class-A
+                   heuristics (ADR-0016, decision 7) and are gone.
         class_name: enclosing class name, or None for module-level.
-        capabilities: optional list of capabilities (ADR-0009).
-                      When provided, they take precedence over names.
+        capabilities: capabilities extracted from the method body
+                      (ADR-0009). This is the input that decides a kind.
 
     Returns None if the method is not a tool or sink.
     """
     caps = set(capabilities or ())
 
-    # --- Exclusions ---
+    # --- Exclusions (never classify, regardless of capabilities) ---
     if method_name.startswith("_"):
-        return None
-
-    # Skip serialization helpers — not tools.
-    if method_name in SKIP_METHOD_NAMES:
         return None
 
     # Skip server factories — create_*_server.
     if method_name.startswith("create_") and method_name.endswith("_server"):
         return None
 
-    # --- Capability-based refinement (highest priority) ---
+    # --- Capabilities (the only positive signal about behaviour) ---
     if caps & SINK_CAPABILITIES:
         return Classification(
             kind="sink",
@@ -186,28 +159,11 @@ def classify_method(
             attrs["parent_class"] = class_name
         return Classification(kind="tool", attributes=attrs)
 
-    # --- Name-based heuristics ---
-
-    # Sinks (by explicit name)
-    if method_name in SINK_METHOD_NAMES:
-        category = _sink_category(method_name)
-        return Classification(
-            kind="sink",
-            attributes={"category": category},
-        )
-
-    # Tools (in tools/ directory, by prefix)
-    if _has_path_segment(file_path, "tools") and method_name.startswith(TOOL_METHOD_PREFIXES):
-        attrs = {}
-        if class_name:
-            attrs["parent_class"] = class_name
-        return Classification(kind="tool", attributes=attrs)
-
-    # Tools (in MCP servers, non-private methods)
-    if (
-        _has_path_segment(file_path, "mcp")
-        and _has_path_segment(file_path, "servers")
-        and not method_name.startswith("_")
+    # --- Layout (a declaration, not a name guess) ---
+    # Every public method of an MCP server is exposed as a tool; the MCP
+    # framework detectors declare the same set from the server's shape.
+    if _has_path_segment(file_path, "mcp") and _has_path_segment(
+        file_path, "servers"
     ):
         attrs = {}
         if class_name:
@@ -252,21 +208,6 @@ def classify_file(file_path: str) -> Classification | None:
 # ============================================================
 # Helpers
 # ============================================================
-
-def _provider_from_name(class_name: str) -> str:
-    name = class_name.lower()
-    for hint, provider in PROVIDER_HINTS:
-        if hint in name:
-            return provider
-    return "unknown"
-
-
-def _sink_category(method_name: str) -> str:
-    for hint, category in SINK_CATEGORY_HINTS:
-        if hint in method_name:
-            return category
-    return "unknown"
-
 
 def _sink_category_from_caps(caps: set[str]) -> str:
     """Derive a sink category from capabilities."""

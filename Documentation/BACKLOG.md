@@ -29,7 +29,7 @@ Plus two coverage gaps that ADR-0016 does not close:
 **Fix the foundation, then build.** Concretely:
 
 - **Phase A (now):** ADR-0016 and ADR-0017 are accepted. A.1 (schema, `observed_by`) and A.2 (one `config/config.yaml`,
-`--clean` keeps config) are done. Remaining: A.3 (remove class-A heuristics), A.4 (Layer 3 semantic validation).
+`--clean` keeps config) are done. A.3a (`patterns.py` + `classification.py` carry no name→kind table) is done. Remaining: A.3b (the agent-call heuristics in `entry_points.py`), A.4 (Layer 3 semantic validation).
 - **Phase B (next):** close the coverage gaps that make existing features work — cross-file `tool → sink`, write-side for the remaining source families, guardrails as load-bearing, judge determinism.
 - **Phase C (then):** Layer 2 runtime for Python. This is the only path to `data_edges_only > 0` on a real corpus, and it is the largest single piece of work in the project.
 - **Phase D (then):** resume the roadmap — `openai_agents` detector, prompt engineering on a graph where the data exists.
@@ -43,8 +43,8 @@ Plus two coverage gaps that ADR-0016 does not close:
 | # | Item | Priority | Why it is here |
 |---|---|---|---|
 | 1 | **Schema + `observed_by`** (ADR-0016 implementation) | **Critical** | The foundation. Everything else writes into this field. |
-| 2 | **Remove class-A heuristics** (ADR-0016 implementation) | **Critical** | `SINK_METHOD_NAMES`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES` are FinBot-specific. Their removal is the point of ADR-0016. |
-| 3 | **Remove class-A heuristics** (ADR-0016 implementation) | **Critical** | `SINK_METHOD_NAMES`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES` are FinBot-specific. Their removal is the point of ADR-0016. |
+| 2 | **Remove class-A heuristics from `patterns.py` / `classification.py`** (ADR-0016 A.3a) | **Critical** | `SINK_METHOD_NAMES`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES` are FinBot-specific. Their removal is the point of ADR-0016. **Done.** |
+| 3 | **Remove the agent-call heuristics from `entry_points.py`** (ADR-0016 A.3b) | **Critical** | The same heuristics, relocated. An edge must come from framework provenance, not from a class name. **Next.** |
 | 4 | **Layer 3 semantic validation** | **High** | `validated: true` currently does not mean "correct". |
 | 5 | **Cross-file `tool → sink`** | **High** | Without it, chain enumeration misses real paths. |
 | 6 | **Guardrails affect enumeration** | **High** | Guardrails are nodes but not blockers; the prompt is lying to the model. |
@@ -77,7 +77,19 @@ Plus two coverage gaps that ADR-0016 does not close:
 
 ## Recently done
 
- ### 2026-10-25 — A.2: one config file, `--clean` keeps `config/`
+### 2026-10-25 — A.3a: `patterns.py` and `classification.py` are name-free
+
+The class-A heuristics are gone from both modules. A class name no longer grants a node its kind.
+
+- **`patterns.py`:** the seven dictionaries of ADR-0016 are removed, plus `CLASS_SUFFIX_KINDS`, `EXTRA_LLM_CLASSES` and `DELEGATE_METHOD_PREFIX` — the same artefact as a class suffix, a class name and a method prefix. The `*Agent` / `*Orchestrator` / `*LLMClient` / `*Guardrail` / `*Server` suffix rules go with them, so `KnowledgeServer` no longer becomes an `mcp_server` node.
+- **`classification.py`:** `classify_class` and `classify_method` read capabilities and framework provenance only. `provider` on an `llm_endpoint` comes from the detector or the config extractor, never from the class name.
+- **Parked, not fixed:** the agent-call heuristics (`delegate_to_*`, `run_*_agent`, `EXTRA_AGENT_CLASSES`, the bare `*Agent` call) now live in `entry_points.py`, marked "on loan, pending BACKLOG A.3b". Entry-point resolution is unchanged by this commit; A.3b replaces it.
+- **Fixtures:** classes that were "agents" only by name now need a call that carries `calls_llm` (e.g. `self.llm.invoke(...)`) — the capability is the only remaining trigger.
+- **Tests:** dictionary tests replaced by `test_class_a_name_tables_are_gone` / `test_exclusions_remain`; `test_classification.py` rewritten around "capability → kind" and "framework → kind".
+- **Corpus check:** unchanged on `realistic_agent`, NMB, dvmcp and mcploitable. FinBot's delta is deferred to A.3b and explained there (its agents carry no capability evidence — B.10).
+- **Tests: 985 passed.**
+
+### 2026-10-25 — A.2: one config file, `--clean` keeps `config/`
 
 - `config/config.yaml` replaces `config/scan.yaml` +
   `config/models.yaml`. Sections: `detectors`, `llm_classifier`,
@@ -181,7 +193,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### A.2 — `scan.yaml` + `--clean` fix
 
 **Priority:** **Critical**
-**Status:** Not started
+**Status:** Done (2026-10-25). Implemented as a single `config/config.yaml` rather than `config/scan.yaml` — see "Recently done".
 **ADR:** ADR-0016
 **Rationale:** Scan policy must be a file, not flags. `--clean` currently deletes `config/` — a bug. Both are needed before any further configuration is added.
 
@@ -201,20 +213,47 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### A.3 — Remove class-A heuristics
 
 **Priority:** **Critical**
-**Status:** Not started
 **ADR:** ADR-0016
+
+The item is split because the two halves touch different modules and
+carry different corpus risk. A.3a lands first; A.3b is a separate
+commit.
+
+#### A.3a — `patterns.py` + `classification.py`
+
+**Status:** Done (2026-10-25).
 **Rationale:** `SINK_METHOD_NAMES`, `SINK_CATEGORY_HINTS`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES`, `PROVIDER_HINTS`, `TOOL_METHOD_PREFIXES`, `SKIP_METHOD_NAMES` are literal names from FinBot. Their removal is the point of ADR-0016.
 
+**What changed:**
+- `patterns.py`: the seven dictionaries are gone, plus `CLASS_SUFFIX_KINDS`, `EXTRA_LLM_CLASSES` and `DELEGATE_METHOD_PREFIX` — the same artefact in three other shapes (class suffix, class name, method prefix) that grant a node its kind. The `*Agent` / `*Orchestrator` / `*LLMClient` / `*Guardrail` / `*Server` suffix rules are removed with them, so a `*Server` class no longer becomes an `mcp_server` node.
+- `classification.py`: `classify_class` and `classify_method` read capabilities and framework provenance only. `provider` on an `llm_endpoint` comes from the detector or the config extractor, never from the class name (`PROVIDER_HINTS` is gone).
+- The agent-call heuristics that `patterns.py` used to export are parked in `entry_points.py` — behaviour unchanged there, marked "on loan, pending A.3b" — so this commit does not change entry-point resolution.
+- Tests: the dictionary tests are replaced by `test_class_a_name_tables_are_gone` / `test_exclusions_remain`; `test_classification.py` is rewritten around "capability → kind" and "framework → kind". Tests that used name-only agent fixtures now give those classes an LLM-calling body, because `calls_llm` is the only remaining trigger.
+- `PATH_SEGMENT_KINDS` is now dead data. It is removed separately (see "Low").
+
+**Risks:** FinBot-style projects produce fewer nodes. This is intentional — the old behavior was FinBot-specific and wrong on other projects. Measured: unchanged on `realistic_agent`, NMB, dvmcp, mcploitable.
+
+**References:** ADR-0016 §Removal of class-A name heuristics, §Decision 7.
+
+#### A.3b — `entry_points.py` + `delegation_edges.py`
+
+**Status:** Not started. **Next.**
+**Rationale:** The heuristics parked by A.3a are the last name→kind table in the codebase: `delegate_to_<suffix>` → `<Suffix>Agent`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES`, the bare `*Agent` class call, and the `"agents" in path` rule that sets `is_agent_to_agent`.
+
+**The rule that replaces them:** a call site never names an agent. An edge exists when the call graph reaches a node the normalizer already knows is an agent.
+
 **What changes:**
-- `patterns.py`: remove the seven dictionaries.
-- `classification.py`: `classify_class` and `classify_method` read only capabilities and framework attributes.
-- Tests on these dictionaries are removed; `classification.py` tests are rewritten to test "capability → kind" and "framework → kind".
+- `entry_points.py`: the tables and `_agent_name_from_suffix` are deleted, `_extract_agent_call` is replaced by a raw `SymbolCall(handler, callee, file_path, line)` record, and `_is_agent_module` is dropped. The `known_agents` parameter of `run()` is deleted — no caller in `src/`, `run_scan.py` or `tests/` ever passed it.
+- `delegation_edges.py` resolves the records against nodes that already exist: agent nodes by `(name, source_file)`, symbols by `(file, name)` → enclosing class, plus each file's call graph and import table. Same-file name hit → edge; imported name → follow the import into the defining file and walk that symbol's body **exactly one hop** (`MAX_REACHABILITY_HOPS = 1`, cycle-safe) to find an agent node or a method of one. No match → no edge.
+- `entry → agent` vs `agent → agent` is decided by the source node's kind, not by a path. Edge attribute: `resolved_via: "call_graph"` with the hop path as `evidence`.
+- `_agent_to_mcp_server` stops gating on `usage.is_agent_module` and uses the same node-based test.
+- Tests: 6 heuristic tests in `test_entry_points.py` are replaced by `SymbolCall`-record tests; `test_normalizer_stages/test_delegation_edges.py` is re-pointed at resolution (a capability-real agent behind a route → edge; a name-only lookalike → no edge).
 
-**Size:** ~0.5 day.
+**Known corpus effect:** FinBot loses its 8 `*Agent` nodes and its 11 `delegates_to` edges, because its agents carry no capability evidence (`BaseAgent` calls `self.llm_client.chat(...)`, which `CALLS_LLM_RULE` does not match, and `BaseAgent` is in `EXCLUDED_CLASSES`). Accepted as ADR-0016-correct; the capability gap is filed as B.10.
 
-**Risks:** FinBot-style projects produce fewer nodes. This is intentional — the old behavior was FinBot-specific and wrong on other projects.
+**Size:** ~1 day.
 
-**References:** ADR-0016 §Removal of class-A name heuristics.
+**References:** ADR-0016 §Removal of class-A name heuristics, §Decision 7; B.10.
 
 ### A.4 — Layer 3 semantic validation
 
@@ -357,6 +396,23 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 
 **References:** `evaluator._voter_response_dict`; `QueryLayer.is_chain_valid`.
 
+### B.10 — Capability coverage for wrapped LLM clients and inherited capabilities
+
+**Priority:** **High**
+**Status:** Not started
+**Rationale:** Found by the A.3b measurement on FinBot. `CALLS_LLM_RULE` matches `self.llm.invoke(...)` but not `self.llm_client.chat(...)`, because the rule requires the segment immediately before the verb to be exactly `llm`. FinBot's whole agent hierarchy calls `self.llm_client.chat(...)`, so once A.3a/A.3b remove the name rules, no node in that corpus carries `calls_llm` and the `*Agent` nodes disappear. Second gap: `BaseAgent` is in `EXCLUDED_CLASSES`, and a capability is not propagated from a base class to its subclasses, so even a matching rule would mark the base rather than `InvoiceAgent`.
+
+**What changes:**
+- `capability_extractor.py`: match qualifier *families* (`llm`, `llm_client`, `llm_*`) rather than one exact segment, and record which rule matched.
+- Capability inheritance: a class node inherits `calls_llm` (and the other call capabilities) from its base class when the base is defined in the scanned tree. One level up, cycle-safe.
+- Re-measure all five corpora. The target is FinBot's `*Agent` nodes returning **without** a name rule.
+
+**Size:** ~0.5 day.
+
+**Risks:** Verb/qualifier families are where false positives come from (`client.get(...)` on a database client). Every widening needs a negative test.
+
+**References:** `parsing/capability_extractor.py`; A.3b; ADR-0016 §Classification layers.
+
 ---
 
 ## Phase C — Layer 2 runtime (Python)
@@ -449,6 +505,44 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 **Size:** ~1 day.
 
 **References:** ADR-0016 §Positive 6.
+
+### D.3a — Fine-tune a compact AST classifier (LoRA on Qwen3-4B)
+
+**Priority:** Medium (after D.2 + bench_classifier + 200–500 labeled symbols)
+**Status:** Not started
+**Rationale:** A general-purpose 4B model + few-shot is the first cut
+(D.2). Fine-tuning is the second cut, after the benchmark shows *where*
+the base model fails on real corpora. Training on a task that is not yet
+precisely specified is training on noise.
+
+**Prerequisites:**
+1. D.2 works with a stock model + few-shot; `bench_classifier.py` shows
+   the error profile on FinBot, NMB, dvmcp, mcploitable.
+2. 200–500 labeled symbols. Labeling: manual for 50–100, consensus of
+   three large models for the rest (disagreements resolved manually).
+3. Prompt is frozen (the one D.2 ships) — fine-tuning is on the *task*,
+   not on a prompt variant.
+
+**Approach:**
+- LoRA on Qwen3-4B-Instruct (or the winner of the benchmark), rank 16,
+  alpha 32, target modules = attention q/k/v/o + MLP gate/up/down.
+- Training data: `(symbol_source, file_path, imports) -> {kind,
+  capabilities}`. ~1000 examples (200–500 labeled, plus augmentation
+  from the corpora).
+- Eval: held-out 20% of labeled symbols; report `kind_agreement` and
+  `caps_agreement` per corpus. Compare against the base model + few-shot.
+- Serving: same local endpoint (LMStudio/Ollama/vLLM), model id like
+  `aicorellator/ast-classifier-v1`. `llm_classifier_model.model` in
+  config.yaml points at it.
+
+**Blast radius:** none to the codebase — the fine-tuned model is just a
+model id. The prompt and the `DetectionResult` shape are unchanged. The
+fine-tuned model ships as a GGUF / LoRA adapter alongside the repo, or
+is downloaded on first run (decide later; not part of the codebase).
+
+**References:** D.2 (LLM classifier), `bench_classifier.py` results,
+B.10 (capability coverage for wrapped LLM clients — fine-tuning can also
+learn this, but B.10 is the deterministic fix and should land first).
 
 ### D.4 — 1.3c.2 — Any-node semantics for impact sink capabilities
 
@@ -547,6 +641,12 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 **Priority:** **Low**
 **Status:** Not started.
 **Rationale:** `TSAOutput.call_edges` is never populated (the TSA investigation, item 1.1). The field is dead. Remove it, or document that it stays empty by design.
+
+### `PATH_SEGMENT_KINDS` — remove the dead path→kind table
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** `patterns.py`. Nothing reads it — the only caller of `_has_path_segment` is the `mcp/servers/` layout rule. It still encodes `agents/` → agent, `tools/` → tool, `llm/` → llm_endpoint, `guardrails/` → guardrail, i.e. kind by path, which makes it the last member of the class-A family. Removed on its own, outside A.3, so the A.3a/A.3b diffs stay reviewable.
 
 ### Relative imports in cross-file resolution
 
