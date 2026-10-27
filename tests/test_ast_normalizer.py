@@ -31,18 +31,12 @@ from aicorellator.parsing.capability_extractor import (
 )
 from aicorellator.parsing.classification import Classification
 from aicorellator.parsing.entry_points import (
-    AgentCall,
-    EntryPoint,
-    EntryPointOutput,
-)
-from aicorellator.parsing.models import TSASymbol, TSAOutput
-
-from aicorellator.parsing.entry_points import (
-    AgentCall,
     EntryPoint,
     EntryPointOutput,
     MCPUsage,
+    SymbolCall,
 )
+from aicorellator.parsing.models import TSASymbol, TSAOutput
 
 # ============================================================
 # Fixtures
@@ -366,12 +360,18 @@ def test_normalize_entry_point_node(target: Target) -> None:
 
 
 def test_normalize_entry_to_agent_edge(target: Target) -> None:
-    """Entry point handler calling an agent produces delegates_to edge."""
+    """Entry point handler calling an agent produces delegates_to edge.
+
+    The call site is resolved against the agent node, not against its
+    name (ADR-0016, decision 7): the handler's file is the file that
+    holds the agent, so the same-file rule resolves it — no import to
+    follow and no source to read.
+    """
     manifest = FileManifest(target=target)
     tsa = TSAOutput(symbols=[
         TSASymbol(
             name="InvoiceAgent", kind="class",
-            file_path="agents/invoice.py", line_start=1, line_end=50,
+            file_path="apps/api.py", line_start=1, line_end=50,
         ),
     ])
     ep = EntryPointOutput(
@@ -381,16 +381,16 @@ def test_normalize_entry_to_agent_edge(target: Target) -> None:
                 handler="chat_endpoint", file_path="apps/api.py", line=42,
             ),
         ],
-        agent_calls=[
-            AgentCall(
+        symbol_calls=[
+            SymbolCall(
                 handler="chat_endpoint",
-                agent_name="InvoiceAgent",
+                callee="InvoiceAgent",
                 file_path="apps/api.py",
                 line=45,
             ),
         ],
     )
-    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("agents/invoice.py", ("InvoiceAgent", "calls_llm"))))
+    delta = normalize(make_context(manifest, tsa, ep, capabilities=_caps("apps/api.py", ("InvoiceAgent", "calls_llm"))))
 
     entry_nodes = [n for n in delta.nodes if n.kind == "entry_point"]
     agent_nodes = [n for n in delta.nodes if n.kind == "agent"]
@@ -432,7 +432,6 @@ def test_normalize_agent_to_mcp_server_edge(target: Target) -> None:
                 mcp_server_name="findrive",
                 file_path="agents/invoice.py",
                 line=10,
-                is_agent_module=True,
             ),
         ],
     )
@@ -603,13 +602,13 @@ def test_orphan_entry_not_relinked_when_already_linked(target: Target) -> None:
     """An entry point that already has a delegates_to edge is not re-linked."""
     from aicorellator.graph.models import Node
     from aicorellator.parsing.framework_detectors.base import DetectionResult
-    from aicorellator.parsing.entry_points import AgentCall
+    from aicorellator.parsing.entry_points import SymbolCall
 
     manifest = FileManifest(target=target)
     tsa = TSAOutput(symbols=[
         TSASymbol(
             name="InvoiceAgent", kind="class",
-            file_path="agents/invoice.py", line_start=1, line_end=50,
+            file_path="app.py", line_start=1, line_end=50,
         ),
     ])
     ep = EntryPointOutput(
@@ -619,9 +618,9 @@ def test_orphan_entry_not_relinked_when_already_linked(target: Target) -> None:
                 handler="chat", file_path="app.py", line=10,
             ),
         ],
-        agent_calls=[
-            AgentCall(
-                handler="chat", agent_name="InvoiceAgent",
+        symbol_calls=[
+            SymbolCall(
+                handler="chat", callee="InvoiceAgent",
                 file_path="app.py", line=12,
             ),
         ],
@@ -631,17 +630,17 @@ def test_orphan_entry_not_relinked_when_already_linked(target: Target) -> None:
         Node(
             id="agent:1", kind="agent", name="InvoiceAgent",
             host_id="localhost",
-            attributes={"source_file": "agents/invoice.py"},  # no framework
+            attributes={"source_file": "app.py"},  # no framework
         ),
     ]
     delta = normalize(
         make_context(
             manifest, tsa, ep, framework_detection=detection,
-            capabilities=_caps("agents/invoice.py", ("InvoiceAgent", "calls_llm")),
+            capabilities=_caps("app.py", ("InvoiceAgent", "calls_llm")),
         )
     )
     delegates = [e for e in delta.edges if e.kind == "delegates_to"]
-    # Two edges total: one from agent_calls (entry → InvoiceAgent),
+    # Two edges total: one from symbol_calls (entry → InvoiceAgent),
     # and... none from orphan fallback, because InvoiceAgent has
     # no `framework` attribute → framework_agents is empty.
     assert len(delegates) == 1

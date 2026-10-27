@@ -84,9 +84,36 @@ class OrchestratorAgent:
         self.llm = llm_client
 
     async def delegate_to_invoice(self, request: str) -> dict:
-        from finbot.agents.runner import run_invoice_agent
+        from agents.runner import run_invoice_agent
         plan = self.llm.invoke(f"Route this request: {request}")
         return await run_invoice_agent(plan)
+''',
+
+    # The module both call sites import from. The delegation is resolved
+    # by following these imports to this file (ADR-0016, decision 7):
+    # the call site names a runner, and the runner's body is one hop from
+    # the agent node. `run_agent_with_retry` is the hop that is *not*
+    # taken — `MAX_REACHABILITY_HOPS = 1`.
+    "agents/runner.py": '''\
+"""Agent runners — what the API and the orchestrator call into."""
+
+from agents.invoice_agent import InvoiceAgent
+from agents.orchestrator import OrchestratorAgent
+
+
+async def run_orchestrator_agent(request):
+    """Hand a request to the orchestrator."""
+    return await OrchestratorAgent().handle(request)
+
+
+async def run_invoice_agent(plan):
+    """Hand a plan to the invoice agent."""
+    return await InvoiceAgent().process(plan)
+
+
+async def run_agent_with_retry(agent_class, plan):
+    """Two hops from any caller: not examined."""
+    return await agent_class().process(plan)
 ''',
 
     "mcp/servers/findrive/server.py": '''\
@@ -133,7 +160,7 @@ router = APIRouter()
 @router.post("/invoice")
 async def create_invoice(request):
     """Create an invoice via the orchestrator."""
-    from finbot.agents.runner import run_orchestrator_agent
+    from agents.runner import run_orchestrator_agent
     return await run_orchestrator_agent(request)
 ''',
 
@@ -234,6 +261,20 @@ def test_phase1_full_pipeline(
         assert "provides_tool" in edge_kinds
         assert "has_access_to" in edge_kinds
         assert "delegates_to" in edge_kinds
+
+        # The delegation is resolved, not named (ADR-0016, decision 7):
+        # POST /invoice → run_orchestrator_agent → OrchestratorAgent, and
+        # OrchestratorAgent → run_invoice_agent → InvoiceAgent. Both come
+        # from following the import into `agents/runner.py` and reading
+        # one hop of the runner's body.
+        nodes = {n.id: n for n in store.nodes.list()}
+        assert {
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in store.edges.list(kind="delegates_to")
+        } == {
+            ("POST /invoice", "OrchestratorAgent"),
+            ("OrchestratorAgent", "InvoiceAgent"),
+        }
 
 
 def test_pipeline_idempotent(

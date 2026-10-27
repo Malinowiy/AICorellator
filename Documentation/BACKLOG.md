@@ -237,19 +237,33 @@ commit.
 
 #### A.3b — `entry_points.py` + `delegation_edges.py`
 
-**Status:** Not started. **Next.**
+**Status:** Done (2026-10-27).
 **Rationale:** The heuristics parked by A.3a are the last name→kind table in the codebase: `delegate_to_<suffix>` → `<Suffix>Agent`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES`, the bare `*Agent` class call, and the `"agents" in path` rule that sets `is_agent_to_agent`.
 
 **The rule that replaces them:** a call site never names an agent. An edge exists when the call graph reaches a node the normalizer already knows is an agent.
 
-**What changes:**
-- `entry_points.py`: the tables and `_agent_name_from_suffix` are deleted, `_extract_agent_call` is replaced by a raw `SymbolCall(handler, callee, file_path, line)` record, and `_is_agent_module` is dropped. The `known_agents` parameter of `run()` is deleted — no caller in `src/`, `run_scan.py` or `tests/` ever passed it.
+**What changed:**
+- `entry_points.py`: the tables and `_agent_name_from_suffix` are deleted, `_extract_agent_call` is replaced by a raw `SymbolCall(handler, callee, file_path, line)` record, and `_is_agent_module` is dropped. The `known_agents` parameter of `run()` is deleted — no caller in `src/`, `run_scan.py` or `tests/` ever passed it. `MCPUsage.is_agent_module` goes with the path rule it carried.
+- Call sites are now recorded for **every** function, not just route handlers and `agents/` modules. The old gate (`is_route or is_agent_module`) was the same path heuristic in another shape; the resolver filters instead, and it can only filter what it is given. On FinBot that is 9,799 records — none of which becomes an edge.
 - `delegation_edges.py` resolves the records against nodes that already exist: agent nodes by `(name, source_file)`, symbols by `(file, name)` → enclosing class, plus each file's call graph and import table. Same-file name hit → edge; imported name → follow the import into the defining file and walk that symbol's body **exactly one hop** (`MAX_REACHABILITY_HOPS = 1`, cycle-safe) to find an agent node or a method of one. No match → no edge.
+- Two decisions the item left open, both settled towards "resolve, do not guess": the module→file match compares trailing path segments (the manifest carries no package root, so `app.agents.runner` and `agents/runner.py` are the same file), and one hop reads the names a body invokes — the base name of a call target (`WorkerAgent()`, `OrchestratorAgent().handle(request)`) or an argument of a bare-name call the project defines (`run_agent_with_retry(WorkerAgent, task)`). A name in any other position is a mention, not a delegation (`logger.info("Using %s", InvoiceAgent)`), and a project-wide name match is accepted only when the defining file imports the file the agent node lives in.
 - `entry → agent` vs `agent → agent` is decided by the source node's kind, not by a path. Edge attribute: `resolved_via: "call_graph"` with the hop path as `evidence`.
-- `_agent_to_mcp_server` stops gating on `usage.is_agent_module` and uses the same node-based test.
-- Tests: 6 heuristic tests in `test_entry_points.py` are replaced by `SymbolCall`-record tests; `test_normalizer_stages/test_delegation_edges.py` is re-pointed at resolution (a capability-real agent behind a route → edge; a name-only lookalike → no edge).
+- `_agent_to_mcp_server` stops gating on `usage.is_agent_module` and uses the same node-based test — the enclosing class first, then the file's agent node.
+- Tests: 6 heuristic tests in `test_entry_points.py` are replaced by `SymbolCall`-record tests; `test_normalizer_stages/test_delegation_edges.py` is re-pointed at resolution (a capability-real agent behind a route → edge; a name-only lookalike → no edge; the second hop → no edge). `tests/fixtures/agent_delegation/` is new: the positive path end to end, `POST /tasks → OrchestratorAgent → WorkerAgent`.
 
-**Known corpus effect:** FinBot loses its 8 `*Agent` nodes and its 11 `delegates_to` edges, because its agents carry no capability evidence (`BaseAgent` calls `self.llm_client.chat(...)`, which `CALLS_LLM_RULE` does not match, and `BaseAgent` is in `EXCLUDED_CLASSES`). Accepted as ADR-0016-correct; the capability gap is filed as B.10.
+**Measured:** the resolver emitted **zero** `delegates_to` edges on all three workspaces. That is the intended result — it adds an edge only where an agent node already exists to link to, and only from a source node that is an entry handler or an agent file. Nodes and edges are unchanged from A.3a on all three.
+
+| workspace | nodes / edges | agent nodes | `delegates_to` | target kinds | source |
+|---|---|---|---|---|---|
+| finbot-ctf | 355 / 187 | 1 (`MCPToolProvider`) | 0 | — | — |
+| dvmcp | 33 / 47 | 0 | 14 | `tool` ×14 | `mcp_entry_synthesis` |
+| mcploitable | 76 / 46 | 0 | 33 | `tool` ×33 | `mcp_entry_synthesis` |
+
+- **finbot-ctf.** The resolver does resolve two call sites — `_connect_mcp_servers` in `agents/base.py` and `_connect_mcp` in `agents/chat.py`, both reaching `MCPToolProvider` — and still emits no edge: neither source file holds an agent node, so `_source_for` returns `None`. That is the intended A.3b behaviour, and the cause of `delegates_to` 11 → 0. Its single agent node is also why a project like this has so few: agents here carry no capability evidence (`BaseAgent` calls `self.llm_client.chat(...)`, which `CALLS_LLM_RULE` does not match — the capability gap is B.10).
+- **dvmcp / mcploitable.** Neither workspace has an agent node at all, so the resolver has nothing to link to. Their 14 and 33 `delegates_to` edges are `entry_point → tool`, emitted by `mcp_entry_synthesis` with `resolved_via: "mcp_entry"` — not by the resolver, and not from any name.
+- **Superseded figures.** An earlier report in this item's history gave "dvmcp: agents 11 → 1, `delegates_to` 16 → 16" and "mcploitable: agents 6 → 1, `delegates_to` 8 → 8". **Neither is reproducible** — not on the A.3b tree, not on a pre-A.3b checkout; the table above is what the workspaces' DBs show. Those numbers are superseded, not restated.
+
+The same measurement shows a pre-existing overload: `mcp_entry_synthesis` writes `delegates_to` for `entry_point → tool` while this stage writes it for `entry_point | agent → agent`, so on dvmcp and mcploitable **every** `delegates_to` edge in the graph violates C4's "entry point to agent, agent to agent, agent to MCP server". Identical on the pre-A.3b checkout, so it is not an A.3b regression — see "Precision".
 
 **Size:** ~1 day.
 
@@ -672,9 +686,27 @@ required for D.2; record it so the limitation is visible.
 **Priority:** **Low**
 **Rationale:** `reporting/markdown.py` caps at 30 chains per entry point. On FinBot, 182 chains → "… and 152 more chains". The summary count is truthful; the detail is truncated. Make it configurable, or remove the cap and paginate.
 
+### A.3b resolver — call `_source_for` before `_target_for`
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** `SymbolCallResolver.resolve` reads the target first (the caller's import list, then a module→file match per import) and the source second (two dict lookups). Reversing them is output-identical — a `None` from `_source_for` yields `None` either way — and skips every target-side lookup for the call sites that have no source node: 8,215 of finbot-ctf's 9,799 (1,584 keep one). Measured cost of the stage: 0.157 s for 9,799 call sites on finbot-ctf, 1.3 µs per site on mcploitable (1,594 sites) and 4.9 µs on dvmcp (411 sites) — the A.3b fixes leave that in the same range. A micro-optimisation, not a bottleneck; kept out of A.3b so that commit stays a behaviour change.
+
+### Hop-1 does not follow method calls with agent-name arguments
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** `delegation_edges.py` reads an agent name in argument position only when the callee is a bare `ast.Name` that the project defines (`run_agent_with_retry(WorkerAgent, task)`). A method call — `self.run_agent(WorkerAgent)` — has an `ast.Attribute` callee, so the rule does not fire and the argument is not read. Whether that shape is a delegation is an open design question: the AST does not resolve the receiver (ADR-0001), so "is `self.run_agent` project code?" has no local answer. Effect **unknown** — none of the three workspaces measured here shows the shape. Revisit if a corpus does; the module docstring of `delegation_edges.py` records the boundary and why it was left open.
+
 ---
 
 ## Precision — better matching, not more matching
+
+### `delegates_to` is overloaded
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** Three stages write this edge kind, and one of them means something else by it. C4's stage table defines it at row 8 as "`delegates_to` — entry → agent, agent → agent, agent → MCP server", and that is how `delegation_edges` (row 8) and `orphan_entry` (row 16) use it. `mcp_entry_synthesis` (row 15) also emits `delegates_to`, but for `entry_point → tool` — an MCP exposure, not a delegation — with `resolved_via: "mcp_entry"`. On dvmcp and mcploitable **every** `delegates_to` edge in the graph is that kind: 14 and 33 edges, all targeting `tool` nodes. Pre-existing: identical on a pre-A.3b checkout, so not an A.3b regression. A reader — or a query — cannot tell the two apart without reading `resolved_via`. The fix is a decision, not a patch: either a new edge kind for the MCP exposure, or a rename. Not A.3b.
 
 ### Enrichment — cross-file `uses_tool`
 

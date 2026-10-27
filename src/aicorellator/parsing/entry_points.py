@@ -1,27 +1,37 @@
-"""Entry point detector — finds HTTP routes and agent calls in Python code.
+"""Entry point detector — finds entry points and call sites in Python code.
 
 Uses the standard library `ast` module. No external dependencies.
 
-Detects three things from a single parse of each file:
+Detects five things from a single parse of each file:
 
 1. Route decorators (FastAPI, Flask, Starlette) — HTTP and WebSocket:
      @router.get("/path")
      @app.post("/path")
      @router.websocket("/connect")
 
-2. Calls to known agents inside handler bodies. Four heuristics:
-   a. `orchestrator.delegate_to_invoice(...)` — suffix → InvoiceAgent
-   b. `InvoiceAgent.process(...)`             — direct class call
-   c. `run_invoice_agent(...)`                — runner function mapping
-   d. `CoPilotAssistant(...)`                 — extra agent class
+2. CLI entries — `if __name__ == "__main__":` at module level.
 
-3. MCP usages: calls to `create_mcp_server("name", ...)` — links
-   the enclosing agent to the named MCP server.
+3. Streamlit entries — `st.chat_input(...)`, `st.button(...)`, ...
 
-Agent calls inside agent modules (e.g. orchestrator invoking
-run_invoice_agent) are recorded with `is_agent_to_agent=True`, so
-the normalizer emits `delegates_to` edges between agents instead
-of from an entry point.
+4. MCP usages — calls to `create_mcp_server("name", ...)`.
+
+5. Every call site inside every function, as a raw
+   `SymbolCall(handler, callee, file_path, line)` record, plus the
+   per-file call graph and import table.
+
+**A call site never names an agent.** This detector does not know what an
+agent is, so it does not guess: `SymbolCall.callee` is the call target as
+written (`InvoiceAgent.process`, `orchestrator.delegate_to_invoice`,
+`run_invoice_agent`), and nothing else is decided here. Which call sites
+become `delegates_to` edges is resolved by the normalizer against the
+agent nodes the deterministic layers already produced — see
+`normalizer_stages/delegation_edges.py` and ADR-0016 §Decision 7.
+
+Before A.3b this module carried the last name→kind table in the
+codebase (`delegate_to_<suffix>` → `<Suffix>Agent`, `RUNNER_TO_AGENT`,
+`EXTRA_AGENT_CLASSES`, the bare `*Agent` class call, and the
+`"agents" in path` rule that flagged agent-to-agent calls). All five are
+gone; `test_entry_points.py` asserts the shape that replaced them.
 """
 
 from __future__ import annotations
@@ -41,37 +51,6 @@ from ..patterns import (
 log = logging.getLogger(__name__)
 
 
-# ============================================================
-# Class-A name tables — on loan, pending BACKLOG A.3 (entry points)
-# ============================================================
-# These two tables are the last surviving class-A name heuristics.
-# `patterns.py` no longer holds them (ADR-0016, decision 7): the
-# classification layer classifies by capability and framework
-# provenance, and the pattern registry holds no name that grants a
-# kind. They are still read by the four agent-call heuristics below,
-# which the A.3 work replaces with entry-point resolution over
-# framework-detector provenance; the replacement is pending review.
-# Until then they live here, next to their only reader, and they die
-# with it.
-
-# Classes that are agents despite not ending in `*Agent`.
-EXTRA_AGENT_CLASSES: frozenset[str] = frozenset({
-    "CoPilotAssistant",
-})
-
-# Runner function name → agent class name.
-RUNNER_TO_AGENT: dict[str, str] = {
-    "run_orchestrator_agent": "OrchestratorAgent",
-    "run_invoice_agent": "InvoiceAgent",
-    "run_payments_agent": "PaymentsAgent",
-    "run_fraud_agent": "FraudComplianceAgent",
-    "run_onboarding_agent": "VendorOnboardingAgent",
-    "run_communication_agent": "CommunicationAgent",
-}
-
-
-# Module names that contain agent classes. Used to detect agent-to-agent calls.
-
 @dataclass
 class EntryPoint:
     """A single HTTP or WebSocket route."""
@@ -84,20 +63,20 @@ class EntryPoint:
 
 
 @dataclass
-class AgentCall:
-    """A call inside a function body that references an agent.
+class SymbolCall:
+    """A raw call site: who calls what, where — nothing more.
 
-    `agent_name` is the class name (e.g. InvoiceAgent).
-    If `is_agent_to_agent` is True, the enclosing function lives in
-    an agent module (e.g. orchestrator.py), meaning this is an
-    agent-to-agent delegation rather than an entry→agent edge.
+    `callee` is the call target exactly as written, dotted form kept:
+    `InvoiceAgent.process`, `self.orchestrator.run`, `run_invoice_agent`.
+    No segment of it is interpreted here — whether the call means
+    anything is decided by the normalizer, against nodes that already
+    exist (ADR-0016 §Decision 7).
     """
 
     handler: str                # enclosing function name
-    agent_name: str             # e.g. "InvoiceAgent"
+    callee: str                 # call target as written
     file_path: str
     line: int
-    is_agent_to_agent: bool = False
 
 
 @dataclass
@@ -105,14 +84,14 @@ class MCPUsage:
     """A call to create_mcp_server(name) inside a function body.
 
     Indicates that the enclosing agent (or handler) uses the named
-    MCP server.
+    MCP server. Whether the enclosing symbol *is* an agent is decided by
+    the normalizer from the node it resolves to, not from the file path.
     """
 
     handler: str                # enclosing function name
     mcp_server_name: str        # "findrive", "systemutils", etc.
     file_path: str
     line: int
-    is_agent_module: bool = False
 
 
 @dataclass
@@ -120,7 +99,7 @@ class EntryPointOutput:
     """Aggregated result of parsing all files."""
 
     entry_points: list[EntryPoint] = field(default_factory=list)
-    agent_calls: list[AgentCall] = field(default_factory=list)
+    symbol_calls: list[SymbolCall] = field(default_factory=list)
     mcp_usages: list[MCPUsage] = field(default_factory=list)
     call_graph: dict[str, set[str]] = field(default_factory=dict)
     imports: dict[str, list[str]] = field(default_factory=dict)
@@ -129,17 +108,15 @@ class EntryPointOutput:
 
 
 
-def run(manifest, known_agents: set[str] | None = None) -> EntryPointOutput:
-    """Parse every Python file in the manifest for routes and agent calls.
+def run(manifest) -> EntryPointOutput:
+    """Parse every Python file in the manifest.
 
     Args:
         manifest: FileManifest from ingestion.discover()
-        known_agents: optional set of agent class names. If provided,
-            agent calls are filtered to only those matching a known agent.
 
     Returns:
-        EntryPointOutput with all entry points, agent calls, and MCP
-        usages found.
+        EntryPointOutput with all entry points, symbol calls, MCP
+        usages, call graph and imports found.
     """
     output = EntryPointOutput()
 
@@ -162,7 +139,7 @@ def run(manifest, known_agents: set[str] | None = None) -> EntryPointOutput:
             continue
 
         output.files_parsed += 1
-        _walk_module(tree, entry.path, output, known_agents)
+        _walk_module(tree, entry.path, output)
 
     return output
 
@@ -171,12 +148,9 @@ def _walk_module(
     tree: ast.Module,
     file_path: str,
     output: EntryPointOutput,
-    known_agents: set[str] | None,
 ) -> None:
-    """Walk a module: detect routes, agent calls, MCP usages, CLI entries,
+    """Walk a module: detect routes, symbol calls, MCP usages, CLI entries,
     Streamlit entries; build a per-file call graph and import table."""
-    is_agent_module = _is_agent_module(file_path)
-
     # Imports — collected once per file, used by cross-file resolution.
     output.imports[file_path] = _collect_module_imports(tree)
 
@@ -193,50 +167,35 @@ def _walk_module(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             output.call_graph[node.name] = _collect_call_names(node)
 
-
-            _process_function(node, file_path, output, known_agents, is_agent_module)
-
-def _is_agent_module(file_path: str) -> bool:
-    """True if the file lives under agents/ — agent-to-agent calls."""
-    parts = file_path.split("/")
-    return "agents" in parts
+            _process_function(node, file_path, output)
 
 
 def _process_function(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     file_path: str,
     output: EntryPointOutput,
-    known_agents: set[str] | None,
-    is_agent_module: bool,
 ) -> None:
-    """Handle one function: extract routes, then scan body for
-    agent calls and MCP usages."""
-    is_route = False
-
+    """Handle one function: extract routes, then scan the body for
+    symbol calls and MCP usages."""
     for decorator in func.decorator_list:
         route = _extract_route(decorator, func, file_path)
         if route is not None:
             output.entry_points.append(route)
-            is_route = True
 
-    # Scan for MCP usages regardless of route status. An agent's
-    # helper method may create MCP servers, and it lives in a
-    # non-route function.
+    # Every function is scanned, route handler or not: a helper defined
+    # next to a handler is as much a call site as the handler itself, and
+    # a helper inside an agent class is where the delegation often lives.
+    # The filter that used to sit here (`is_route or is_agent_module`)
+    # was a path heuristic; the resolver decides instead, and it can only
+    # decide about calls it was given.
     for child in ast.walk(func):
-        usage = _extract_mcp_usage(child, func, file_path, is_agent_module)
+        usage = _extract_mcp_usage(child, func, file_path)
         if usage is not None:
             output.mcp_usages.append(usage)
 
-    # Scan for agent calls in route handlers and agent modules only.
-    if not is_route and not is_agent_module:
-        return
-
-    for child in ast.walk(func):
-        call = _extract_agent_call(
-            child, func, file_path, known_agents, is_agent_module,
-        )
+        call = _extract_symbol_call(child, func, file_path)
         if call is not None:
-            output.agent_calls.append(call)
+            output.symbol_calls.append(call)
 
 
 def _extract_route(
@@ -275,74 +234,30 @@ def _extract_route(
     )
 
 
-def _extract_agent_call(
+def _extract_symbol_call(
     node: ast.AST,
     enclosing: ast.FunctionDef | ast.AsyncFunctionDef,
     file_path: str,
-    known_agents: set[str] | None,
-    is_agent_module: bool,
-) -> AgentCall | None:
-    """If the node is a call that references an agent, return an AgentCall.
+) -> SymbolCall | None:
+    """If the node is a call, return the raw call site.
 
-    Heuristics (checked in this order):
-      1. `orchestrator.delegate_to_invoice(...)` → InvoiceAgent
-      2. `run_invoice_agent(...)`                → InvoiceAgent
-      3. `CoPilotAssistant(...)`                 → CoPilotAssistant
-      4. `InvoiceAgent.process(...)`             → InvoiceAgent
+    The callee is recorded as written: `orchestrator.delegate_to_invoice`,
+    `InvoiceAgent.process`, `run_invoice_agent`. No segment of it is
+    matched against a name table, and no argument is inspected — the
+    record is provenance, not a verdict (ADR-0016 §Decision 7).
     """
     if not isinstance(node, ast.Call):
         return None
 
-    target_name = _resolve_call_target(node.func)
-    if target_name is None:
+    callee = _resolve_call_target(node.func)
+    if callee is None:
         return None
 
-    last = target_name.split(".")[-1]
-    agent_name: str | None = None
-
-    # Heuristic 1: delegate_to_<suffix> → <Suffix>Agent
-    if last.startswith("delegate_to_"):
-        suffix = last[len("delegate_to_"):]
-        agent_name = _agent_name_from_suffix(suffix)
-
-    # Heuristic 2: runner function — run_invoice_agent(...)
-    elif last in RUNNER_TO_AGENT:
-        agent_name = RUNNER_TO_AGENT[last]
-
-    # Heuristic 3: extra agent classes — CoPilotAssistant(...)
-    elif last in EXTRA_AGENT_CLASSES:
-        agent_name = last
-
-    # Heuristic 4: direct class call — InvoiceAgent(...) or
-    # InvoiceAgent.process(...). Check the FIRST segment.
-    else:
-        first = target_name.split(".")[0]
-        if first.endswith("Agent"):
-            agent_name = first
-    # Heuristic 5: agent function passed as argument to another call.
-    # Example:
-    #     background_tasks.add_task(run_orchestrator_agent, ...)
-    if agent_name is None:
-        for arg in node.args:
-            if isinstance(arg, ast.Name) and arg.id in RUNNER_TO_AGENT:
-                agent_name = RUNNER_TO_AGENT[arg.id]
-                break
-
-    if agent_name is None:
-        return None
-    
-    if agent_name is None:
-        return None
-
-    if known_agents is not None and agent_name not in known_agents:
-        return None
-
-    return AgentCall(
+    return SymbolCall(
         handler=enclosing.name,
-        agent_name=agent_name,
+        callee=callee,
         file_path=file_path,
         line=node.lineno,
-        is_agent_to_agent=is_agent_module,
     )
 
 
@@ -350,7 +265,6 @@ def _extract_mcp_usage(
     node: ast.AST,
     enclosing: ast.FunctionDef | ast.AsyncFunctionDef,
     file_path: str,
-    is_agent_module: bool,
 ) -> MCPUsage | None:
     """Detect `create_mcp_server("name", ...)` calls.
 
@@ -382,7 +296,6 @@ def _extract_mcp_usage(
         mcp_server_name=name_arg.value,
         file_path=file_path,
         line=node.lineno,
-        is_agent_module=is_agent_module,
     )
 
 
@@ -410,17 +323,6 @@ def _resolve_call_target(node: ast.expr) -> str | None:
 
     return None
 
-
-def _agent_name_from_suffix(suffix: str) -> str | None:
-    """Map delegate_to_<suffix> to a plausible agent class name.
-
-    'invoice'    → 'InvoiceAgent'
-    'payments'   → 'PaymentsAgent'
-    'onboarding' → 'OnboardingAgent'
-    """
-    if not suffix:
-        return None
-    return suffix.capitalize() + "Agent"
 
 def _collect_call_names(
     func: ast.FunctionDef | ast.AsyncFunctionDef,

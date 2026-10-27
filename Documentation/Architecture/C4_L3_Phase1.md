@@ -33,7 +33,7 @@ flowchart TB
         TSA[TSA Worker<br/>tree-sitter-analyzer]
         DET[Framework Detectors<br/>langchain, langgraph,<br/>fastmcp, mcp_python]
         RUN[Detectors Runner<br/>orchestrates detectors]
-        EP[Entry Points Detector<br/>routes, agent calls,<br/>call graph]
+        EP[Entry Points Detector<br/>routes, call sites,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
         FLOW["flow/ package<br/>arguments, edge_analyzer,<br/>sink_analyzer, tool_analyzer"]
         NORM["AST Normalizer<br/>17 stages (normalizer_stages/)"]
@@ -200,13 +200,13 @@ flowchart TB
 
 ### 7. Entry Points Detector
 
-**Responsibility:** Finds HTTP routes, WebSocket handlers, agent calls inside route bodies, MCP usages (`create_mcp_server` calls), CLI entry points (`if __name__ == "__main__":`), and Streamlit entry points (`st.chat_input`, `st.button`, `st.form_submit_button`, `st.file_uploader`). Builds a per-file call graph.
+**Responsibility:** Finds HTTP routes, WebSocket handlers, call sites, MCP usages (`create_mcp_server` calls), CLI entry points (`if __name__ == "__main__":`), and Streamlit entry points (`st.chat_input`, `st.button`, `st.form_submit_button`, `st.file_uploader`). Builds a per-file call graph.
 
 **Interface:**
 
-- `run(manifest, known_agents) -> EntryPointOutput`
+- `run(manifest) -> EntryPointOutput`
 - `EntryPointOutput.entry_points: list[EntryPoint]`
-- `EntryPointOutput.agent_calls: list[AgentCall]`
+- `EntryPointOutput.symbol_calls: list[SymbolCall]`
 - `EntryPointOutput.mcp_usages: list[MCPUsage]`
 - `EntryPointOutput.call_graph: dict[str, set[str]]`
 - `EntryPointOutput.imports: dict[str, list[str]]`
@@ -217,7 +217,7 @@ flowchart TB
 
 **Streamlit entry detection:** calls to `st.chat_input`, `st.button`, `st.form_submit_button`, `st.file_uploader` at module level, when the file imports `streamlit`. Marked `method = "STREAMLIT"`, `entry_kind = "streamlit"`.
 
-**Agent call detection:** four heuristics — delegation suffix (`delegate_to_*`), runner-function mapping (`run_*_agent`), extra agent classes, and direct class calls. Calls inside agent modules are flagged as agent-to-agent.
+**Call-site records:** every call inside every function is recorded as a raw `SymbolCall(handler, callee, file_path, line)` — the callee as written, dotted form kept, nothing interpreted. A call site never names an agent (ADR-0016, §Decision 7): which records become `delegates_to` edges is resolved by the normalizer against agent nodes that already exist (`delegation_edges.py`, stage 8).
 
 **MCP usage detection:** calls to `create_mcp_server("name", ...)` record the enclosing handler and the server name.
 
@@ -388,7 +388,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 | Capability Extractor | manifest | per-file `FileCapabilities` |
 | TSA Worker | manifest + root | `TSAOutput` (symbols) |
 | Framework Detectors | manifest | `DetectionResult` (nodes + edges, with `FlowDecision` from enrichment) |
-| Entry Points Detector | manifest | `EntryPointOutput` (routes, agent calls, call graph, imports) |
+| Entry Points Detector | manifest | `EntryPointOutput` (routes, call sites, call graph, imports) |
 | LLM Extractor | manifest | `LLMExtractorOutput` |
 | `flow/` analyzers | tool body + sink call; sink body; class body | `FlowDecision` (kind, evidence, source) |
 | AST Normalizer | `NormalizeContext` | `GraphDelta` with `flow_kind` on every edge |

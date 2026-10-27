@@ -165,7 +165,7 @@ def main() -> int:
     print()
     print(f"TSA:           {tsa.files_analyzed} analyzed, {tsa.files_failed} failed")
     print(f"Entry points:  {len(ep.entry_points)}")
-    print(f"Agent calls:   {len(ep.agent_calls)}")
+    print(f"Symbol calls:  {len(ep.symbol_calls)}")
     print(f"MCP usages:    {len(ep.mcp_usages)}")
     print(f"LLM endpoints: {len(llm.deduplicated())}")
     print()

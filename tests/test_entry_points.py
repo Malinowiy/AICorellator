@@ -1,9 +1,10 @@
 """Unit tests for entry point detection via stdlib ast.
 
-Two categories of tests:
+Four categories of tests:
   - Route detection (HTTP and WebSocket decorators)
-  - Agent call detection (four heuristics)
+  - Symbol call records (raw call sites, ADR-0016 decision 7)
   - MCP usage detection (create_mcp_server calls)
+  - CLI and Streamlit entry points
 
 Files are written to a tmp directory and parsed in-memory —
 no external processes, no fixtures in the repo.
@@ -100,7 +101,7 @@ def helper(x):
 """)
     out = run(manifest)
     assert out.entry_points == []
-    assert out.agent_calls == []
+    assert out.symbol_calls == []
     assert out.mcp_usages == []
 
 
@@ -113,10 +114,14 @@ def test_syntax_error_handled(tmp_manifest) -> None:
 
 
 # ============================================================
-# Agent call detection
+# Symbol call records (ADR-0016, decision 7)
 # ============================================================
+# A call site never names an agent: the detector records the callee as
+# written and decides nothing. Which calls become `delegates_to` edges
+# is the normalizer's job (see
+# `test_normalizer_stages/test_delegation_edges.py`).
 
-def test_detect_delegate_to_call(tmp_manifest) -> None:
+def test_symbol_call_records_attribute_callee(tmp_manifest) -> None:
     manifest, target = tmp_manifest
     _add_py(manifest, target, "api.py", """\
 @router.post("/chat")
@@ -125,24 +130,19 @@ async def chat(request):
 """)
     out = run(manifest)
     assert len(out.entry_points) == 1
-    assert len(out.agent_calls) == 1
-    assert out.agent_calls[0].agent_name == "InvoiceAgent"
-    assert out.agent_calls[0].handler == "chat"
+    # Two records: the decorator is part of the FunctionDef node, so the
+    # walk sees `router.post` too. It is recorded like any other call —
+    # nothing here decides which calls matter.
+    call = next(
+        c for c in out.symbol_calls
+        if c.callee == "orchestrator.delegate_to_invoice"
+    )
+    assert call.handler == "chat"
+    assert call.file_path == "api.py"
+    assert call.line == 3
 
 
-def test_detect_direct_agent_call(tmp_manifest) -> None:
-    manifest, target = tmp_manifest
-    _add_py(manifest, target, "api.py", """\
-@router.post("/chat")
-async def chat(request):
-    return await InvoiceAgent.process(request)
-""")
-    out = run(manifest)
-    assert len(out.agent_calls) == 1
-    assert out.agent_calls[0].agent_name == "InvoiceAgent"
-
-
-def test_detect_runner_function_call(tmp_manifest) -> None:
+def test_symbol_call_records_plain_callee(tmp_manifest) -> None:
     manifest, target = tmp_manifest
     _add_py(manifest, target, "api.py", """\
 @router.post("/chat")
@@ -150,48 +150,71 @@ async def chat(request):
     return await run_orchestrator_agent(request)
 """)
     out = run(manifest)
-    assert len(out.agent_calls) == 1
-    assert out.agent_calls[0].agent_name == "OrchestratorAgent"
+    assert "run_orchestrator_agent" in [c.callee for c in out.symbol_calls]
 
 
-def test_detect_copilot_assistant(tmp_manifest) -> None:
-    manifest, target = tmp_manifest
-    _add_py(manifest, target, "api.py", """\
-@router.post("/copilot/chat")
-async def copilot_chat(request):
-    copilot = CoPilotAssistant(request)
-    return copilot
-""")
-    out = run(manifest)
-    assert len(out.agent_calls) == 1
-    assert out.agent_calls[0].agent_name == "CoPilotAssistant"
+def test_symbol_call_carries_no_agent_verdict(tmp_manifest) -> None:
+    """No agent name, no agent-to-agent flag: the record is a position.
 
-
-def test_agent_to_agent_call_flagged(tmp_manifest) -> None:
-    """Call inside agents/ module → is_agent_to_agent=True."""
+    `agent_name` and `is_agent_to_agent` were the two fields the deleted
+    heuristics filled in. Their absence is the point of A.3b.
+    """
     manifest, target = tmp_manifest
     _add_py(manifest, target, "agents/orchestrator.py", """\
 class OrchestratorAgent:
     async def delegate_to_invoice(self, task):
-        from finbot.agents.runner import run_invoice_agent
-        return await run_invoice_agent(task)
+        return await self.llm_client.chat(task)
 """)
     out = run(manifest)
-    assert len(out.agent_calls) == 1
-    assert out.agent_calls[0].agent_name == "InvoiceAgent"
-    assert out.agent_calls[0].is_agent_to_agent is True
+    call = out.symbol_calls[0]
+    assert call.callee == "self.llm_client.chat"
+    assert not hasattr(call, "agent_name")
+    assert not hasattr(call, "is_agent_to_agent")
 
 
-def test_route_call_not_flagged_as_agent_to_agent(tmp_manifest) -> None:
+def test_symbol_calls_recorded_outside_routes(tmp_manifest) -> None:
+    """Every function is scanned, not just route handlers and agents/.
+
+    The deleted gate was `is_route or is_agent_module`; a helper in a
+    plain module was invisible to it. The resolver filters instead, and
+    it can only filter what it is given.
+    """
     manifest, target = tmp_manifest
-    _add_py(manifest, target, "apps/vendor/routes/api.py", """\
-@router.post("/register")
-async def register(request):
-    return await run_orchestrator_agent(request)
+    _add_py(manifest, target, "services/plumbing.py", """\
+def helper(client):
+    return client.send("ping")
 """)
     out = run(manifest)
-    assert len(out.agent_calls) == 1
-    assert out.agent_calls[0].is_agent_to_agent is False
+    assert out.entry_points == []
+    assert [c.callee for c in out.symbol_calls] == ["client.send"]
+
+
+def test_symbol_call_line_follows_the_call(tmp_manifest) -> None:
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "api.py", """\
+def handler():
+    first()
+    second()
+""")
+    out = run(manifest)
+    assert [(c.callee, c.line) for c in out.symbol_calls] == [
+        ("first", 2), ("second", 3),
+    ]
+
+
+def test_call_target_without_a_name_is_skipped(tmp_manifest) -> None:
+    """`factory()()` has no dotted name of its own.
+
+    The walk still sees the inner `factory()`, which is a call like any
+    other; only the outer nesting has nothing to name.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "api.py", """\
+def handler(factory):
+    return factory()()
+""")
+    out = run(manifest)
+    assert [c.callee for c in out.symbol_calls] == ["factory"]
 
 
 # ============================================================
@@ -212,8 +235,10 @@ class InvoiceAgent:
     assert len(out.mcp_usages) == 1
     usage = out.mcp_usages[0]
     assert usage.mcp_server_name == "findrive"
-    assert usage.is_agent_module is True
     assert usage.handler == "_get_mcp_servers"
+    # No path flag: whether the enclosing symbol is an agent is resolved
+    # from the node it maps to (ADR-0016, decision 7).
+    assert not hasattr(usage, "is_agent_module")
 
 
 def test_detect_multiple_mcp_usages(tmp_manifest) -> None:
