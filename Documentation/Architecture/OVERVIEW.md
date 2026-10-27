@@ -114,11 +114,10 @@ warning), editable by the user, versionable in git.
 detectors:
   enabled: []                 # [] = all built-in detectors
   disabled: []
-user_detectors: []            # paths to user FrameworkDetector subclasses
 
 llm_classifier:
-  mode: "auto"                # off | auto | required
-  config: "config/llm_classifier.yaml"
+  mode: "off"                 # off | auto | required
+  config: null                # reserved; the model is below
 
 runtime:
   mode: "off"                 # off | python
@@ -148,7 +147,6 @@ flowchart LR
         CAP["capability_extractor.py<br/>call-site capabilities"]
         EP["entry_points.py<br/>routes, CLI, Streamlit"]
         FD["framework_detectors/<br/>LangChain, LangGraph, FastMCP, MCP SDK"]
-        FDL["framework_detectors/loader.py<br/>(new) user detectors from paths"]
         FLOW["flow/<br/>per-edge, per-node decisions"]
         LLMC["llm_classifier/<br/>(new) Layer 1b"]
         SC["scan_config.py<br/>(new) ScanConfig dataclass"]

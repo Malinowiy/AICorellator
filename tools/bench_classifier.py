@@ -32,8 +32,12 @@ The script:
      diagnosable without a second run.
   6. Prints a table; writes JSON to --output.
 
-The prompt and the schema are the ones that will live in
-`parsing/llm_classifier/` (D.2). If a model wins, they move unchanged.
+The prompt and the schema are the ones that live in
+`parsing/llm_classifier/prompt.py` (D.2). **If you change one, change the
+other**: the two copies must stay byte-identical, which is what makes this
+benchmark's numbers a statement about the shipped classifier rather than
+about a variant of it. `tests/test_llm_classifier/test_prompt.py` asserts
+the equality, so a drift fails the suite.
 """
 from __future__ import annotations
 

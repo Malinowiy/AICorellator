@@ -22,7 +22,8 @@ Benchmark an LLM classifier for AST symbol classification. Used to:
    server accepts: `json_schema` (LMStudio/llama.cpp/vLLM), then
    `json_object` (OpenAI legacy), then none.
 3. For each symbol, calls the LLM with the classifier prompt (the
-   one that will live in `parsing/llm_classifier/prompt.py`).
+   one that lives in `parsing/llm_classifier/prompt.py`; the two
+   copies are kept byte-identical, and a test asserts it).
 4. Measures latency, JSON validity, and kind/caps agreement with a
    reference labeling (if one is given).
 5. Records HTTP status and the first raw error body, so a 0% result

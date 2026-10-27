@@ -14,6 +14,7 @@ Exports:
   classify_class    — classify a class symbol
   classify_method   — classify a method symbol
   classify_file     — classify a whole file (mcp_server)
+  run_classifier    — run the optional LLM classifier (Layer 1b)
 """
 
 from .models import TSASymbol, TSAOutput
@@ -29,6 +30,7 @@ from .normalizer_context import NormalizeContext, make_context
 from .writer import set_phase1_done, write as write_graph
 from .entry_points import run as run_entry_points
 from .llm_extractor import run as run_llm_extractor
+from .llm_classifier import run_classifier
 from .capability_extractor import (
     FileCapabilities,
     SymbolCapabilities,
@@ -51,6 +53,7 @@ __all__ = [
     "classify_file",
     "classify_method",
     "run_entry_points",
+    "run_classifier",
     "FileCapabilities",
     "SymbolCapabilities",
     "extract_capabilities",

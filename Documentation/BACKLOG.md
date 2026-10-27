@@ -470,25 +470,24 @@ commit.
 
 ### D.2 — LLM classifier (`parsing/llm_classifier/`)
 
-**Priority:** **Medium**
-**Status:** Not started
-**ADR:** ADR-0016
-**Rationale:** The replacement for class-A heuristics on projects with custom SDKs. Opt-in (`mode: auto | required | off` in `evaluation: in config/config.yaml`). When `mode: auto`, invoked only for symbols the deterministic layers did not classify.
+### 2026-10-27 — D.2: opt-in LLM classifier (Layer 1b)
 
-**What changes:**
-- `parsing/llm_classifier/prompt.py` — prompt with `[UNTRUSTED_DATA]` markers; its own `PROMPT_VERSION`.
-- `parsing/llm_classifier/classifier.py` — `classify(file_path, tree, source, host_id) -> DetectionResult`.
-- `parsing/llm_classifier/cache.py` — SQLite cache by `(content_hash, prompt_version, model_id)`.
-- `parsing/llm_classifier/config.py` — `ClassifierConfig` from `config/llm_classifier.yaml`.
-- `parsing/llm_classifier/runner.py` — orchestration: `off` / `auto` / `required`.
-- `parsing/llm_classifier/interactive.py` — `unclassified.action: ask` in TTY.
-- `run_scan.py`: invoked after deterministic layers, before `normalize()`; result merged as `DetectionResult`.
-
-**Size:** ~2–3 days.
-
-**Risks:** non-determinism without cache. The cache is mandatory. Temperature 0.0. Prompt versioned independently of `PROMPT_VERSION` (chain evaluation).
-
-**References:** ADR-0016 §Classification layers.
+- `parsing/llm_classifier/` — 6 modules, 117 tests. `mode: off`
+  default (literal opt-in; ADR-0016). Cache in `cache/llm_classifier.sqlite3`
+  keyed on `(content_hash, prompt_version, model_id)`.
+- Three provenance limiters: (1) `part_of_parent` → no node;
+  (2) method inside an agent-class → no `agent` node, capability
+  to parent; (3) `tool` inside `mcp_server` without a decorator →
+  node created with `unverified_tool: true`.
+- Limiters 1–2 only merge into LLM-created parents; deterministic
+  parents are not enriched (post-classification stage, not D.2).
+- `required` keeps only gaps (deterministic wins).
+- `ask` = warning, not interactive. `interactive.py` not built.
+- `PROMPT_VERSION = "v1.0.0"` in `llm_classifier/prompt.py`, byte-
+  identical to `tools/bench_classifier.py`.
+- **Dependency note:** first `parsing → analysis` import
+  (`parse_json_response`, `LLMResponseError`). New direction,
+  documented here.
 
 ### D.3 — 1.4 — Prompt engineering
 
@@ -543,6 +542,16 @@ is downloaded on first run (decide later; not part of the codebase).
 **References:** D.2 (LLM classifier), `bench_classifier.py` results,
 B.10 (capability coverage for wrapped LLM clients — fine-tuning can also
 learn this, but B.10 is the deterministic fix and should land first).
+
+### Post-classification enrichment (from D.2)
+
+**Priority:** Medium
+**Rationale:** D.2 limiters 1–2 can only merge capabilities into
+parents the classifier itself created. A deterministic parent
+(built by `ClassNodeStage` / `MethodNodeStage`) is not enriched —
+writing LLM capabilities into a deterministic classification is a
+different operation, and it needs a post-`normalize()` stage. Not
+required for D.2; record it so the limitation is visible.
 
 ### D.4 — 1.3c.2 — Any-node semantics for impact sink capabilities
 

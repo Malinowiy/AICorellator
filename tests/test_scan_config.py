@@ -54,7 +54,7 @@ def test_defaults_match_the_documented_template() -> None:
     cfg = default_scan_config()
     assert cfg.detectors.enabled == []
     assert cfg.detectors.disabled == []
-    assert cfg.llm_classifier.mode == "auto"
+    assert cfg.llm_classifier.mode == "off"
     assert cfg.llm_classifier.config is None
     assert cfg.runtime.mode == "off"
     assert cfg.runtime.test_command is None
@@ -143,15 +143,21 @@ def test_runtime_mode_python_warns_until_layer_2_exists(
     assert "runtime.mode" in caplog.text
 
 
-def test_llm_classifier_required_warns_until_it_exists(
+def test_llm_classifier_required_is_implemented_and_quiet(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """`required` is honored, so nothing warns about it (D.2).
+
+    The warning that used to live here — "the LLM classifier is not
+    implemented yet" — was true until Layer 1b landed and would now be a
+    lie: the mode is enforced by `llm_classifier.runner`.
+    """
     with caplog.at_level(logging.WARNING):
         cfg = load_scan_config(_write_config(
             tmp_path, 'llm_classifier:\n  mode: "required"\n',
         ))
     assert cfg.llm_classifier.mode == "required"
-    assert "llm_classifier.mode" in caplog.text
+    assert caplog.records == []
 
 
 def test_policy_that_asks_for_what_exists_is_quiet(

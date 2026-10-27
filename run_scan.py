@@ -15,6 +15,7 @@ from aicorellator.ingestion import ingest, discover
 from aicorellator.parsing import (
     make_context,
     normalize,
+    run_classifier,
     run_tsa,
     set_phase1_done,
     write_graph,
@@ -23,6 +24,11 @@ from aicorellator.parsing.capability_extractor import extract as extract_capabil
 from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.framework_detectors.registry import all_names
+from aicorellator.parsing.llm_classifier import (
+    CACHE_FILENAME,
+    ClassifierConfigError,
+    ClassifierError,
+)
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.reporting import write_bundle
 from aicorellator.scan_config import ScanConfigError, load_scan_config
@@ -125,6 +131,36 @@ def main() -> int:
     )
     print(f"Framework detectors: {len(detection.nodes)} nodes, "
           f"{len(detection.edges)} edges")
+
+    # --- LLM classifier (Layer 1b, opt-in) ---
+    # After the deterministic layers and before `normalize()`: it fills the
+    # gaps they left, and its nodes are merged into the detector output that
+    # `normalize` receives as `framework_detection` (ADR-0016, §Classification
+    # layers). `off` by default — the layer is expensive, and a policy that
+    # asked for it without configuring a model is an error, not a fallback.
+    try:
+        llm_layer = run_classifier(
+            manifest=manifest,
+            tsa_output=tsa,
+            capabilities=capabilities,
+            framework_detection=detection,
+            scan=scan,
+            config_path=config_path,
+            cache_path=ws.cache_dir / CACHE_FILENAME,
+            host_id="localhost",
+        )
+    except (ClassifierConfigError, ClassifierError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    if scan.llm_classifier.mode != "off":
+        # Merged into `detection` in place: `DetectorMergeStage` reads only
+        # `.nodes` and `.edges`, and an LLM node entering that list is
+        # already filtered to the symbols no deterministic layer classified.
+        detection.nodes.extend(llm_layer.nodes)
+        detection.edges.extend(llm_layer.edges)
+        print(f"LLM classifier: {len(llm_layer.nodes)} nodes "
+              f"(mode: {scan.llm_classifier.mode})")
 
     print()
     print(f"TSA:           {tsa.files_analyzed} analyzed, {tsa.files_failed} failed")

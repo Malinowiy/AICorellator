@@ -55,7 +55,7 @@ def test_open_workspace_writes_one_template(tmp_path: Path) -> None:
     # one file, sections per subsystem.
     policy = load_scan_config(ws.config_path)
     assert policy.detectors.enabled == []
-    assert policy.llm_classifier.mode == "auto"
+    assert policy.llm_classifier.mode == "off"
     assert policy.runtime.mode == "off"
     assert policy.logs.keep_archives == 5
 

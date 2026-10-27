@@ -54,6 +54,40 @@ class Classification:
     kind: str
     attributes: dict[str, str] = field(default_factory=dict)
 
+
+# ============================================================
+# Name exclusions
+# ============================================================
+# An exclusion withholds a node; it never grants one (ADR-0016). These are
+# the only places a name decides anything, and they are public because a
+# second reader needs the same answer: the LLM classifier's runner must not
+# ask the model about a symbol the deterministic layers withheld on purpose,
+# or the model would be free to create the node they refused.
+
+def excluded_class_name(class_name: str) -> bool:
+    """True if this class name never gets a node, whatever it contains.
+
+    Abstract bases (`BaseAgent`, `BaseRepository`) are not components, and
+    internal types (`*Result`, `*Error`, `*Schema`) are not components
+    either — a node for them is noise in an attack-surface graph.
+    """
+    return (
+        class_name in EXCLUDED_CLASSES
+        or class_name.endswith(EXCLUDED_CLASS_SUFFIXES)
+    )
+
+
+def excluded_method_name(method_name: str) -> bool:
+    """True if this method name never gets a node, whatever it contains.
+
+    `_private` methods are implementation detail, and `create_*_server` is
+    a factory rather than a tool. Same contract as `excluded_class_name`.
+    """
+    if method_name.startswith("_"):
+        return True
+    return method_name.startswith("create_") and method_name.endswith("_server")
+
+
 # ============================================================
 # Class classification
 # ============================================================
@@ -81,9 +115,7 @@ def classify_class(
     caps = set(capabilities or ())
 
     # --- Exclusions (never classify, regardless of capabilities) ---
-    if class_name in EXCLUDED_CLASSES:
-        return None
-    if class_name.endswith(EXCLUDED_CLASS_SUFFIXES):
+    if excluded_class_name(class_name):
         return None
 
     # --- Capabilities — the only positive signal ---
@@ -139,11 +171,7 @@ def classify_method(
     caps = set(capabilities or ())
 
     # --- Exclusions (never classify, regardless of capabilities) ---
-    if method_name.startswith("_"):
-        return None
-
-    # Skip server factories — create_*_server.
-    if method_name.startswith("create_") and method_name.endswith("_server"):
+    if excluded_method_name(method_name):
         return None
 
     # --- Capabilities (the only positive signal about behaviour) ---

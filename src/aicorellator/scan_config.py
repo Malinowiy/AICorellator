@@ -15,7 +15,7 @@ One file, sections per subsystem. This module owns the scan side
       disabled: []
 
     llm_classifier:
-      mode: "auto"                # off | auto | required
+      mode: "off"                 # off | auto | required
       config: null                # reserved; the model is below
 
     runtime:
@@ -45,11 +45,11 @@ A misspelled *value* of a documented key is an error, never a silent
 fallback: a policy that is not understood is worse than a policy
 that refuses to load.
 
-Only `detectors` is honored today; the other scan-side sections are
-parsed and carried for the layers that will read them (BACKLOG
-A.3+). A policy that asks for a layer which does not exist yet is
-warned about, not rejected: the file is the record of intent, and
-silence would read as "it ran".
+Only `detectors` and `llm_classifier` are honored today; the `runtime`
+section is parsed and carried for the layer that will read it (BACKLOG
+A.3+). A policy that asks for a layer which does not exist yet is warned
+about, not rejected: the file is the record of intent, and silence would
+read as "it ran".
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 
-DEFAULT_LLM_CLASSIFIER_MODE = "auto"
+DEFAULT_LLM_CLASSIFIER_MODE = "off"
 DEFAULT_RUNTIME_MODE = "off"
 DEFAULT_UNCLASSIFIED_ACTION = "ask"
 DEFAULT_LOG_ARCHIVES = 5
@@ -101,6 +101,9 @@ class LLMClassifierConfig:
     `mode` is `off` (never called), `auto` (called only for symbols
     the deterministic layers could not classify) or `required`
     (every unclassified symbol must be resolved or the scan fails).
+    `off` is the default: the layer is opt-in because it is expensive
+    (ADR-0016), and a scan that reaches a model endpoint by default is
+    a scan nobody can run offline.
 
     `config` is a reserved path override, so it defaults to `None`:
     the classifier's model is `llm_classifier_model`, a section of
@@ -245,13 +248,6 @@ def _warn_unimplemented_layers(config: ScanConfig) -> None:
             "(runtime analysis) is not implemented yet — the scan "
             "runs AST-only",
             config.runtime.mode,
-        )
-
-    if config.llm_classifier.mode == "required":
-        log.warning(
-            "scan policy: llm_classifier.mode='required' is set, but "
-            "the LLM classifier is not implemented yet — nothing "
-            "enforces it",
         )
 
 
@@ -413,8 +409,12 @@ detectors:
   enabled: []                 # [] = all built-in detectors
   disabled: []
 
+# Layer 1b (the LLM classifier) is off by default: it is opt-in because
+# it is expensive. "auto" classifies only the symbols no deterministic
+# layer classified; "required" sends every symbol and fails the scan if
+# any is left unclassified.
 llm_classifier:
-  mode: "auto"                # off | auto | required
+  mode: "off"                 # off | auto | required
   config: null                # reserved; the model is below
 
 runtime:
@@ -488,11 +488,13 @@ evaluation:
       max_tokens: 16000
       timeout: 1800
 
-# --- LLM classifier model (BACKLOG D.2) ---
+# --- LLM classifier model (Layer 1b) ---
 #
 # A different model for a different job, so it is not one of the
-# evaluation models (ADR-0016, "Classification layers"). Not read
-# yet: it is carried here so the file is complete.
+# evaluation models (ADR-0016, "Classification layers"). Read only when
+# llm_classifier.mode is "auto" or "required": with the mode at its
+# default "off", the classifier never runs and this section is never
+# read.
 
 llm_classifier_model:
   base_url: "http://localhost:1234/v1"
