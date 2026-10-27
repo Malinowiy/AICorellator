@@ -1,0 +1,7424 @@
+[
+  {
+    "model": "qwen/qwen3-4b-2507",
+    "n_symbols": 300,
+    "response_format": "schema",
+    "json_valid_rate": 1.0,
+    "kind_agreement": 0.6206896551724138,
+    "caps_agreement": 0.4482758620689655,
+    "reference_size": 29,
+    "latency_median_ms": 1988.9620204994571,
+    "latency_p95_ms": 5633.194583992008,
+    "first_error_raw": null,
+    "results": [
+      {
+        "symbol": "agents/base.py:BaseAgent",
+        "latency_ms": 17322,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_env",
+          "reads_secrets",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:__init__",
+        "latency_ms": 2297,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:process",
+        "latency_ms": 1646,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_run_agent_loop",
+        "latency_ms": 5905,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_get_system_prompt",
+        "latency_ms": 1679,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_system_prompt",
+        "latency_ms": 2650,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_env",
+          "reads_secrets",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_get_user_prompt",
+        "latency_ms": 1739,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_tool_definitions",
+        "latency_ms": 3190,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_tool_definitions",
+        "latency_ms": 2030,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_max_iterations",
+        "latency_ms": 1563,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_max_stall_iterations",
+        "latency_ms": 1515,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_load_config",
+        "latency_ms": 1113,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_complete_task",
+        "latency_ms": 1870,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_callables",
+        "latency_ms": 1907,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_callables",
+        "latency_ms": 1504,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:log_task_start",
+        "latency_ms": 1892,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:log_task_completion",
+        "latency_ms": 2332,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:context_info",
+        "latency_ms": 2335,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_mcp_servers",
+        "latency_ms": 1923,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_connect_mcp_servers",
+        "latency_ms": 1553,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_disconnect_mcp_servers",
+        "latency_ms": 1540,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_on_task_completion",
+        "latency_ms": 1830,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:ChatAssistantBase",
+        "latency_ms": 10973,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_db",
+          "writes_db",
+          "reads_env",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 3607,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_env",
+          "reads_secrets"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_resolve_workflow_id",
+        "latency_ms": 1986,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 1753,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_connect_mcp",
+        "latency_ms": 2317,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 1673,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 1159,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 1153,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_tool_definitions",
+        "latency_ms": 1622,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_tool_source",
+        "latency_ms": 1987,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_execute_tool",
+        "latency_ms": 2396,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_load_history",
+        "latency_ms": 1880,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_save_message",
+        "latency_ms": 2284,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_start_workflow",
+        "latency_ms": 2698,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "writes_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_tool_display_label",
+        "latency_ms": 1773,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:stream_response",
+        "latency_ms": 5986,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_untrusted",
+          "reads_env",
+          "reads_secrets"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:VendorChatAssistant",
+        "latency_ms": 7153,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 1683,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 1691,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 3668,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 3261,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 2826,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_details",
+        "latency_ms": 1475,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_invoice_details",
+        "latency_ms": 1506,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_invoices",
+        "latency_ms": 1985,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_payment_summary",
+        "latency_ms": 1548,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_contact_info",
+        "latency_ms": 2354,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:CoPilotAssistant",
+        "latency_ms": 15223,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "reads_db",
+          "writes_db",
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 1846,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 1666,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 4715,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 5323,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 1961,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_list_vendors",
+        "latency_ms": 1991,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_details",
+        "latency_ms": 1468,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_invoice_details",
+        "latency_ms": 1505,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_invoices",
+        "latency_ms": 1985,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_payment_summary",
+        "latency_ms": 1547,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_contact_info",
+        "latency_ms": 2274,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_all_vendors_summary",
+        "latency_ms": 1975,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_pending_actions_summary",
+        "latency_ms": 2013,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_compliance_docs",
+        "latency_ms": 1615,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_activity_report",
+        "latency_ms": 2192,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_save_report",
+        "latency_ms": 2450,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:OrchestratorAgent",
+        "latency_ms": 15490,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:__init__",
+        "latency_ms": 1845,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_load_config",
+        "latency_ms": 1530,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_max_iterations",
+        "latency_ms": 1488,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:process",
+        "latency_ms": 1927,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_system_prompt",
+        "latency_ms": 5656,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_env",
+          "reads_secrets",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_user_prompt",
+        "latency_ms": 1652,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_tool_definitions",
+        "latency_ms": 4426,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_check_delegation_limit",
+        "latency_ms": 1539,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_enrich_with_prior_context",
+        "latency_ms": 2301,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_capture_agent_context",
+        "latency_ms": 1551,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_onboarding",
+        "latency_ms": 2732,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_invoice",
+        "latency_ms": 2128,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_fraud",
+        "latency_ms": 2348,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_payments",
+        "latency_ms": 3222,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_system_maintenance",
+        "latency_ms": 3232,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_communication",
+        "latency_ms": 2401,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_callables",
+        "latency_ms": 1595,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_emit_delegation_event",
+        "latency_ms": 1752,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_on_task_completion",
+        "latency_ms": 1376,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_agent_with_retry",
+        "latency_ms": 3793,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_onboarding_agent",
+        "latency_ms": 2083,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_invoice_agent",
+        "latency_ms": 2540,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_payments_agent",
+        "latency_ms": 2619,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_fraud_agent",
+        "latency_ms": 2428,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_orchestrator_agent",
+        "latency_ms": 3057,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_communication_agent",
+        "latency_ms": 2305,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:CommunicationAgent",
+        "latency_ms": 7547,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:__init__",
+        "latency_ms": 1784,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_load_config",
+        "latency_ms": 1347,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:process",
+        "latency_ms": 1418,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_mcp_servers",
+        "latency_ms": 1671,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_system_prompt",
+        "latency_ms": 5333,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_env",
+          "reads_secrets",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_user_prompt",
+        "latency_ms": 1733,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_tool_definitions",
+        "latency_ms": 2055,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_vendor_contact_info",
+        "latency_ms": 2690,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_vendor_details",
+        "latency_ms": 1768,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_invoice_details",
+        "latency_ms": 2227,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_callables",
+        "latency_ms": 1445,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_on_task_completion",
+        "latency_ms": 1617,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:FraudComplianceAgent",
+        "latency_ms": 16470,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:__init__",
+        "latency_ms": 1793,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_load_config",
+        "latency_ms": 1907,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_mcp_servers",
+        "latency_ms": 2139,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:process",
+        "latency_ms": 1665,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_system_prompt",
+        "latency_ms": 5494,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_user_prompt",
+        "latency_ms": 3702,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_tool_definitions",
+        "latency_ms": 3239,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_vendor_risk_profile",
+        "latency_ms": 2701,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_invoice_details",
+        "latency_ms": 1843,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_vendor_invoices",
+        "latency_ms": 1899,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:update_vendor_risk",
+        "latency_ms": 2513,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:flag_invoice_for_review",
+        "latency_ms": 2398,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_callables",
+        "latency_ms": 2050,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_on_task_completion",
+        "latency_ms": 2870,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:InvoiceAgent",
+        "latency_ms": 14117,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:__init__",
+        "latency_ms": 1617,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_load_config",
+        "latency_ms": 1767,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_mcp_servers",
+        "latency_ms": 1785,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:process",
+        "latency_ms": 1654,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_system_prompt",
+        "latency_ms": 5633,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_user_prompt",
+        "latency_ms": 2963,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_tool_definitions",
+        "latency_ms": 2993,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:get_invoice_details",
+        "latency_ms": 2490,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:update_invoice_status",
+        "latency_ms": 3197,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:get_vendor_details",
+        "latency_ms": 3002,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_callables",
+        "latency_ms": 1559,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_on_task_completion",
+        "latency_ms": 2112,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:VendorOnboardingAgent",
+        "latency_ms": 11481,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "invokes_mcp_tool",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:__init__",
+        "latency_ms": 1556,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_load_config",
+        "latency_ms": 1510,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:process",
+        "latency_ms": 1592,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_system_prompt",
+        "latency_ms": 5680,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_env",
+          "reads_secrets",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_user_prompt",
+        "latency_ms": 2927,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_tool_definitions",
+        "latency_ms": 2746,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:get_vendor_details",
+        "latency_ms": 2479,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:update_vendor_status",
+        "latency_ms": 2640,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_callables",
+        "latency_ms": 1515,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_on_task_completion",
+        "latency_ms": 2264,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:PaymentsAgent",
+        "latency_ms": 10283,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:__init__",
+        "latency_ms": 1588,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_load_config",
+        "latency_ms": 1596,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:process",
+        "latency_ms": 1783,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_mcp_servers",
+        "latency_ms": 1747,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_system_prompt",
+        "latency_ms": 3944,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_user_prompt",
+        "latency_ms": 1819,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_tool_definitions",
+        "latency_ms": 2614,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_invoice_for_payment",
+        "latency_ms": 2286,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_vendor_details",
+        "latency_ms": 2837,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_vendor_payment_summary",
+        "latency_ms": 2144,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:process_payment",
+        "latency_ms": 3127,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_callables",
+        "latency_ms": 1852,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_on_task_completion",
+        "latency_ms": 1801,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:_json_safe_value",
+        "latency_ms": 2074,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:agent_tool",
+        "latency_ms": 5005,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:async_wrapper",
+        "latency_ms": 2910,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:sync_wrapper",
+        "latency_ms": 3433,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:execute_with_events",
+        "latency_ms": 2488,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ServerConfigUpdate",
+        "latency_ms": 1975,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_mcp_servers",
+        "latency_ms": 2110,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_mcp_server",
+        "latency_ms": 2694,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:update_mcp_server_config",
+        "latency_ms": 2084,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:toggle_mcp_server",
+        "latency_ms": 1760,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_messages",
+        "latency_ms": 1609,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message_stats",
+        "latency_ms": 2253,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message_contacts",
+        "latency_ms": 2129,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message",
+        "latency_ms": 1723,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:mark_message_read",
+        "latency_ms": 1761,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:mark_all_messages_read",
+        "latency_ms": 1981,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ComposeEmailRequest",
+        "latency_ms": 2760,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:send_message",
+        "latency_ms": 3240,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "http_egress",
+          "reads_db",
+          "writes_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_admin_files",
+        "latency_ms": 2063,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_admin_file",
+        "latency_ms": 2379,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_mcp_activity",
+        "latency_ms": 1778,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:_make_dummy_session_context",
+        "latency_ms": 2210,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:_get_default_tool_definitions",
+        "latency_ms": 2649,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ChatRequest",
+        "latency_ms": 2330,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:copilot_chat",
+        "latency_ms": 2291,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_copilot_history",
+        "latency_ms": 1862,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:clear_copilot_history",
+        "latency_ms": 1535,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_home",
+        "latency_ms": 1384,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_dashboard",
+        "latency_ms": 2370,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_messages",
+        "latency_ms": 1477,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_findrive",
+        "latency_ms": 2788,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_servers",
+        "latency_ms": 1096,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_config",
+        "latency_ms": 1844,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_activity",
+        "latency_ms": 1129,
+        "status": 200,
+        "kind": "mcp_server",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/auth.py:get_allowed_emails_from_env",
+        "latency_ms": 1232,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:is_cc_authorized",
+        "latency_ms": 1623,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db",
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:seed_admins_from_env",
+        "latency_ms": 1374,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:cc_auth_guard",
+        "latency_ms": 1282,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/auth.py:_forbidden_response",
+        "latency_ms": 1911,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/health.py:check_database",
+        "latency_ms": 1701,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_redis",
+        "latency_ms": 1912,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/health.py:check_llm",
+        "latency_ms": 2191,
+        "status": 200,
+        "kind": "llm_endpoint",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/health.py:check_ctf_engine",
+        "latency_ms": 1901,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_db_size",
+        "latency_ms": 1715,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:_check_endpoint",
+        "latency_ms": 1419,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_ctf_apps",
+        "latency_ms": 1434,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:get_all_health",
+        "latency_ms": 1912,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted",
+          "reads_env",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/main.py:enforce_cc_auth",
+        "latency_ms": 1340,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/models.py:PlatformAdmin",
+        "latency_ms": 1824,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/models.py:__repr__",
+        "latency_ms": 1071,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:access_list",
+        "latency_ms": 1725,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:add_admin",
+        "latency_ms": 1388,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:toggle_admin",
+        "latency_ms": 1162,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:_sanitize_days",
+        "latency_ms": 1319,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:analytics_dashboard",
+        "latency_ms": 2530,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:page_drilldown",
+        "latency_ms": 2009,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_traffic_api",
+        "latency_ms": 1284,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_latency_api",
+        "latency_ms": 1312,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:ctf_analytics",
+        "latency_ms": 2422,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_events_api",
+        "latency_ms": 1533,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_completions_api",
+        "latency_ms": 1965,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:threat_intel",
+        "latency_ms": 2466,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_probes_api",
+        "latency_ms": 1578,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_bot_traffic_api",
+        "latency_ms": 1340,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:_get_filter_options",
+        "latency_ms": 1513,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:_query_events",
+        "latency_ms": 2759,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:audit_list",
+        "latency_ms": 2051,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:_badge_list_with_stats",
+        "latency_ms": 2709,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:badges_list",
+        "latency_ms": 2193,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:toggle_badge",
+        "latency_ms": 1303,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:_challenge_list_with_stats",
+        "latency_ms": 2483,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:_build_coverage_matrix",
+        "latency_ms": 2290,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:challenges_list",
+        "latency_ms": 1727,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:toggle_challenge",
+        "latency_ms": 1287,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/dashboard.py:_get_pulse_stats",
+        "latency_ms": 1888,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/dashboard.py:desktop",
+        "latency_ms": 2948,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/health.py:health_check",
+        "latency_ms": 2299,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/health.py:is_ok",
+        "latency_ms": 1367,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:_user_list",
+        "latency_ms": 2348,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:_user_detail",
+        "latency_ms": 3507,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:users_list",
+        "latency_ms": 1915,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:user_detail",
+        "latency_ms": 2660,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:kill_sessions",
+        "latency_ms": 1318,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:delete_profile",
+        "latency_ms": 1202,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:toggle_active",
+        "latency_ms": 1435,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:full_ctf_reset",
+        "latency_ms": 1657,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:PlaywrightRenderer",
+        "latency_ms": 2995,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:__init__",
+        "latency_ms": 1186,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:start",
+        "latency_ms": 1568,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:render_to_png",
+        "latency_ms": 2194,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:shutdown",
+        "latency_ms": 1331,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:get_renderer",
+        "latency_ms": 2023,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:ActivityItem",
+        "latency_ms": 2375,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:WorkflowAchievement",
+        "latency_ms": 2042,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:ActivityResponse",
+        "latency_ms": 2007,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:_build_achievements",
+        "latency_ms": 2529,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:get_activity",
+        "latency_ms": 2761,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:BadgeListItem",
+        "latency_ms": 2051,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:BadgeDetail",
+        "latency_ms": 1509,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:list_badges",
+        "latency_ms": 2757,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:get_badge",
+        "latency_ms": 2678,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:ChallengeListItem",
+        "latency_ms": 2109,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:ChallengeDetail",
+        "latency_ms": 2335,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:CheckResult",
+        "latency_ms": 1942,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:HintResponse",
+        "latency_ms": 1944,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:list_challenges",
+        "latency_ms": 2347,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:get_challenge",
+        "latency_ms": 3263,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:check_challenge",
+        "latency_ms": 1915,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:use_hint",
+        "latency_ms": 2009,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:calculate_level",
+        "latency_ms": 1901,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:xp_progress",
+        "latency_ms": 2139,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:gravatar_url",
+        "latency_ms": 1991,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:resolve_avatar_url",
+        "latency_ms": 1559,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:SocialLinksResponse",
+        "latency_ms": 2631,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:ProfileResponse",
+        "latency_ms": 2473,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:SocialLinksUpdate",
+        "latency_ms": 1675,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:ProfileUpdateRequest",
+        "latency_ms": 2235,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:FeaturedBadgesRequest",
+        "latency_ms": 1278,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:UsernameCheckResponse",
+        "latency_ms": 1349,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:BadgeSummary",
+        "latency_ms": 2010,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:CategoryProgress",
+        "latency_ms": 1938,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:RecentAchievement",
+        "latency_ms": 2008,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:PublicProfileResponse",
+        "latency_ms": 2906,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_build_social_links",
+        "latency_ms": 1844,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_update_social_links",
+        "latency_ms": 1648,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_build_profile_response",
+        "latency_ms": 1750,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:get_own_profile",
+        "latency_ms": 1986,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:update_profile",
+        "latency_ms": 2816,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_untrusted",
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:set_featured_badges",
+        "latency_ms": 2301,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:check_username_availability",
+        "latency_ms": 1287,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:get_public_profile",
+        "latency_ms": 5136,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_get_image_b64",
+        "latency_ms": 1439,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_get_badge_image_b64",
+        "latency_ms": 1826,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:get_cache_path",
+        "latency_ms": 2016,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_fetch_avatar_b64",
+        "latency_ms": 2105,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_badge_template_context",
+        "latency_ms": 2264,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_make_qr_data_uri",
+        "latency_ms": 2159,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_profile_url",
+        "latency_ms": 1344,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_render_html",
+        "latency_ms": 1527,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_untrusted"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_render_card",
+        "latency_ms": 1530,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:get_profile_card",
+        "latency_ms": 3846,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db",
+          "reads_untrusted"
+        ]
+      }
+    ]
+  },
+  {
+    "model": "abdulmannan-01_-_llama-3.2-3b-finetuned-for-json-generation-new",
+    "n_symbols": 300,
+    "response_format": "schema",
+    "json_valid_rate": 1.0,
+    "kind_agreement": 0.4482758620689655,
+    "caps_agreement": 0.1724137931034483,
+    "reference_size": 29,
+    "latency_median_ms": 768.192083494796,
+    "latency_p95_ms": 2684.339415995055,
+    "first_error_raw": null,
+    "results": [
+      {
+        "symbol": "agents/base.py:BaseAgent",
+        "latency_ms": 10101,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:__init__",
+        "latency_ms": 1046,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:process",
+        "latency_ms": 701,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_run_agent_loop",
+        "latency_ms": 2863,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_get_system_prompt",
+        "latency_ms": 713,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_system_prompt",
+        "latency_ms": 1061,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_user_prompt",
+        "latency_ms": 654,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_tool_definitions",
+        "latency_ms": 939,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_get_tool_definitions",
+        "latency_ms": 625,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_max_iterations",
+        "latency_ms": 632,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_max_stall_iterations",
+        "latency_ms": 609,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_load_config",
+        "latency_ms": 590,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_complete_task",
+        "latency_ms": 701,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_get_final_callables",
+        "latency_ms": 711,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_callables",
+        "latency_ms": 654,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:log_task_start",
+        "latency_ms": 957,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:log_task_completion",
+        "latency_ms": 773,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:context_info",
+        "latency_ms": 716,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_mcp_servers",
+        "latency_ms": 667,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_connect_mcp_servers",
+        "latency_ms": 869,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_disconnect_mcp_servers",
+        "latency_ms": 602,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_on_task_completion",
+        "latency_ms": 775,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:ChatAssistantBase",
+        "latency_ms": 5551,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 1079,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_resolve_workflow_id",
+        "latency_ms": 909,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 730,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_connect_mcp",
+        "latency_ms": 986,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 691,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 636,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 648,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_tool_definitions",
+        "latency_ms": 708,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_tool_source",
+        "latency_ms": 683,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_execute_tool",
+        "latency_ms": 877,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_load_history",
+        "latency_ms": 748,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_save_message",
+        "latency_ms": 688,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_start_workflow",
+        "latency_ms": 1240,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_tool_display_label",
+        "latency_ms": 703,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:stream_response",
+        "latency_ms": 2602,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:VendorChatAssistant",
+        "latency_ms": 3050,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 818,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 704,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 1396,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 1687,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 784,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_details",
+        "latency_ms": 718,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_invoice_details",
+        "latency_ms": 720,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_invoices",
+        "latency_ms": 733,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_payment_summary",
+        "latency_ms": 730,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_contact_info",
+        "latency_ms": 729,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:CoPilotAssistant",
+        "latency_ms": 5588,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 814,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 702,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 2156,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 2685,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 937,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_list_vendors",
+        "latency_ms": 787,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_details",
+        "latency_ms": 718,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_invoice_details",
+        "latency_ms": 718,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_invoices",
+        "latency_ms": 730,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_payment_summary",
+        "latency_ms": 730,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_contact_info",
+        "latency_ms": 729,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_all_vendors_summary",
+        "latency_ms": 740,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_pending_actions_summary",
+        "latency_ms": 726,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_compliance_docs",
+        "latency_ms": 743,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_activity_report",
+        "latency_ms": 729,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_save_report",
+        "latency_ms": 708,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:OrchestratorAgent",
+        "latency_ms": 8977,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:__init__",
+        "latency_ms": 1255,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_load_config",
+        "latency_ms": 578,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_max_iterations",
+        "latency_ms": 630,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:process",
+        "latency_ms": 704,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_system_prompt",
+        "latency_ms": 2603,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_user_prompt",
+        "latency_ms": 852,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_tool_definitions",
+        "latency_ms": 2271,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_check_delegation_limit",
+        "latency_ms": 797,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_enrich_with_prior_context",
+        "latency_ms": 750,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_capture_agent_context",
+        "latency_ms": 589,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_onboarding",
+        "latency_ms": 803,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_invoice",
+        "latency_ms": 861,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_fraud",
+        "latency_ms": 877,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_payments",
+        "latency_ms": 862,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_system_maintenance",
+        "latency_ms": 910,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_communication",
+        "latency_ms": 954,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_callables",
+        "latency_ms": 682,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_emit_delegation_event",
+        "latency_ms": 767,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_on_task_completion",
+        "latency_ms": 597,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_agent_with_retry",
+        "latency_ms": 1442,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_onboarding_agent",
+        "latency_ms": 783,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_invoice_agent",
+        "latency_ms": 784,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_payments_agent",
+        "latency_ms": 782,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_fraud_agent",
+        "latency_ms": 783,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_orchestrator_agent",
+        "latency_ms": 787,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/runner.py:run_communication_agent",
+        "latency_ms": 783,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:CommunicationAgent",
+        "latency_ms": 4209,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:__init__",
+        "latency_ms": 855,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_load_config",
+        "latency_ms": 654,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:process",
+        "latency_ms": 669,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_mcp_servers",
+        "latency_ms": 700,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_system_prompt",
+        "latency_ms": 2353,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_user_prompt",
+        "latency_ms": 751,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_tool_definitions",
+        "latency_ms": 959,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_vendor_contact_info",
+        "latency_ms": 731,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_vendor_details",
+        "latency_ms": 844,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_invoice_details",
+        "latency_ms": 840,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_callables",
+        "latency_ms": 615,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_on_task_completion",
+        "latency_ms": 709,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:FraudComplianceAgent",
+        "latency_ms": 8515,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:__init__",
+        "latency_ms": 1148,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_load_config",
+        "latency_ms": 782,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_mcp_servers",
+        "latency_ms": 761,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:process",
+        "latency_ms": 786,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_system_prompt",
+        "latency_ms": 2684,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_user_prompt",
+        "latency_ms": 1316,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_tool_definitions",
+        "latency_ms": 1844,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_vendor_risk_profile",
+        "latency_ms": 717,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_invoice_details",
+        "latency_ms": 715,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_vendor_invoices",
+        "latency_ms": 761,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:update_vendor_risk",
+        "latency_ms": 1065,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:flag_invoice_for_review",
+        "latency_ms": 1179,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_callables",
+        "latency_ms": 698,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_on_task_completion",
+        "latency_ms": 807,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:InvoiceAgent",
+        "latency_ms": 7088,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:__init__",
+        "latency_ms": 918,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_load_config",
+        "latency_ms": 706,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_mcp_servers",
+        "latency_ms": 705,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:process",
+        "latency_ms": 886,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_system_prompt",
+        "latency_ms": 2860,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_user_prompt",
+        "latency_ms": 1109,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_tool_definitions",
+        "latency_ms": 1238,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:get_invoice_details",
+        "latency_ms": 865,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:update_invoice_status",
+        "latency_ms": 1226,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:get_vendor_details",
+        "latency_ms": 973,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_callables",
+        "latency_ms": 648,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_on_task_completion",
+        "latency_ms": 866,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:VendorOnboardingAgent",
+        "latency_ms": 6368,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:__init__",
+        "latency_ms": 814,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_load_config",
+        "latency_ms": 578,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:process",
+        "latency_ms": 748,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_system_prompt",
+        "latency_ms": 2776,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_user_prompt",
+        "latency_ms": 1181,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_tool_definitions",
+        "latency_ms": 1097,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:get_vendor_details",
+        "latency_ms": 929,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:update_vendor_status",
+        "latency_ms": 1318,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_callables",
+        "latency_ms": 629,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_on_task_completion",
+        "latency_ms": 864,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:PaymentsAgent",
+        "latency_ms": 5699,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:__init__",
+        "latency_ms": 751,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_load_config",
+        "latency_ms": 674,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:process",
+        "latency_ms": 788,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_mcp_servers",
+        "latency_ms": 719,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_system_prompt",
+        "latency_ms": 1862,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_user_prompt",
+        "latency_ms": 778,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_tool_definitions",
+        "latency_ms": 1402,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_invoice_for_payment",
+        "latency_ms": 701,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_vendor_details",
+        "latency_ms": 931,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_vendor_payment_summary",
+        "latency_ms": 820,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:process_payment",
+        "latency_ms": 1171,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_callables",
+        "latency_ms": 673,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_on_task_completion",
+        "latency_ms": 829,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:_json_safe_value",
+        "latency_ms": 743,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:agent_tool",
+        "latency_ms": 2643,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:async_wrapper",
+        "latency_ms": 1300,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:sync_wrapper",
+        "latency_ms": 1435,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:execute_with_events",
+        "latency_ms": 1169,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ServerConfigUpdate",
+        "latency_ms": 667,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_mcp_servers",
+        "latency_ms": 1022,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_mcp_server",
+        "latency_ms": 983,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:update_mcp_server_config",
+        "latency_ms": 858,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:toggle_mcp_server",
+        "latency_ms": 827,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_messages",
+        "latency_ms": 904,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message_stats",
+        "latency_ms": 780,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message_contacts",
+        "latency_ms": 802,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message",
+        "latency_ms": 788,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:mark_message_read",
+        "latency_ms": 830,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:mark_all_messages_read",
+        "latency_ms": 781,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ComposeEmailRequest",
+        "latency_ms": 782,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:send_message",
+        "latency_ms": 1119,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_admin_files",
+        "latency_ms": 889,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_admin_file",
+        "latency_ms": 796,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_mcp_activity",
+        "latency_ms": 905,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:_make_dummy_session_context",
+        "latency_ms": 774,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:_get_default_tool_definitions",
+        "latency_ms": 1019,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ChatRequest",
+        "latency_ms": 699,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:copilot_chat",
+        "latency_ms": 865,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_copilot_history",
+        "latency_ms": 789,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:clear_copilot_history",
+        "latency_ms": 785,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_home",
+        "latency_ms": 529,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_dashboard",
+        "latency_ms": 643,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_messages",
+        "latency_ms": 641,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_findrive",
+        "latency_ms": 603,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_servers",
+        "latency_ms": 569,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_config",
+        "latency_ms": 587,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_activity",
+        "latency_ms": 590,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/auth.py:get_allowed_emails_from_env",
+        "latency_ms": 611,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:is_cc_authorized",
+        "latency_ms": 649,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:seed_admins_from_env",
+        "latency_ms": 817,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:cc_auth_guard",
+        "latency_ms": 627,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/auth.py:_forbidden_response",
+        "latency_ms": 837,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_database",
+        "latency_ms": 619,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_redis",
+        "latency_ms": 734,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_llm",
+        "latency_ms": 854,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/health.py:check_ctf_engine",
+        "latency_ms": 746,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_db_size",
+        "latency_ms": 740,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:_check_endpoint",
+        "latency_ms": 772,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_ctf_apps",
+        "latency_ms": 635,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:get_all_health",
+        "latency_ms": 570,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/main.py:enforce_cc_auth",
+        "latency_ms": 670,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/models.py:PlatformAdmin",
+        "latency_ms": 703,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/models.py:__repr__",
+        "latency_ms": 647,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:access_list",
+        "latency_ms": 692,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:add_admin",
+        "latency_ms": 702,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:toggle_admin",
+        "latency_ms": 621,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:_sanitize_days",
+        "latency_ms": 658,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:analytics_dashboard",
+        "latency_ms": 1018,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:page_drilldown",
+        "latency_ms": 709,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_traffic_api",
+        "latency_ms": 608,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_latency_api",
+        "latency_ms": 608,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:ctf_analytics",
+        "latency_ms": 988,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_events_api",
+        "latency_ms": 610,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_completions_api",
+        "latency_ms": 607,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:threat_intel",
+        "latency_ms": 808,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_probes_api",
+        "latency_ms": 614,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_bot_traffic_api",
+        "latency_ms": 608,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:_get_filter_options",
+        "latency_ms": 708,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:_query_events",
+        "latency_ms": 1168,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:audit_list",
+        "latency_ms": 907,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:_badge_list_with_stats",
+        "latency_ms": 821,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:badges_list",
+        "latency_ms": 1021,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:toggle_badge",
+        "latency_ms": 759,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:_challenge_list_with_stats",
+        "latency_ms": 1103,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:_build_coverage_matrix",
+        "latency_ms": 833,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:challenges_list",
+        "latency_ms": 866,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:toggle_challenge",
+        "latency_ms": 747,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/dashboard.py:_get_pulse_stats",
+        "latency_ms": 770,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/dashboard.py:desktop",
+        "latency_ms": 1076,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/health.py:health_check",
+        "latency_ms": 749,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/health.py:is_ok",
+        "latency_ms": 651,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:_user_list",
+        "latency_ms": 1169,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:_user_detail",
+        "latency_ms": 1539,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:users_list",
+        "latency_ms": 630,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:user_detail",
+        "latency_ms": 608,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:kill_sessions",
+        "latency_ms": 647,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:delete_profile",
+        "latency_ms": 649,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:toggle_active",
+        "latency_ms": 718,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:full_ctf_reset",
+        "latency_ms": 877,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:PlaywrightRenderer",
+        "latency_ms": 1021,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:__init__",
+        "latency_ms": 509,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:start",
+        "latency_ms": 663,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:render_to_png",
+        "latency_ms": 717,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:shutdown",
+        "latency_ms": 606,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:get_renderer",
+        "latency_ms": 595,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:ActivityItem",
+        "latency_ms": 747,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:WorkflowAchievement",
+        "latency_ms": 625,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:ActivityResponse",
+        "latency_ms": 659,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:_build_achievements",
+        "latency_ms": 1004,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:get_activity",
+        "latency_ms": 1169,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:BadgeListItem",
+        "latency_ms": 676,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:BadgeDetail",
+        "latency_ms": 663,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:list_badges",
+        "latency_ms": 1103,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:get_badge",
+        "latency_ms": 1047,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:ChallengeListItem",
+        "latency_ms": 662,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:ChallengeDetail",
+        "latency_ms": 769,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:CheckResult",
+        "latency_ms": 622,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:HintResponse",
+        "latency_ms": 612,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:list_challenges",
+        "latency_ms": 802,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:get_challenge",
+        "latency_ms": 1353,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:check_challenge",
+        "latency_ms": 922,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:use_hint",
+        "latency_ms": 885,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:calculate_level",
+        "latency_ms": 676,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:xp_progress",
+        "latency_ms": 811,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:gravatar_url",
+        "latency_ms": 674,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:resolve_avatar_url",
+        "latency_ms": 642,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:SocialLinksResponse",
+        "latency_ms": 637,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:ProfileResponse",
+        "latency_ms": 717,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:SocialLinksUpdate",
+        "latency_ms": 663,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:ProfileUpdateRequest",
+        "latency_ms": 739,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:FeaturedBadgesRequest",
+        "latency_ms": 691,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:UsernameCheckResponse",
+        "latency_ms": 609,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:BadgeSummary",
+        "latency_ms": 632,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:CategoryProgress",
+        "latency_ms": 597,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:RecentAchievement",
+        "latency_ms": 619,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:PublicProfileResponse",
+        "latency_ms": 822,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_build_social_links",
+        "latency_ms": 680,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_update_social_links",
+        "latency_ms": 755,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_build_profile_response",
+        "latency_ms": 803,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:get_own_profile",
+        "latency_ms": 704,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:update_profile",
+        "latency_ms": 1025,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:set_featured_badges",
+        "latency_ms": 768,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:check_username_availability",
+        "latency_ms": 690,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:get_public_profile",
+        "latency_ms": 2332,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_get_image_b64",
+        "latency_ms": 713,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_get_badge_image_b64",
+        "latency_ms": 745,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:get_cache_path",
+        "latency_ms": 649,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_fetch_avatar_b64",
+        "latency_ms": 903,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_badge_template_context",
+        "latency_ms": 1060,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_make_qr_data_uri",
+        "latency_ms": 700,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_profile_url",
+        "latency_ms": 625,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_render_html",
+        "latency_ms": 637,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_render_card",
+        "latency_ms": 661,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:get_profile_card",
+        "latency_ms": 1798,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      }
+    ]
+  },
+  {
+    "model": "nvidia/nemotron-3-nano-4b",
+    "n_symbols": 300,
+    "response_format": "schema",
+    "json_valid_rate": 0.9966666666666667,
+    "kind_agreement": 0.6206896551724138,
+    "caps_agreement": 0.3793103448275862,
+    "reference_size": 29,
+    "latency_median_ms": 7267.0982084964635,
+    "latency_p95_ms": 15941.346375009743,
+    "first_error_raw": null,
+    "results": [
+      {
+        "symbol": "agents/base.py:BaseAgent",
+        "latency_ms": 24932,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:__init__",
+        "latency_ms": 8836,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:process",
+        "latency_ms": 4740,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_run_agent_loop",
+        "latency_ms": 14066,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_get_system_prompt",
+        "latency_ms": 4544,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_system_prompt",
+        "latency_ms": 5995,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_user_prompt",
+        "latency_ms": 4117,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_tool_definitions",
+        "latency_ms": 7519,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_tool_definitions",
+        "latency_ms": 4351,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_max_iterations",
+        "latency_ms": 3569,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_max_stall_iterations",
+        "latency_ms": 4362,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_load_config",
+        "latency_ms": 4221,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_complete_task",
+        "latency_ms": 5917,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_final_callables",
+        "latency_ms": 4962,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_callables",
+        "latency_ms": 4928,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:log_task_start",
+        "latency_ms": 7214,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:log_task_completion",
+        "latency_ms": 7029,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:context_info",
+        "latency_ms": 6505,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_get_mcp_servers",
+        "latency_ms": 4471,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_connect_mcp_servers",
+        "latency_ms": 7635,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/base.py:_disconnect_mcp_servers",
+        "latency_ms": 12426,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/base.py:_on_task_completion",
+        "latency_ms": 4709,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:ChatAssistantBase",
+        "latency_ms": 21306,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm",
+          "http_egress",
+          "writes_db",
+          "reads_db",
+          "reads_env",
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 15270,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_resolve_workflow_id",
+        "latency_ms": 8786,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 4287,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_connect_mcp",
+        "latency_ms": 12662,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 3615,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 4198,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 4147,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_tool_definitions",
+        "latency_ms": 4960,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_tool_source",
+        "latency_ms": 4611,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_execute_tool",
+        "latency_ms": 14881,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_filesystem",
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_load_history",
+        "latency_ms": 11724,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_save_message",
+        "latency_ms": 4109,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_start_workflow",
+        "latency_ms": 10919,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "invokes_mcp_tool",
+          "reads_secrets"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_tool_display_label",
+        "latency_ms": 3990,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:stream_response",
+        "latency_ms": 12873,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem",
+          "calls_llm",
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:VendorChatAssistant",
+        "latency_ms": 15805,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 3371,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 4661,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 9055,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 6982,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 4933,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_details",
+        "latency_ms": 8907,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_invoice_details",
+        "latency_ms": 10238,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_invoices",
+        "latency_ms": 9543,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_payment_summary",
+        "latency_ms": 15382,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_contact_info",
+        "latency_ms": 15279,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:CoPilotAssistant",
+        "latency_ms": 19556,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:__init__",
+        "latency_ms": 3212,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_mcp_server_types",
+        "latency_ms": 4668,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_system_prompt",
+        "latency_ms": 7968,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_get_native_tool_definitions",
+        "latency_ms": 7191,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_build_native_callables",
+        "latency_ms": 5681,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_list_vendors",
+        "latency_ms": 6921,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_details",
+        "latency_ms": 8923,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_invoice_details",
+        "latency_ms": 10295,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_invoices",
+        "latency_ms": 10039,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_payment_summary",
+        "latency_ms": 16208,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_contact_info",
+        "latency_ms": 15898,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_all_vendors_summary",
+        "latency_ms": 12586,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_pending_actions_summary",
+        "latency_ms": 17746,
+        "status": 200,
+        "error": "invalid_json"
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_compliance_docs",
+        "latency_ms": 8354,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/chat.py:_call_get_vendor_activity_report",
+        "latency_ms": 11189,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/chat.py:_call_save_report",
+        "latency_ms": 5622,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:OrchestratorAgent",
+        "latency_ms": 26366,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:__init__",
+        "latency_ms": 7022,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_load_config",
+        "latency_ms": 5613,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_max_iterations",
+        "latency_ms": 3564,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:process",
+        "latency_ms": 5563,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_system_prompt",
+        "latency_ms": 7905,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_user_prompt",
+        "latency_ms": 4881,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_tool_definitions",
+        "latency_ms": 8119,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_check_delegation_limit",
+        "latency_ms": 7255,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_enrich_with_prior_context",
+        "latency_ms": 5216,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_capture_agent_context",
+        "latency_ms": 4108,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_onboarding",
+        "latency_ms": 11368,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_env",
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_invoice",
+        "latency_ms": 11145,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "invokes_mcp_tool",
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_fraud",
+        "latency_ms": 12773,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_payments",
+        "latency_ms": 11173,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_system_maintenance",
+        "latency_ms": 15863,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:delegate_to_communication",
+        "latency_ms": 14778,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/orchestrator.py:_get_callables",
+        "latency_ms": 4273,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_emit_delegation_event",
+        "latency_ms": 9059,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/orchestrator.py:_on_task_completion",
+        "latency_ms": 4811,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_agent_with_retry",
+        "latency_ms": 15993,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_onboarding_agent",
+        "latency_ms": 6985,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_invoice_agent",
+        "latency_ms": 8515,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_payments_agent",
+        "latency_ms": 10237,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_fraud_agent",
+        "latency_ms": 10659,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_orchestrator_agent",
+        "latency_ms": 7551,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/runner.py:run_communication_agent",
+        "latency_ms": 7222,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:CommunicationAgent",
+        "latency_ms": 18375,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:__init__",
+        "latency_ms": 3980,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_load_config",
+        "latency_ms": 3704,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:process",
+        "latency_ms": 4715,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_mcp_servers",
+        "latency_ms": 9986,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_system_prompt",
+        "latency_ms": 7207,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_user_prompt",
+        "latency_ms": 5792,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_tool_definitions",
+        "latency_ms": 5761,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_vendor_contact_info",
+        "latency_ms": 5908,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_vendor_details",
+        "latency_ms": 11057,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:get_invoice_details",
+        "latency_ms": 7115,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_get_callables",
+        "latency_ms": 4818,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/communication.py:_on_task_completion",
+        "latency_ms": 6499,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:FraudComplianceAgent",
+        "latency_ms": 23680,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:__init__",
+        "latency_ms": 5796,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_load_config",
+        "latency_ms": 4426,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_mcp_servers",
+        "latency_ms": 9853,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:process",
+        "latency_ms": 5808,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_system_prompt",
+        "latency_ms": 11408,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_user_prompt",
+        "latency_ms": 11607,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_tool_definitions",
+        "latency_ms": 6939,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_vendor_risk_profile",
+        "latency_ms": 7223,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_invoice_details",
+        "latency_ms": 7094,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:get_vendor_invoices",
+        "latency_ms": 8747,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:update_vendor_risk",
+        "latency_ms": 11651,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:flag_invoice_for_review",
+        "latency_ms": 7571,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_get_callables",
+        "latency_ms": 4531,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/fraud.py:_on_task_completion",
+        "latency_ms": 7515,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:InvoiceAgent",
+        "latency_ms": 24012,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:__init__",
+        "latency_ms": 8744,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_load_config",
+        "latency_ms": 5115,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_mcp_servers",
+        "latency_ms": 7882,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:process",
+        "latency_ms": 5192,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_system_prompt",
+        "latency_ms": 8233,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_user_prompt",
+        "latency_ms": 16822,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_tool_definitions",
+        "latency_ms": 6243,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:get_invoice_details",
+        "latency_ms": 7990,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:update_invoice_status",
+        "latency_ms": 7796,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:get_vendor_details",
+        "latency_ms": 11849,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_get_callables",
+        "latency_ms": 3712,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/invoice.py:_on_task_completion",
+        "latency_ms": 8340,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:VendorOnboardingAgent",
+        "latency_ms": 22047,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:__init__",
+        "latency_ms": 9413,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_load_config",
+        "latency_ms": 4708,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:process",
+        "latency_ms": 5387,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_system_prompt",
+        "latency_ms": 6764,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_user_prompt",
+        "latency_ms": 11432,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "invokes_mcp_tool"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_tool_definitions",
+        "latency_ms": 5803,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:get_vendor_details",
+        "latency_ms": 7995,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:update_vendor_status",
+        "latency_ms": 8508,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_get_callables",
+        "latency_ms": 4053,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/onboarding.py:_on_task_completion",
+        "latency_ms": 12738,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:PaymentsAgent",
+        "latency_ms": 20127,
+        "status": 200,
+        "kind": "agent",
+        "capabilities": [
+          "calls_llm"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:__init__",
+        "latency_ms": 3982,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_load_config",
+        "latency_ms": 3845,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:process",
+        "latency_ms": 7124,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_mcp_servers",
+        "latency_ms": 10640,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_system_prompt",
+        "latency_ms": 5483,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_user_prompt",
+        "latency_ms": 5407,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_tool_definitions",
+        "latency_ms": 6879,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_invoice_for_payment",
+        "latency_ms": 7729,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_vendor_details",
+        "latency_ms": 6937,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:get_vendor_payment_summary",
+        "latency_ms": 10163,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:process_payment",
+        "latency_ms": 11507,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_get_callables",
+        "latency_ms": 4343,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/specialized/payments.py:_on_task_completion",
+        "latency_ms": 9627,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:_json_safe_value",
+        "latency_ms": 6108,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:agent_tool",
+        "latency_ms": 13441,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:async_wrapper",
+        "latency_ms": 10683,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": []
+      },
+      {
+        "symbol": "agents/utils.py:sync_wrapper",
+        "latency_ms": 10955,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code"
+        ]
+      },
+      {
+        "symbol": "agents/utils.py:execute_with_events",
+        "latency_ms": 13700,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ServerConfigUpdate",
+        "latency_ms": 5603,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_mcp_servers",
+        "latency_ms": 8641,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_mcp_server",
+        "latency_ms": 5695,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:update_mcp_server_config",
+        "latency_ms": 7849,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:toggle_mcp_server",
+        "latency_ms": 7230,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_messages",
+        "latency_ms": 7563,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message_stats",
+        "latency_ms": 12309,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message_contacts",
+        "latency_ms": 8407,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_message",
+        "latency_ms": 5969,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:mark_message_read",
+        "latency_ms": 5770,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:mark_all_messages_read",
+        "latency_ms": 10884,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ComposeEmailRequest",
+        "latency_ms": 4829,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:send_message",
+        "latency_ms": 8689,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_admin_files",
+        "latency_ms": 9564,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_admin_file",
+        "latency_ms": 10477,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:list_mcp_activity",
+        "latency_ms": 5589,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:_make_dummy_session_context",
+        "latency_ms": 8007,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:_get_default_tool_definitions",
+        "latency_ms": 12042,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code",
+          "writes_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:ChatRequest",
+        "latency_ms": 5035,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:copilot_chat",
+        "latency_ms": 7400,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:get_copilot_history",
+        "latency_ms": 6141,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/api.py:clear_copilot_history",
+        "latency_ms": 5313,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_home",
+        "latency_ms": 5002,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_dashboard",
+        "latency_ms": 9651,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_messages",
+        "latency_ms": 7963,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_findrive",
+        "latency_ms": 9190,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_servers",
+        "latency_ms": 10022,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_config",
+        "latency_ms": 8817,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/admin/routes/web.py:admin_mcp_activity",
+        "latency_ms": 6857,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/auth.py:get_allowed_emails_from_env",
+        "latency_ms": 9285,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:is_cc_authorized",
+        "latency_ms": 11069,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db",
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:seed_admins_from_env",
+        "latency_ms": 5155,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_env",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/auth.py:cc_auth_guard",
+        "latency_ms": 10611,
+        "status": 200,
+        "kind": "guardrail",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/auth.py:_forbidden_response",
+        "latency_ms": 5230,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_database",
+        "latency_ms": 8443,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_redis",
+        "latency_ms": 11766,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_env"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_llm",
+        "latency_ms": 10575,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "calls_llm",
+          "reads_env",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_ctf_engine",
+        "latency_ms": 6565,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/health.py:check_db_size",
+        "latency_ms": 9968,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code",
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:_check_endpoint",
+        "latency_ms": 6548,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:check_ctf_apps",
+        "latency_ms": 7030,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/health.py:get_all_health",
+        "latency_ms": 7802,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/main.py:enforce_cc_auth",
+        "latency_ms": 8729,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/models.py:PlatformAdmin",
+        "latency_ms": 5274,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/models.py:__repr__",
+        "latency_ms": 4183,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:access_list",
+        "latency_ms": 6401,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:add_admin",
+        "latency_ms": 5361,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/access.py:toggle_admin",
+        "latency_ms": 5901,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:_sanitize_days",
+        "latency_ms": 8094,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:analytics_dashboard",
+        "latency_ms": 15941,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:page_drilldown",
+        "latency_ms": 12446,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_traffic_api",
+        "latency_ms": 9825,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_latency_api",
+        "latency_ms": 6568,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:ctf_analytics",
+        "latency_ms": 8652,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_events_api",
+        "latency_ms": 8312,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_completions_api",
+        "latency_ms": 6471,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:threat_intel",
+        "latency_ms": 6286,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_probes_api",
+        "latency_ms": 6767,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/analytics.py:daily_bot_traffic_api",
+        "latency_ms": 11403,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:_get_filter_options",
+        "latency_ms": 5350,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:_query_events",
+        "latency_ms": 6803,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/audit.py:audit_list",
+        "latency_ms": 9321,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:_badge_list_with_stats",
+        "latency_ms": 11420,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:badges_list",
+        "latency_ms": 8617,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/badges.py:toggle_badge",
+        "latency_ms": 4947,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:_challenge_list_with_stats",
+        "latency_ms": 9384,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:_build_coverage_matrix",
+        "latency_ms": 6171,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:challenges_list",
+        "latency_ms": 9821,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/challenges.py:toggle_challenge",
+        "latency_ms": 5390,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/dashboard.py:_get_pulse_stats",
+        "latency_ms": 7133,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/dashboard.py:desktop",
+        "latency_ms": 9676,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/health.py:health_check",
+        "latency_ms": 5940,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/health.py:is_ok",
+        "latency_ms": 4458,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:_user_list",
+        "latency_ms": 6883,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:_user_detail",
+        "latency_ms": 14434,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:users_list",
+        "latency_ms": 10527,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:user_detail",
+        "latency_ms": 11721,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:kill_sessions",
+        "latency_ms": 6195,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:delete_profile",
+        "latency_ms": 7279,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:toggle_active",
+        "latency_ms": 7602,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/cc/routes/users.py:full_ctf_reset",
+        "latency_ms": 6559,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db",
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:PlaywrightRenderer",
+        "latency_ms": 17131,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "executes_code",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:__init__",
+        "latency_ms": 2655,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:start",
+        "latency_ms": 11722,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:render_to_png",
+        "latency_ms": 10015,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:shutdown",
+        "latency_ms": 4568,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/rendering.py:get_renderer",
+        "latency_ms": 9432,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:ActivityItem",
+        "latency_ms": 5145,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:WorkflowAchievement",
+        "latency_ms": 6617,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:ActivityResponse",
+        "latency_ms": 5491,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:_build_achievements",
+        "latency_ms": 5853,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/activity.py:get_activity",
+        "latency_ms": 14693,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:BadgeListItem",
+        "latency_ms": 5279,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:BadgeDetail",
+        "latency_ms": 4176,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:list_badges",
+        "latency_ms": 6909,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/badges.py:get_badge",
+        "latency_ms": 9379,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress",
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:ChallengeListItem",
+        "latency_ms": 4547,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:ChallengeDetail",
+        "latency_ms": 4476,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:CheckResult",
+        "latency_ms": 4601,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:HintResponse",
+        "latency_ms": 4699,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:list_challenges",
+        "latency_ms": 8258,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:get_challenge",
+        "latency_ms": 12097,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:check_challenge",
+        "latency_ms": 4898,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/challenges.py:use_hint",
+        "latency_ms": 11200,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:calculate_level",
+        "latency_ms": 4636,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:xp_progress",
+        "latency_ms": 7255,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:gravatar_url",
+        "latency_ms": 7977,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:resolve_avatar_url",
+        "latency_ms": 5600,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:SocialLinksResponse",
+        "latency_ms": 8000,
+        "status": 200,
+        "kind": "part_of_parent",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:ProfileResponse",
+        "latency_ms": 4117,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:SocialLinksUpdate",
+        "latency_ms": 6697,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:ProfileUpdateRequest",
+        "latency_ms": 5639,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:FeaturedBadgesRequest",
+        "latency_ms": 6836,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:UsernameCheckResponse",
+        "latency_ms": 7709,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:BadgeSummary",
+        "latency_ms": 5279,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:CategoryProgress",
+        "latency_ms": 5253,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:RecentAchievement",
+        "latency_ms": 4972,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:PublicProfileResponse",
+        "latency_ms": 5718,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_build_social_links",
+        "latency_ms": 7976,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_update_social_links",
+        "latency_ms": 5920,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:_build_profile_response",
+        "latency_ms": 12617,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:get_own_profile",
+        "latency_ms": 8611,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:update_profile",
+        "latency_ms": 5791,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db",
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:set_featured_badges",
+        "latency_ms": 8921,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:check_username_availability",
+        "latency_ms": 6391,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/profile.py:get_public_profile",
+        "latency_ms": 9107,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": [
+          "reads_db"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_get_image_b64",
+        "latency_ms": 12679,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_get_badge_image_b64",
+        "latency_ms": 8641,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:get_cache_path",
+        "latency_ms": 5147,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_fetch_avatar_b64",
+        "latency_ms": 6015,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "http_egress"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_badge_template_context",
+        "latency_ms": 8920,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": [
+          "reads_filesystem"
+        ]
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_make_qr_data_uri",
+        "latency_ms": 12454,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_profile_url",
+        "latency_ms": 7078,
+        "status": 200,
+        "kind": "tool",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_render_html",
+        "latency_ms": 7134,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:_render_card",
+        "latency_ms": 10891,
+        "status": 200,
+        "kind": "unknown",
+        "capabilities": []
+      },
+      {
+        "symbol": "apps/ctf/routes/share.py:get_profile_card",
+        "latency_ms": 8683,
+        "status": 200,
+        "kind": "sink",
+        "capabilities": [
+          "reads_db",
+          "writes_filesystem",
+          "http_egress"
+        ]
+      }
+    ]
+  }
+]

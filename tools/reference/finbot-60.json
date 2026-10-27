@@ -1,0 +1,275 @@
+{
+  "agents/base.py:BaseAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/base.py:__init__": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/base.py:_run_agent_loop": {
+    "kind": "part_of_parent",
+    "capabilities": ["calls_llm"]
+  },
+  "agents/base.py:process": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/base.py:_get_mcp_servers": {
+    "kind": "part_of_parent",
+    "capabilities": ["invokes_mcp_tool"]
+  },
+  "agents/base.py:_connect_mcp_servers": {
+    "kind": "part_of_parent",
+    "capabilities": ["invokes_mcp_tool"]
+  },
+
+  "agents/chat.py:ChatAssistantBase": {
+    "kind": "agent",
+    "capabilities": ["calls_llm"]
+  },
+  "agents/chat.py:VendorChatAssistant": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/chat.py:CoPilotAssistant": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/chat.py:stream_response": {
+    "kind": "part_of_parent",
+    "capabilities": ["calls_llm"]
+  },
+  "agents/chat.py:_call_get_vendor_details": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "agents/orchestrator.py:OrchestratorAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/orchestrator.py:process": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/orchestrator.py:delegate_to_invoice": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/orchestrator.py:delegate_to_system_maintenance": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/orchestrator.py:delegate_to_communication": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "agents/runner.py:run_agent_with_retry": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "agents/runner.py:run_invoice_agent": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/runner.py:run_orchestrator_agent": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "agents/runner.py:run_communication_agent": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "agents/utils.py:_json_safe_value": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "agents/utils.py:agent_tool": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "agents/utils.py:async_wrapper": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+
+  "agents/specialized/invoice.py:InvoiceAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/specialized/fraud.py:FraudComplianceAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/specialized/payments.py:PaymentsAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/specialized/communication.py:CommunicationAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "agents/specialized/onboarding.py:VendorOnboardingAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+
+  "mcp/servers/findrive/server.py:create_findrive_server": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "mcp/servers/findrive/server.py:upload_file": {
+    "kind": "sink",
+    "capabilities": ["writes_filesystem"]
+  },
+  "mcp/servers/findrive/server.py:delete_file": {
+    "kind": "sink",
+    "capabilities": ["writes_filesystem"]
+  },
+  "mcp/servers/findrive/server.py:search_files": {
+    "kind": "tool",
+    "capabilities": ["reads_filesystem"]
+  },
+  "mcp/servers/findrive/server.py:get_file": {
+    "kind": "tool",
+    "capabilities": ["reads_filesystem"]
+  },
+  "mcp/servers/findrive/repositories.py:create_file": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "mcp/servers/findrive/repositories.py:delete_file": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "mcp/servers/findrive/repositories.py:search_files": {
+    "kind": "tool",
+    "capabilities": ["reads_db"]
+  },
+
+  "mcp/servers/systemutils/server.py:execute_script": {
+    "kind": "sink",
+    "capabilities": ["executes_code", "executes_shell"]
+  },
+  "mcp/servers/systemutils/server.py:run_diagnostics": {
+    "kind": "sink",
+    "capabilities": ["executes_shell"]
+  },
+  "mcp/servers/systemutils/server.py:rotate_logs": {
+    "kind": "sink",
+    "capabilities": ["executes_shell"]
+  },
+  "mcp/servers/systemutils/server.py:database_maintenance": {
+    "kind": "sink",
+    "capabilities": ["executes_shell"]
+  },
+  "mcp/servers/systemutils/server.py:network_request": {
+    "kind": "sink",
+    "capabilities": ["http_egress"]
+  },
+  "mcp/servers/systemutils/server.py:read_config": {
+    "kind": "tool",
+    "capabilities": ["reads_filesystem", "reads_env"]
+  },
+
+  "mcp/servers/finmail/server.py:send_email": {
+    "kind": "sink",
+    "capabilities": ["http_egress"]
+  },
+  "mcp/servers/finmail/server.py:list_inbox": {
+    "kind": "tool",
+    "capabilities": ["reads_untrusted"]
+  },
+  "mcp/servers/finmail/server.py:read_email": {
+    "kind": "tool",
+    "capabilities": ["reads_untrusted"]
+  },
+  "mcp/servers/finmail/repositories.py:create_email": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "mcp/servers/finmail/repositories.py:mark_as_read": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+
+  "mcp/servers/finstripe/server.py:create_transfer": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "mcp/servers/finstripe/server.py:get_transfer": {
+    "kind": "tool",
+    "capabilities": ["reads_db"]
+  },
+  "mcp/servers/finstripe/server.py:get_account_balance": {
+    "kind": "tool",
+    "capabilities": ["reads_db"]
+  },
+
+  "mcp/servers/taxcalc/server.py:calculate_tax": {
+    "kind": "tool",
+    "capabilities": []
+  },
+  "mcp/servers/taxcalc/server.py:get_tax_rates": {
+    "kind": "tool",
+    "capabilities": []
+  },
+
+  "core/llm/client.py:LLMClient": {
+    "kind": "llm_endpoint",
+    "capabilities": ["calls_llm"]
+  },
+  "core/llm/client.py:chat": {
+    "kind": "part_of_parent",
+    "capabilities": ["calls_llm"]
+  },
+  "core/llm/ollama_client.py:OllamaClient": {
+    "kind": "llm_endpoint",
+    "capabilities": ["calls_llm"]
+  },
+  "core/llm/openai_client.py:OpenAIClient": {
+    "kind": "llm_endpoint",
+    "capabilities": ["calls_llm"]
+  },
+  "core/llm/contextual_client.py:ContextualLLMClient": {
+    "kind": "llm_endpoint",
+    "capabilities": ["calls_llm"]
+  },
+  "core/llm/judge.py:LLMJudge": {
+    "kind": "llm_endpoint",
+    "capabilities": ["calls_llm"]
+  },
+
+  "guardrails/service.py:GuardrailHookService": {
+    "kind": "guardrail",
+    "capabilities": []
+  },
+  "guardrails/service.py:invoke": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "core/data/repositories.py:claim_username": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "core/data/repositories.py:create_vendor": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "core/data/repositories.py:delete_vendor": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "core/data/repositories.py:create_invoice_for_current_vendor": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  },
+  "core/data/repositories.py:update_invoice": {
+    "kind": "sink",
+    "capabilities": ["writes_db"]
+  }
+}

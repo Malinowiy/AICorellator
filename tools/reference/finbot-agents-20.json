@@ -1,0 +1,86 @@
+{
+  "base.py:BaseAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "base.py:__init__": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "base.py:_run_agent_loop": {
+    "kind": "part_of_parent",
+    "capabilities": ["calls_llm"]
+  },
+  "base.py:process": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "chat.py:ChatAssistantBase": {
+    "kind": "agent",
+    "capabilities": ["calls_llm"]
+  },
+  "chat.py:VendorChatAssistant": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "chat.py:CoPilotAssistant": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "chat.py:stream_response": {
+    "kind": "part_of_parent",
+    "capabilities": ["calls_llm"]
+  },
+
+  "orchestrator.py:OrchestratorAgent": {
+    "kind": "agent",
+    "capabilities": ["calls_llm", "invokes_mcp_tool"]
+  },
+  "orchestrator.py:delegate_to_invoice": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "orchestrator.py:delegate_to_system_maintenance": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "orchestrator.py:process": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "runner.py:run_agent_with_retry": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "runner.py:run_invoice_agent": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "runner.py:run_orchestrator_agent": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+  "runner.py:run_communication_agent": {
+    "kind": "part_of_parent",
+    "capabilities": []
+  },
+
+  "utils.py:_json_safe_value": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "utils.py:agent_tool": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "utils.py:async_wrapper": {
+    "kind": "unknown",
+    "capabilities": []
+  },
+  "utils.py:sync_wrapper": {
+    "kind": "unknown",
+    "capabilities": []
+  }
+}
