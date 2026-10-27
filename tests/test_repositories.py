@@ -201,6 +201,11 @@ def test_chain_add_and_read(store: GraphStore) -> None:
     assert c.verdict == "exploitable"
     assert c.chain_nodes == ["n:1", "n:2"]
     assert c.validated is True
+    # The row was written with no `validated_kind`, which is the column
+    # being NULL — what a chain stored before A.4 looks like. The read
+    # path names the level it was actually judged by.
+    assert c.validated_kind == "existence"
+    assert c.validation_notes == []
 
 def test_chain_length_property(store: GraphStore) -> None:
     """Chain.length derives from chain_nodes, not stored."""

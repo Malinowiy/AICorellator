@@ -234,11 +234,19 @@ def _evaluate_one(
         verdict, confidence = aggregation.aggregate(voter_responses, config.voters)
         reasoning = _merge_reasoning(voter_responses)
 
-    # 4. Layer 3 deterministic validation.
-    validated = store.query.is_chain_valid(
+    # 4. Layer 3 deterministic validation: existence plus structure.
+    #    A chain that exists but is disconnected, untyped or anchored on
+    #    a source that is not a source is stored with validated = False
+    #    and the reasons in validation_notes (A.4).
+    validated, validated_kind, validation_notes = store.query.validate_chain(
         chain_nodes=candidate.nodes,
         chain_edges=candidate.edges,
     )
+    if not validated:
+        log.info(
+            "chain %s rejected by Layer 3 (%s): %s",
+            candidate.chain_id, validated_kind, "; ".join(validation_notes),
+        )
 
     # 5. Persist.
     candidate_edge_ids = set(candidate.edges)
@@ -254,6 +262,8 @@ def _evaluate_one(
             _voter_response_dict(r, candidate_edge_ids) for r in voter_responses
         ],
         validated=validated,
+        validated_kind=validated_kind,
+        validation_notes=validation_notes,
         status="active",
     )
 
@@ -324,7 +334,8 @@ def _evaluate_one_group(
     # one of them (a citation outside the pair is a hallucination even
     # when the edge exists elsewhere in the graph), and every hop of both
     # chains must have resolved — a chain with a hole is not the chain
-    # that was enumerated, so nothing about it can be confirmed.
+    # that was enumerated, so nothing about it can be confirmed. A.4
+    # labels the result (`validated_kind`) and changes nothing else.
     chains = payload["write_chains"] + payload["read_chains"]
     holes = [
         chain["chain_id"] for chain in chains
@@ -356,6 +367,10 @@ def _evaluate_one_group(
     record.confidence = confidence
     record.reasoning = reasoning
     record.validated = validated
+    # A.4's label on the same check: "semantic" when the group's Layer 3
+    # test passed, "existence" otherwise — the level the group reached,
+    # spelled the way a chain spells it. No new check.
+    record.validated_kind = "semantic" if validated else "existence"
     return record
 
 

@@ -187,18 +187,24 @@ flowchart TB
 
 ### 6. Validator
 
-**Responsibility:** Deterministic validation of the reported chain (ADR-0006, Layer 3).
+**Responsibility:** deterministic validation of the reported chain (ADR-0006, Layer 3; ADR-0018 for the semantic extension).
 
 **Interface:**
 
-- `is_chain_valid(chain_nodes, chain_edges) -> bool`
-- `validate_edges(edge_ids) -> tuple[list[str], list[str]]`
+
+- `validate_chain(nodes, edges) -> tuple[bool, str, list[str]] returns (ok, validated_kind, notes)`
+- `is_chain_valid(nodes, edges) -> bool is the boolean wrapper`
 
 **Rules:**
 
-- Every node in `chain_nodes` must exist in the `nodes` table.
-- Every edge in `chain_edges` must exist in the `edges` table.
-- If any node or edge is missing, the chain is rejected as a hallucination.
+Four checks, in order:
+
+1. **Existence** — every node and every edge exists in the graph. Missing → validated = False, validated_kind = "existence", note "missing node: ..." or "missing edge: ...".
+2. **Connected** — edge i links nodes[i] to nodes[i+1]; len(edges) == len(nodes) - 1. Fails → validated = False, validated_kind = "existence" (existence is the last passed level), note "disconnected: edge e:1 target is n:3, expected n:2".
+3. **Typed** — first node is entry_point; last node is kind == "sink" or has a SINK_CAPABILITIES capability (ADR-0009/ADR-0014). Intermediates are not checked. Fails → note.
+4. **Untrusted anchor** (only when the chain contains an untrusted_source) — the anchor has a source_type in patterns.UNTRUSTED_SOURCE_RULES, and at least one outgoing has_access_to edge to a node with reads_untrusted. Chains without an anchor pass vacuously. Fails → note.
+
+If all four pass → validated = True, validated_kind = "semantic", empty notes.
 
 **`evidence` validation** (P0/P2 fix): each voter's `evidence` list is validated against the **candidate chain**, not the whole graph. An evidence edge that does not appear in the candidate chain is recorded as `evidence_unknown` and does not support the verdict. This catches voters that cite plausible-looking edges outside the chain under evaluation.
 

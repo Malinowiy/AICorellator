@@ -52,6 +52,17 @@ VALID_EDGE_KINDS = frozenset({
 #   structural — a declaration, not a path (guards).
 VALID_FLOW_KINDS = frozenset({"control", "data", "structural"})
 
+# Which Layer 3 rule level judged a chain (A.4). Mirrors the CHECK
+# constraints in schema.sql (on `chains` and on `chain_groups`).
+#   existence — existence was as far as the chain got: a node or an
+#               edge was missing, or existence held and a structural
+#               check rejected the chain.
+#   semantic  — every check passed, which is also what `validated`
+#               records (the two agree on every row A.4 wrote).
+# `None` is a row written before A.4; `Chain.from_row` reads it back
+# as "existence", which is the level that row was actually judged by.
+VALID_VALIDATED_KINDS = frozenset({"existence", "semantic"})
+
 
 # ------------------------------------------------------------
 # Host
@@ -235,6 +246,8 @@ class Chain:
     reasoning: str | None = None
     voter_outputs: list[dict[str, Any]] = field(default_factory=list)
     validated: bool = False
+    validated_kind: str | None = None
+    validation_notes: list[str] = field(default_factory=list)
     status: str = "active"
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
@@ -249,6 +262,7 @@ class Chain:
         row["chain_nodes"] = json.dumps(self.chain_nodes)
         row["chain_edges"] = json.dumps(self.chain_edges)
         row["voter_outputs"] = json.dumps(self.voter_outputs)
+        row["validation_notes"] = json.dumps(self.validation_notes)
         row["validated"] = 1 if self.validated else 0
         return row
 
@@ -264,6 +278,8 @@ class Chain:
             reasoning=row["reasoning"],
             voter_outputs=json.loads(row["voter_outputs"]),
             validated=bool(row["validated"]),
+            validated_kind=row["validated_kind"] or "existence",
+            validation_notes=json.loads(row["validation_notes"] or "[]"),
             status=row["status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -301,6 +317,7 @@ class ChainGroupRecord:
     confidence: float = 0.0
     reasoning: str | None = None
     validated: bool = False
+    validated_kind: str | None = None
     priority: str | None = None
     status: str = "active"
     created_at: str = field(default_factory=utcnow)
@@ -330,6 +347,7 @@ class ChainGroupRecord:
             confidence=row["confidence"],
             reasoning=row["reasoning"],
             validated=bool(row["validated"]),
+            validated_kind=row["validated_kind"] or "existence",
             priority=row["priority"],
             status=row["status"],
             created_at=row["created_at"],

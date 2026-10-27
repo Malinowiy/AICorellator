@@ -177,7 +177,9 @@ flowchart TB
 | `reasoning` | str | Judge reasoning or aggregated voters' reasoning |
 | `voter_outputs` | JSON | Raw voter responses (ADR-0005) |
 | `prompt_version` | str | Prompt version used (ADR-0005) |
-| `validated` | bool | Layer 3 validation result (ADR-0006) |
+| `validated` | bool | True if existence and all semantic checks passed (ADR-0018) |
+| `validated_kind` | str | NULL | `"existence"` (only existence passed) or `"semantic"` (all checks passed); NULL on pre-A.4 rows, read as `"existence"` |
+| `validation_notes` | JSON | `list[str]` — one note per failed check; [] when all pass |
 | `status` | str | `active` / `stale` |
 | `created_at` | timestamp | |
 

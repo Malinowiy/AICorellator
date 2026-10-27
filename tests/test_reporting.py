@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 
 from aicorellator import GraphStore
-from aicorellator.graph import ChainGroup, Edge, Node
+from aicorellator.graph import Chain, ChainGroup, Edge, Node
 from aicorellator.reporting import render_report, write_bundle
 from aicorellator.reporting.markdown import MAX_REASONING_CHARS
 from aicorellator.workspace import Workspace
@@ -286,3 +286,79 @@ def test_bundle_keeps_an_unresolvable_chain_as_an_id(
 
     entry = json.loads((path / "chain_groups.json").read_text())[0]
     assert entry["write_chains"] == [{"id": "chain:" + "d" * 16, "nodes": []}]
+
+
+# ------------------------------------------------------------
+# Evaluated chains — the Layer 3 notes (A.4)
+# ------------------------------------------------------------
+
+def _rejected_chain(
+    validated: bool = False,
+    validated_kind: str = "existence",
+    validation_notes: list[str] | None = None,
+) -> Chain:
+    """A chain over the same graph, as the evaluator stores one."""
+    return Chain(
+        id="chain:" + "c" * 16,
+        chain_nodes=[ENTRY, SOURCE],
+        chain_edges=[E_WRITE],
+        verdict="exploitable",
+        prompt_version="v1",
+        confidence=0.9,
+        reasoning="the upload lands in the corpus",
+        validated=validated,
+        validated_kind=validated_kind,
+        validation_notes=validation_notes or [],
+    )
+
+
+def test_report_prints_the_notes_of_a_rejected_chain(
+    store: GraphStore,
+) -> None:
+    """A rejected chain is stored, so its reasons are rendered (A.4).
+
+    The ✗ beside the verdict says Layer 3 refused it; the notes say by
+    which check, under the reasoning and in the same block.
+    """
+    _graph(store)
+    note = (
+        f"disconnected: edge {E_WRITE} links {ENTRY} → {SOURCE}, "
+        f"expected {SOURCE} → {ENTRY}"
+    )
+    store.chains.add(_rejected_chain(validation_notes=[note]))
+
+    report = render_report(store)
+
+    assert f"> **Layer 3:** {note}" in report
+    assert report.index("> **Reasoning:**") < report.index("> **Layer 3:**")
+
+
+def test_report_prints_notes_one_line_each(store: GraphStore) -> None:
+    """One failed check, one line — the shape the array holds."""
+    _graph(store)
+    store.chains.add(_rejected_chain(validation_notes=[
+        "disconnected: edge edge:x is not in the graph",
+        f"last node {SOURCE} is not a sink",
+    ]))
+
+    report = render_report(store)
+
+    assert (
+        "> **Layer 3:** disconnected: edge edge:x is not in the graph"
+        in report
+    )
+    assert f"> **Layer 3:** last node {SOURCE} is not a sink" in report
+
+
+def test_report_prints_nothing_for_a_chain_that_passed(
+    store: GraphStore,
+) -> None:
+    """A validated chain has no notes, so its block is what it was."""
+    _graph(store)
+    store.chains.add(_rejected_chain(
+        validated=True, validated_kind="semantic",
+    ))
+
+    report = render_report(store)
+
+    assert "**Layer 3:**" not in report

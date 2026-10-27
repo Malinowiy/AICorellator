@@ -76,10 +76,55 @@ def test_validate_edges_missing(
 def test_is_chain_valid(
     store: GraphStore, sample_graph: dict[str, str]
 ) -> None:
+    """Existence plus structure: the sample chain passes all four (A.4).
+
+    `entry --uses_model--> agent --has_access_to--> sink` is connected,
+    starts at an entry point, ends at a sink, and claims no anchor — so
+    it is `"semantic"`, not just `"existence"`.
+    """
+    nodes = [
+        sample_graph["entry"],
+        sample_graph["agent"],
+        sample_graph["sink"],
+    ]
+    edges = [sample_graph["e1"], sample_graph["e2"]]
+
     assert store.query.is_chain_valid(
-        chain_nodes=[sample_graph["entry"], sample_graph["agent"], sample_graph["sink"]],
-        chain_edges=[sample_graph["e1"], sample_graph["e2"]],
+        chain_nodes=nodes,
+        chain_edges=edges,
     ) is True
+    assert store.query.validate_chain(nodes, edges) == (True, "semantic", [])
+
+
+def test_is_chain_valid_rejects_a_reversed_hop(
+    store: GraphStore, sample_graph: dict[str, str]
+) -> None:
+    """The chain that used to pass because every edge exists (A.4).
+
+    `agent --edge:reversed--> entry` and `agent --e2--> sink` both
+    exist, so every node and edge of `[entry, agent, sink]` is found —
+    Layer 3 before A.4 called that valid. Its first hop runs backwards.
+    """
+    store.edges.upsert(Edge(
+        id="edge:reversed",
+        source_id=sample_graph["agent"],
+        target_id=sample_graph["entry"],
+        kind="uses_model",
+        host_id="localhost",
+    ))
+    nodes = [
+        sample_graph["entry"],
+        sample_graph["agent"],
+        sample_graph["sink"],
+    ]
+    edges = ["edge:reversed", sample_graph["e2"]]
+
+    assert store.query.validate_edges(edges)[1] == []      # both exist
+    assert store.query.is_chain_valid(nodes, edges) is False
+
+    ok, kind, notes = store.query.validate_chain(nodes, edges)
+    assert (ok, kind) == (False, "existence")
+    assert notes[0].startswith("disconnected: ")
 
 
 def test_is_chain_valid_hallucination(

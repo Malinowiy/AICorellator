@@ -11,6 +11,8 @@ Key methods:
   prioritize_chain_groups — Layer 1 scoring and top-N selection of
                       those groups (ADR-0012, 1.3c)
   validate_edges    — Layer 3 deterministic validation (ADR-0006)
+  validate_chain    — Layer 3 existence plus structural coherence:
+                      connected, typed, anchored (ADR-0006, A.4)
   get_neighbors     — graph traversal for a single node
   get_subgraph      — slice by kind
 
@@ -33,6 +35,7 @@ from .models import ChainGroupRecord, Edge, Node
 from ..patterns import (
     SINK_CAPABILITIES,
     TRAVERSABLE_FLOW_KINDS,
+    UNTRUSTED_SOURCE_RULES,
     lethal_trifecta_caps,
 )
 
@@ -92,6 +95,17 @@ USER_WRITABLE_SOURCE_TYPES: frozenset[str] = frozenset({
 USER_READABLE_SOURCE_TYPES: frozenset[str] = frozenset({
     "mcp_tool_description",
 })
+
+# The source families an `untrusted_source` node may declare (A.4's
+# anchor check). Derived from `patterns.UNTRUSTED_SOURCE_RULES` — the
+# table that defines the families — rather than spelled out again: a
+# family that gains a detector gains its membership here for free, so
+# the check and the detector cannot drift apart. `user_upload` is
+# absent because it has no detector yet (ADR-0010 gap, BACKLOG B.3);
+# when it lands, it lands here too.
+UNTRUSTED_SOURCE_TYPES: frozenset[str] = frozenset(
+    source_type for source_type, _rule in UNTRUSTED_SOURCE_RULES
+)
 
 # "Short total chain length" (ADR-0012 leaves the threshold open). 6 is
 # the write + read budget: `find_chain_groups` gives each side
@@ -1091,15 +1105,173 @@ class QueryLayer:
         missing = [eid for eid in edge_ids if eid not in found]
         return existing, missing
 
-    def is_chain_valid(self, chain_nodes: list[str], chain_edges: list[str]) -> bool:
-        """True if every node and every edge exists in the graph.
+    # --------------------------------------------------------
+    # Layer 3 deterministic validation (ADR-0006, A.4)
+    # --------------------------------------------------------
 
-        Stricter than validate_edges alone: also checks nodes.
+    def validate_chain(
+        self,
+        chain_nodes: list[str],
+        chain_edges: list[str],
+        entry_kind: str = "entry_point",
+        sink_kind: str = "sink",
+    ) -> tuple[bool, str, list[str]]:
+        """Validate a chain: `(ok, validated_kind, notes)`.
+
+        Four checks, in the order a chain earns them:
+
+          1. existence — every node and every edge is in the graph.
+          2. connected — edge `i` runs from `chain_nodes[i]` to
+             `chain_nodes[i + 1]`.
+          3. typed — the first node is an `entry_kind` and the last is
+             a sink.
+          4. anchor — if the chain carries an `untrusted_source`, that
+             node declares a real source family and has a reader.
+
+        Existence is checked first and on its own: a direction cannot
+        be judged against an edge that is not there, so a hallucinated
+        chain is rejected on existence without a second, meaningless
+        complaint.
+
+        `validated_kind` names the rule level that judged the chain:
+        `"semantic"` when every check passed — and then `ok` is true —
+        and `"existence"` otherwise. That is the level the chain
+        reached, which is why a chain that exists but is incoherent
+        reads `"existence"` rather than `"semantic"` (ADR-0006 Layer 3
+        before A.4 is exactly the `"existence"` level). The field is
+        where a third level will be named when the data asks for one.
+
+        `notes` holds one short, name-based line per failure — never
+        source text, the same rule `FlowDecision.evidence` follows.
+        It is empty when every check passed.
         """
-        if not chain_nodes or not chain_edges:
+        notes = self._existence_notes(chain_nodes, chain_edges)
+        if notes:
+            return False, "existence", notes
+
+        notes.extend(self._connection_notes(chain_nodes, chain_edges))
+        notes.extend(self._typing_notes(chain_nodes, entry_kind, sink_kind))
+        notes.extend(self._anchor_notes(chain_nodes))
+        if notes:
+            return False, "existence", notes
+        return True, "semantic", []
+
+    def is_chain_valid(
+        self,
+        chain_nodes: list[str],
+        chain_edges: list[str],
+    ) -> bool:
+        """True if the chain exists AND is structurally coherent.
+
+        The boolean face of `validate_chain`, for callers that want the
+        verdict and not the reasons. Before A.4 this meant "every node
+        and every edge exists"; it now also means the chain is
+        connected, typed and — where it claims one — correctly
+        anchored (ADR-0006 Layer 3).
+        """
+        return self.validate_chain(chain_nodes, chain_edges)[0]
+
+    def is_chain_connected(
+        self,
+        chain_nodes: list[str],
+        chain_edges: list[str],
+    ) -> bool:
+        """True if edge `i` links `chain_nodes[i]` to `chain_nodes[i+1]`.
+
+        Direction is the point: a chain is a path, so `chain_edges[i]`
+        must *go from* node `i` to node `i + 1`, not merely exist
+        between them. A reversed edge does not connect the pair, and a
+        chain with a hole is not connected either — `len(chain_edges)`
+        must be `len(chain_nodes) - 1`.
+        """
+        return not self._connection_notes(chain_nodes, chain_edges)
+
+    def is_chain_typed(
+        self,
+        chain_nodes: list[str],
+        chain_edges: list[str],
+        entry_kind: str = "entry_point",
+        sink_kind: str = "sink",
+    ) -> bool:
+        """True if the chain starts at an `entry_kind` and ends at a sink.
+
+        A sink is a node whose kind is `sink_kind` *or* a node carrying
+        one of `patterns.SINK_CAPABILITIES` — the two rules `find_chains`
+        enumerates endpoints by (ADR-0009, ADR-0014), so a candidate
+        that was enumerated cannot fail this on a technicality.
+
+        Intermediate kinds are deliberately not checked: a chain
+        through a `tool` is the normal shape, and `find_chains` already
+        refuses to revisit a node. Only the two ends carry the claim.
+
+        `chain_edges` is accepted for symmetry with the other checks
+        and is not read — typing is a property of the endpoints.
+        """
+        return not self._typing_notes(chain_nodes, entry_kind, sink_kind)
+
+    def is_untrusted_anchor_valid(self, source_id: str) -> bool:
+        """True if `source_id` is a usable untrusted-source anchor.
+
+        Three things must hold, and all three are about the *claim* the
+        anchor makes:
+
+          - the node exists and its kind is `untrusted_source`;
+          - it declares a `source_type` in `UNTRUSTED_SOURCE_TYPES`, the
+            families that actually have a detector (ADR-0010);
+          - at least one `has_access_to` edge leaves it for a node
+            carrying `reads_untrusted` — an anchor with no reader is a
+            label, not a channel.
+
+        The reader is looked up in the graph rather than in the chain:
+        this check is about the anchor's structure, and a caller with a
+        chain validates the chain separately. Status is not filtered,
+        for the same reason `validate_edges` does not filter it —
+        Layer 3 answers "is this in the graph", and the graph is
+        rebuilt per scan (ADR-0003).
+        """
+        row = self._conn.execute(
+            "SELECT kind, attributes FROM nodes WHERE id = ?", (source_id,)
+        ).fetchone()
+        if row is None or row["kind"] != "untrusted_source":
             return False
 
-        # Nodes
+        attributes = json.loads(row["attributes"] or "{}")
+        if attributes.get("source_type") not in UNTRUSTED_SOURCE_TYPES:
+            return False
+
+        readers = self._conn.execute(
+            """
+            SELECT n.capabilities AS capabilities
+            FROM edges e JOIN nodes n ON n.id = e.target_id
+            WHERE e.source_id = ? AND e.kind = 'has_access_to'
+            """,
+            (source_id,),
+        ).fetchall()
+        for reader in readers:
+            capabilities = json.loads(reader["capabilities"] or "[]")
+            if "reads_untrusted" in capabilities:
+                return True
+        return False
+
+    # --------------------------------------------------------
+    # Layer 3 note builders — one line per failure, no source text
+    # --------------------------------------------------------
+
+    def _existence_notes(
+        self,
+        chain_nodes: list[str],
+        chain_edges: list[str],
+    ) -> list[str]:
+        """Which nodes and which edges of the chain are not in the graph.
+
+        The A.4 predecessor of `is_chain_valid`, unchanged in what it
+        accepts: every node and every edge must exist.
+        """
+        if not chain_nodes:
+            return ["no nodes"]
+        if not chain_edges:
+            return ["no edges"]
+
         chunk_size = 900
         found_nodes: set[str] = set()
         for i in range(0, len(chain_nodes), chunk_size):
@@ -1111,12 +1283,94 @@ class QueryLayer:
             ).fetchall()
             found_nodes.update(r["id"] for r in rows)
 
-        if len(found_nodes) != len(set(chain_nodes)):
-            return False
-
-        # Edges
+        notes = [
+            f"missing node {node_id}"
+            for node_id in dict.fromkeys(chain_nodes)
+            if node_id not in found_nodes
+        ]
         _, missing_edges = self.validate_edges(chain_edges)
-        return not missing_edges
+        notes.extend(f"missing edge {edge_id}" for edge_id in missing_edges)
+        return notes
+
+    def _connection_notes(
+        self,
+        chain_nodes: list[str],
+        chain_edges: list[str],
+    ) -> list[str]:
+        """Which hops of the chain do not link their two nodes."""
+        notes: list[str] = []
+        expected = len(chain_nodes) - 1
+        if len(chain_edges) != expected:
+            notes.append(
+                f"hop count: {len(chain_edges)} edge(s) for "
+                f"{len(chain_nodes)} node(s), expected {expected}"
+            )
+
+        edges = self._edges_by_id(chain_edges)
+        for i in range(min(len(chain_edges), expected)):
+            edge_id = chain_edges[i]
+            source, target = chain_nodes[i], chain_nodes[i + 1]
+            edge = edges.get(edge_id)
+            if edge is None:
+                # Check 1 requires the edge to *exist* as well as to
+                # point the right way, so a standalone `is_chain_connected`
+                # call catches a hole here. `validate_chain` never gets
+                # this far with one: existence is checked first.
+                notes.append(
+                    f"disconnected: edge {edge_id} is not in the graph"
+                )
+                continue
+            if edge.source_id != source or edge.target_id != target:
+                notes.append(
+                    f"disconnected: edge {edge_id} links "
+                    f"{edge.source_id} → {edge.target_id}, "
+                    f"expected {source} → {target}"
+                )
+        return notes
+
+    def _typing_notes(
+        self,
+        chain_nodes: list[str],
+        entry_kind: str,
+        sink_kind: str,
+    ) -> list[str]:
+        """Whether the chain's two ends have the kinds a chain claims."""
+        if not chain_nodes:
+            return ["no nodes"]
+
+        nodes = self._nodes_by_id(chain_nodes)
+        notes: list[str] = []
+
+        first = nodes.get(chain_nodes[0])
+        if first is None or first.kind != entry_kind:
+            notes.append(
+                f"first node {chain_nodes[0]} is not a {entry_kind}"
+            )
+
+        last = nodes.get(chain_nodes[-1])
+        if last is None or (
+            last.kind != sink_kind
+            and not SINK_CAPABILITIES.intersection(last.capabilities)
+        ):
+            notes.append(f"last node {chain_nodes[-1]} is not a {sink_kind}")
+        return notes
+
+    def _anchor_notes(self, chain_nodes: list[str]) -> list[str]:
+        """Which `untrusted_source` nodes fail the anchor check.
+
+        A chain with no anchor has nothing to check and yields no notes:
+        the check applies where an anchor is claimed, not everywhere. A
+        chain that is not part of an injection group never mentions a
+        source, and that is not a defect.
+        """
+        nodes = self._nodes_by_id(chain_nodes)
+        return [
+            f"untrusted anchor {node_id} is not a usable source"
+            for node_id in dict.fromkeys(chain_nodes)
+            if nodes.get(node_id) is not None
+            and nodes[node_id].kind == "untrusted_source"
+            and not self.is_untrusted_anchor_valid(node_id)
+        ]
 
     # --------------------------------------------------------
     # Internal helpers
@@ -1232,6 +1486,31 @@ class QueryLayer:
             node_ids,
         ).fetchall()
         return {row["id"]: Node.from_row(row) for row in rows}
+
+    def _edges_by_id(self, edge_ids: list[str]) -> dict[str, Edge]:
+        """Edges by id, for the ids that exist.
+
+        Layer 3's connection check needs each hop's two endpoints, not
+        the whole row, and it needs them for a handful of ids at most.
+        A missing id is simply absent — the existence check has already
+        reported it, and the connection check has nothing to say about
+        an edge that is not there.
+        """
+        if not edge_ids:
+            return {}
+        out: dict[str, Edge] = {}
+        chunk_size = 900
+        for i in range(0, len(edge_ids), chunk_size):
+            chunk = edge_ids[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                f"SELECT * FROM edges WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                edge = Edge.from_row(row)
+                out[edge.id] = edge
+        return out
 
     @staticmethod
     def _matched_caps(

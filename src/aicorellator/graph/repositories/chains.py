@@ -35,10 +35,12 @@ class ChainsRepository:
             INSERT INTO chains (
                 id, chain_nodes, chain_edges, verdict, confidence,
                 reasoning, voter_outputs, prompt_version, validated,
+                validated_kind, validation_notes,
                 status, created_at, updated_at
             ) VALUES (
                 :id, :chain_nodes, :chain_edges, :verdict, :confidence,
                 :reasoning, :voter_outputs, :prompt_version, :validated,
+                :validated_kind, :validation_notes,
                 :status, :created_at, :updated_at
             )
             """,
@@ -69,6 +71,8 @@ class ChainsRepository:
                 voter_outputs  = :voter_outputs,
                 prompt_version = :prompt_version,
                 validated      = :validated,
+                validated_kind = :validated_kind,
+                validation_notes = :validation_notes,
                 status         = :status
             WHERE id = :id
             """,
@@ -82,6 +86,8 @@ class ChainsRepository:
                 "voter_outputs": json.dumps(chain.voter_outputs),
                 "prompt_version": chain.prompt_version,
                 "validated": 1 if chain.validated else 0,
+                "validated_kind": chain.validated_kind,
+                "validation_notes": json.dumps(chain.validation_notes),
                 "status": chain.status,
             },
         )

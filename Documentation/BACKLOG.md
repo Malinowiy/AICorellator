@@ -77,6 +77,15 @@ Plus two coverage gaps that ADR-0016 does not close:
 
 ## Recently done
 
+### 2026-10-27 — A.4: Layer 3 semantic validation
+
+validate_chain(nodes, edges) -> (ok, validated_kind, notes); existence → connected → typed → untrusted-anchor. is_chain_valid stays as the boolean wrapper.
+Schema: chains.validated_kind (NULL | 'existence' | 'semantic'), chains.validation_notes (JSON); chain_groups.validated_kind (same CHECK).
+evaluator._evaluate_one stores all three values; reporting/markdown.py prints > **Layer 3:** <note> under the reasoning for rejected chains.
+Direction check is defense in depth: find_chains cannot emit direction-broken candidates (DFS records edges leaving the current node); the check protects chains arriving by any other path.
+Tests: +46 (new tests/test_semantic_validation/, 42; test_query_layer +2; test_reporting +3; repository round-trip). 1160 passed.
+ADR-0006 marked Superseded in part by ADR-0018; ADR-0018 written (separate commit).
+
 ### 2026-10-25 — A.3a: `patterns.py` and `classification.py` are name-free
 
 The class-A heuristics are gone from both modules. A class name no longer grants a node its kind.
@@ -272,7 +281,7 @@ The same measurement shows a pre-existing overload: `mcp_entry_synthesis` writes
 ### A.4 — Layer 3 semantic validation
 
 **Priority:** **High**
-**Status:** Not started
+**Status:** Done (2026-10-27) — see "Recently done".
 **Rationale:** `is_chain_valid` checks that nodes and edges exist; it does not check direction, order, or roles. A voter that returns `exploitable: true, evidence: []` produces `validated: true`. This is the most significant remaining correctness gap after ADR-0016.
 
 **What changes:**
@@ -862,7 +871,7 @@ These are not backlog items; they are decisions the next planning session should
 
 1. **Is `data_flow_confirmed` a promise, or enrichment metadata?** → **Resolved.** It is enrichment metadata. The AST layer does not answer the question; `data_flow_confirmed` is `NULL` on AST edges and populated only by Layer 2.
 2. **Is `lethal_trifecta` a claim?** → **Resolved.** Yes, and it is valid on the AST layer. It is a node property, computed from capabilities. Runtime strengthens the path evidence around it, not the flag.
-3. **Does `validated: true` mean "correct"?** → **Resolved in principle, not yet in code.** ADR-0016 does not change `validated`; the Layer 3 semantic validation item (A.4) does. Until A.4 lands, `validated: true` still means "exists", not "correct". The ADR for Layer 3 semantic validation (not yet written) will document the reputation change.
+3. Does validated: true mean "correct"? → Resolved by A.4 (2026-10-27). validated: true now means "existence and semantic coherence" (connected, typed, anchor-valid); validated_kind = "semantic" is that state, validated_kind = "existence" is the pre-A.4 meaning kept for read-path compatibility. The reputation change is documented in ADR-0018.
 
 ### Still open
 

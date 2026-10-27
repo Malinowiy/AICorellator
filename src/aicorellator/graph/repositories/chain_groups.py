@@ -15,10 +15,11 @@ class only moves rows.
     `score_components`, `priority`, `status`. `upsert` refreshes
     exactly those, every time.
   - 1.3d/1.3e own the evaluation columns (`verdict`, `confidence`,
-    `reasoning`, `validated`). `upsert` writes them only when the
-    incoming record carries a verdict, so re-running prioritization
-    over a graph cannot discard a verdict that was already paid for,
-    and 1.3e's post-evaluation write can land on a row 1.3c created.
+    `reasoning`, `validated`, and A.4's `validated_kind`). `upsert`
+    writes them only when the incoming record carries a verdict, so
+    re-running prioritization over a graph cannot discard a verdict
+    that was already paid for, and 1.3e's post-evaluation write can
+    land on a row 1.3c created.
   - the group-level `lethal_trifecta` column has no writer yet: 1.3d
     wrote the per-*node* attribute, and nothing projects it onto the
     group row. `upsert` leaves it as `add` found it.
@@ -50,13 +51,13 @@ class ChainGroupsRepository:
             INSERT INTO chain_groups (
                 id, name, untrusted_source_id, write_chain_ids,
                 read_chain_ids, lethal_trifecta, score, score_components,
-                verdict, confidence, reasoning, validated, priority,
-                status, created_at, updated_at
+                verdict, confidence, reasoning, validated, validated_kind,
+                priority, status, created_at, updated_at
             ) VALUES (
                 :id, :name, :untrusted_source_id, :write_chain_ids,
                 :read_chain_ids, :lethal_trifecta, :score, :score_components,
-                :verdict, :confidence, :reasoning, :validated, :priority,
-                :status, :created_at, :updated_at
+                :verdict, :confidence, :reasoning, :validated,
+                :validated_kind, :priority, :status, :created_at, :updated_at
             )
             """,
             group.to_row(),
@@ -70,15 +71,18 @@ class ChainGroupsRepository:
           - `name`, the id sets, the anchor, `score`, `score_components`,
             `priority`, `status` are always refreshed — they are 1.3c's,
             and a re-run of prioritization must win.
-          - `verdict`, `confidence`, `reasoning`, `validated` are written
-            only when the incoming record carries a verdict
-            (`verdict is not None`). 1.3c's `to_record()` rows have none,
-            so a second prioritization run (or a delta rescan) cannot
-            erase a verdict that was already paid for; 1.3e's evaluated
-            row does have one, so its write lands.
+          - `verdict`, `confidence`, `reasoning`, `validated`,
+            `validated_kind` are written only when the incoming record
+            carries a verdict (`verdict is not None`). 1.3c's
+            `to_record()` rows have none, so a second prioritization
+            run (or a delta rescan) cannot erase a verdict that was
+            already paid for; 1.3e's evaluated row does have one, so
+            its write lands.
             `validated` travels with the verdict rather than on its own:
             a row with a verdict has been through Layer 3, and the flag
-            says whether it survived.
+            says whether it survived; `validated_kind` (A.4) travels
+            with it for the same reason — it is the label of that same
+            check.
 
         `created_at` is left alone too: it is when the group was first
         seen.
@@ -116,11 +120,13 @@ class ChainGroupsRepository:
                 "confidence = :confidence",
                 "reasoning = :reasoning",
                 "validated = :validated",
+                "validated_kind = :validated_kind",
             ]
             params["verdict"] = group.verdict
             params["confidence"] = group.confidence
             params["reasoning"] = group.reasoning
             params["validated"] = 1 if group.validated else 0
+            params["validated_kind"] = group.validated_kind
 
         self._conn.execute(
             f"UPDATE chain_groups SET {', '.join(assignments)} WHERE id = :id",

@@ -261,6 +261,14 @@ def _evaluated_chains_section(store: GraphStore, chains: list[Chain]) -> str:
                 reasoning = chain.reasoning.strip().replace("\n", "\n> ")
                 lines.append(f"> **Reasoning:** {reasoning}")
                 lines.append("")
+            if not chain.validated and chain.validation_notes:
+                # A rejected chain is still stored — it exists — so the
+                # reasons it was rejected travel with it: one line per
+                # failed check, as Layer 3 recorded them (A.4). A
+                # validated chain has no notes by construction.
+                for note in chain.validation_notes:
+                    lines.append(f"> **Layer 3:** {note}")
+                lines.append("")
 
     return "\n".join(lines)
 

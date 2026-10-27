@@ -238,6 +238,12 @@ CREATE INDEX IF NOT EXISTS idx_findings_updated ON findings(updated_at);
 -- No foreign keys on chain_nodes / chain_edges. Validation is
 -- Layer 3 app logic. Chains with validated = 0 may reference
 -- non-existent nodes/edges — kept for provenance, not for reports.
+--
+-- validated_kind / validation_notes are A.4: the first says which
+-- Layer 3 rule level judged the chain, the second says which checks
+-- rejected it (an array of short, name-based notes — no source
+-- text, same rule as FlowDecision.evidence). `validated` now means
+-- "exists AND is structurally coherent", not just "exists".
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chains (
@@ -250,6 +256,12 @@ CREATE TABLE IF NOT EXISTS chains (
     voter_outputs   JSON NOT NULL DEFAULT '[]',
     prompt_version  TEXT NOT NULL,
     validated       INTEGER NOT NULL DEFAULT 0,
+    -- A.4. `validated_kind` is NULL only for a row written before
+    -- A.4; `Chain.from_row` reads that back as 'existence', which is
+    -- what such a row was judged by. `validation_notes` is empty for
+    -- a chain that passed and for a row written before A.4.
+    validated_kind   TEXT,
+    validation_notes JSON NOT NULL DEFAULT '[]',
     status          TEXT NOT NULL DEFAULT 'active',
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -257,6 +269,9 @@ CREATE TABLE IF NOT EXISTS chains (
     CHECK (verdict IN ('exploitable', 'not_exploitable', 'uncertain')),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (validated IN (0, 1)),
+    CHECK (validated_kind IS NULL
+           OR validated_kind IN ('existence', 'semantic')),
+    CHECK (json_valid(validation_notes)),
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(chain_nodes)),
     CHECK (json_valid(chain_edges)),
@@ -285,6 +300,10 @@ CREATE INDEX IF NOT EXISTS idx_chains_prompt_version ON chains(prompt_version);
 --
 -- lethal_trifecta: 1 if the reading side passes through a node
 -- with reads_untrusted + reads_secrets + egress capability.
+--
+-- validated_kind: A.4's label on the group's own Layer 3 check
+-- (edge existence, evidence membership, hop resolution). It is a
+-- label only — the check itself is 1.3e's and did not change.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chain_groups (
@@ -300,6 +319,7 @@ CREATE TABLE IF NOT EXISTS chain_groups (
     confidence          REAL NOT NULL DEFAULT 0.0,
     reasoning           TEXT,
     validated           INTEGER NOT NULL DEFAULT 0,
+    validated_kind      TEXT,
     priority            TEXT,
     status              TEXT NOT NULL DEFAULT 'active',
     created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -309,6 +329,8 @@ CREATE TABLE IF NOT EXISTS chain_groups (
 
     CHECK (lethal_trifecta IN (0, 1)),
     CHECK (validated IN (0, 1)),
+    CHECK (validated_kind IS NULL
+           OR validated_kind IN ('existence', 'semantic')),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (verdict IS NULL OR verdict IN (
         'exploitable', 'not_exploitable', 'uncertain'
