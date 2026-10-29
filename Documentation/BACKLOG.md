@@ -304,7 +304,7 @@ The same measurement shows a pre-existing overload: `mcp_entry_synthesis` writes
 ### B.1 — Cross-file `tool → sink`
 
 **Priority:** **High**
-**Status:** Not started
+**Status:** Done (2026-10-29)
 **Rationale:** `has_access_to` (tool → sink) is built only within a single file. Real projects have `tool` in `mcp/servers/findrive/server.py` and `sink` in `mcp/servers/findrive/repositories.py` — no edge exists. Chain enumeration misses these paths.
 
 **Approach:** Extend the call graph to span imports. `has_access_to` edges across files inherit the same `flow_kind` / `observed_by` discipline (`["ast"]` only; `control`). The `flow/` analyzer is not involved — ADR-0016 removed its AST write.
