@@ -2,8 +2,8 @@
 
 Single registry of deferred, in-progress, and planned work. Complements the ADRs (which record *decisions*) with a working list of *what to do next*.
 
-**Last updated:** 2026-10-25
-**Revision:** restructured around ADR-0016 and ADR-0017. See §0 for the reasoning and the Top-10 view.
+**Last updated:** 2026-10-29
+**Revision:** restructured around ADR-0016, ADR-0017, ADR-0019, ADR-0020, ADR-0021. Phase B in progress (B.1, B.2, B.3a, B.3b-core, B.3b-fs, B.3b-user_upload-core, B.3b-user_upload-fastapi, B.4a, B.4b, B.10a, B.10b done). See §0 for the direction and the Top-10 view.
 
 ---
 
@@ -11,53 +11,55 @@ Single registry of deferred, in-progress, and planned work. Complements the ADRs
 
 ### 0.1. The diagnosis this revision is built on
 
-The previous revision (2026-10-23) was built on the premise that `data_edges_only = 0` on all corpora was a **bug to fix**. ADR-0016 changed that premise: the AST layer cannot confirm data flow, and pretending it can produces `unknown` everywhere — which is worse than `NULL` because it looks like a signal. The correct answer is that the AST layer answers a different question.
+The previous revision (2026-10-25) was built on ADR-0016 and ADR-0017: the AST layer is control-only, `observed_by` is on every node and edge, `data_edges_only = []` on an AST scan is the correct answer. Three ADRs have been accepted since and shape the current direction:
 
-Three facts from the 2026-10-25 state:
+1. **ADR-0019 — guardrail emission and evaluation weighting.** `guards` is emitted from source-level evidence (call site, `@guardrail(...)` decorator) and reaches the LLM as a `guardrails` payload section, not as an enumeration filter. B.4a and B.4b implement it; end-to-end is blocked by B.4-gap (no producer of `guardrail` nodes after ADR-0016).
+2. **ADR-0020 — capability inheritance from a scanned base class.** A subclass of a scanned base inherits the base's own capabilities, one level, cycle-safe. B.10b implements it; the FinBot-shaped hierarchy (a `BaseAgent` that calls `self.llm_client.chat(...)`, subclasses that call `_run_agent_loop`) now produces an `agent` node for the subclass, structurally.
+3. **ADR-0021 — store as a graph entity, with probabilistic write/read links.** A `store` is a place write and read call sites point at; `writes_to` / `reads_from` are structural edges with an `identity_confidence` computed from signals (family, literal, code context). Two revisions: §1 (family = technology, `user_upload` is a source type), §8 (base 0.5 for a context-based writer). B.3a (mechanism), B.3b-core (family interface, registry, resolver), B.3b-fs (first family), B.3b-user_upload-core (upload detector interface, context, writer logic), B.3b-user_upload-fastapi (first detector) implement it.
 
-1. **ADR-0016 and ADR-0017 are accepted.** The AST layer is control-only. `observed_by` is a first-class attribute on every node and edge. Layer 2 (runtime) is the only producer of `data` edges. The `flow/` module remains the mechanism Layer 2 will use, but it does not write to the AST graph.
-2. **`lethal_trifecta` works on the AST layer.** It is a node property, computed from capabilities. It does not depend on Layer 2. The corpus answer (zero on four corpora) is about the *test* corpus, not about the *mechanism*. The mechanism is correct and will fire when a real target has a node that combines the three halves.
-3. **Layer 3 validates existence, not semantics.** `is_chain_valid` checks that nodes and edges exist; it does not check direction, order, or roles. A voter that returns `exploitable: true` with `evidence: []` still produces `validated: true`. This is unchanged by ADR-0016 and is the most significant remaining correctness gap.
+Four facts from the 2026-10-29 state:
 
-Plus two coverage gaps that ADR-0016 does not close:
+1. **Phase B is closing the coverage gaps.** B.1 (cross-file `tool → sink`), B.2 (write-side for `rag_corpus` / `email_inbox`), B.4a / B.4b (guardrails), B.10a / B.10b (capability coverage + inheritance), B.3a / B.3b-core / B.3b-fs / B.3b-user_upload-core / B.3b-user_upload-fastapi (store model) are done.
+2. **The store model is the largest new subsystem since Phase A.** A `store` node kind, `writes_to` / `reads_from` as structural edges, `identity_confidence` as a second confidence field, a store-family registry and a store-context registry, and a join in `find_chain_groups` by store id. The **first real family** (`fs`) is shipped; the **first real upload detector** (FastAPI) is shipped; **three known gaps** (B.4-gap, B.3b-user_upload-attribution, B.3b-fs prefix-inert) are recorded and not papered over.
+3. **The `max_depth` dimension is not yet implemented.** `find_chain_groups(max_depth=1)` is the current enumeration; `max_depth=2+` (three-hop and longer) is a post-release step. Depth is the parameter that makes a multi-store chain (write → store → read → write → store → read) enumerable.
+4. **Layer 3 validates existence, semantics, and now (via B.9) will validate evidence presence.** B.9 remains a Medium item.
 
-- **Write-side detection works only for `mcp_tool_description`.** `rag_corpus`, `email_inbox`, and `user_upload` have no writer rule. Half of ADR-0010 does not function.
-- **Cross-file `tool → sink` is not implemented.** `has_access_to` is same-file only, so chain enumeration misses real paths.
+Plus two coverage gaps that Phase B has not yet closed:
+
+- **`guardrail` node producer (B.4-gap).** No deterministic layer produces `guardrail` nodes after ADR-0016; B.4a's emission is correct and tested but returns zero on the four corpora. The decision (capability rule / framework detector / LLM-only) is B.4-gap.
+- **`user_upload` attribution end-to-end (B.3b-user_upload-attribution).** The attribution logic works (unit-tested), but an `fs` read is not one of 1.3a's source types, so the reader has no `untrusted_source` node to stamp with `source_type='user_upload'`. A multi-role `source_type` rule or a producer of `untrusted_source` for `fs` reads in the writer's scope is the decision.
 
 ### 0.2. The direction this revision sets
 
-**Fix the foundation, then build.** Concretely:
+**Fix the foundation, then build; close coverage gaps family by family.**
 
-- **Phase A (now):** ADR-0016 and ADR-0017 are accepted. A.1 (schema, `observed_by`) and A.2 (one `config/config.yaml`,
-`--clean` keeps config) are done. A.3a (`patterns.py` + `classification.py` carry no name→kind table) is done. Remaining: A.3b (the agent-call heuristics in `entry_points.py`), A.4 (Layer 3 semantic validation).
-- **Phase B (next):** close the coverage gaps that make existing features work — cross-file `tool → sink`, write-side for the remaining source families, guardrails as load-bearing, judge determinism.
-- **Phase C (then):** Layer 2 runtime for Python. This is the only path to `data_edges_only > 0` on a real corpus, and it is the largest single piece of work in the project.
-- **Phase D (then):** resume the roadmap — `openai_agents` detector, prompt engineering on a graph where the data exists.
+- **Phase A — done.** ADR-0016 and ADR-0017 implemented; Layer 3 semantic validation (A.4) done.
+- **Phase B — in progress.** Cross-file `tool → sink` (B.1), write-side for `rag_corpus` / `email_inbox` (B.2), guardrail emission and weighting (B.4a, B.4b), capability coverage and inheritance (B.10a, B.10b), store model (B.3a, B.3b-core, B.3b-fs, B.3b-user_upload-core, B.3b-user_upload-fastapi) are done. Remaining: Streamlit / Django / Flask upload detectors (B.3b-user_upload-streamlit / -django / -flask), B.3b-s3, B.3b-db, B.3b-llm_fallback, B.3c (migration of B.2 to the store model), B.5 (judge determinism), B.9 (evidence presence).
+- **Phase C — next.** Layer 2 runtime for Python. The only path to `data_edges_only > 0` on a real corpus.
+- **Phase D — then.** Resume the roadmap: `openai_agents` detector, prompt engineering on a graph where the data exists, LLM classifier fine-tune.
 
-**What is explicitly *not* planned in this cycle:** TUI (Icebox), new eval modes, multi-host, standalone executables, SCIP, schema migrations, non-Python runtime.
-
-**What is explicitly *removed* from the backlog by this revision:** items `1.2a.1`, `1.2a.2`, `1.2a.3*`, `1.2a.4`, `1.2a.5`, the old "ADR-0016 — `data_flow_confirmed` quality", and `1.5` graph densification. They were all attempts to compute `data_flow_confirmed` on the AST layer. ADR-0016 supersedes them: the AST layer does not compute `data_flow_confirmed`, and no amount of analyzer refinement changes that.
+**What is explicitly *not* planned in this cycle:** TUI (Icebox), new eval modes, multi-host, standalone executables, SCIP, schema migrations, non-Python runtime, `max_depth > 1` (post-release).
 
 ### 0.3. Top 10 by impact
 
 | # | Item | Priority | Why it is here |
 |---|---|---|---|
-| 1 | **Schema + `observed_by`** (ADR-0016 implementation) | **Critical** | The foundation. Everything else writes into this field. |
-| 2 | **Remove class-A heuristics from `patterns.py` / `classification.py`** (ADR-0016 A.3a) | **Critical** | `SINK_METHOD_NAMES`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES` are FinBot-specific. Their removal is the point of ADR-0016. **Done.** |
-| 3 | **Remove the agent-call heuristics from `entry_points.py`** (ADR-0016 A.3b) | **Critical** | The same heuristics, relocated. An edge must come from framework provenance, not from a class name. **Next.** |
-| 4 | **Layer 3 semantic validation** | **High** | `validated: true` currently does not mean "correct". |
-| 5 | **Cross-file `tool → sink`** | **High** | Without it, chain enumeration misses real paths. |
-| 6 | **Guardrails affect enumeration** | **High** | Guardrails are nodes but not blockers; the prompt is lying to the model. |
-| 7 | **Write-side for `rag_corpus` / `email_inbox` / `user_upload`** | **Medium** | Half of ADR-0010 does not function. |
-| 8 | **LLM classifier (`parsing/llm_classifier/`)** | **Medium** | The replacement for class-A heuristics on projects with custom SDKs. Opt-in. |
-| 9 | **Layer 2 runtime — Python** | **High** (largest, but starts after Phase A/B) | The only path to `data_edges_only > 0`. |
-| 10 | **Judge determinism** | **Medium** | Verdicts stored in `chain_groups` are not reproducible. |
+| 1 | **Cross-file `tool → sink`** (B.1) | **High** | **Done.** Enables real paths through imports. |
+| 2 | **Guardrails affect evaluation** (B.4a + B.4b) | **High** | **Done.** Guardrails enter the payload, not the traversal. End-to-end blocked by B.4-gap. |
+| 3 | **Store model** (B.3a, B.3b-core, B.3b-fs, B.3b-user_upload-core) | **High** | **Done.** A `store` node, `writes_to` / `reads_from` with `identity_confidence`, a family registry, a context registry. |
+| 4 | **Upload detector (FastAPI)** (B.3b-user_upload-fastapi) | **High** | **Done.** First real `UploadDetector`. |
+| 5 | **Write-side for `rag_corpus` / `email_inbox`** (B.2) | **Medium** | **Done.** Both families now have a writer. Migrates to store in B.3c. |
+| 6 | **`guardrail` node producer** (B.4-gap) | **High** | B.4a and B.4b are correct but return zero until a producer exists. A decision, not a fix. |
+| 7 | **Upload detectors for Streamlit / Django / Flask** (B.3b-user_upload-streamlit / -django / -flask) | **Medium** | Three more detectors on the same interface. **Next.** |
+| 8 | **`s3` / `db` families** (B.3b-s3, B.3b-db) | **Medium** | Two more store families. Parallel or sequential; Cline's and your choice. |
+| 9 | **Store migration of B.2** (B.3c) | **Medium** | `writes_to` targets `store`, not `untrusted_source`, for every family. |
+| 10 | **Judge determinism** (B.5) | **Medium** | Verdicts in `chain_groups` are not reproducible. |
 
 ---
 
 ## Priority legend
 
-- **Critical** — blocks the ADR-0016 implementation. Nothing else starts until these land.
+- **Critical** — blocks the current phase. Nothing else starts until these land.
 - **High** — next session or two.
 - **Medium** — within a month.
 - **Low** — when there is time.
@@ -77,6 +79,135 @@ Plus two coverage gaps that ADR-0016 does not close:
 
 ## Recently done
 
+### 2026-10-29 — B.3b-user_upload-fastapi: first upload detector
+
+- **New `store/context/upload/detectors/fastapi.py`.** `FastAPIUploadDetector(UploadDetector)`, `name='fastapi'`. Three shapes: `UploadFile` / `fastapi.UploadFile`; `Subscript` with base in `UPLOAD_CONTAINERS` and slice `UploadFile`; `File(...)` default with `bytes` or no annotation. `Form(...)` beats `UploadFile`. `bytes` alone is not an upload. Positional-only, positional, keyword-only parameters; `*args`/`**kwargs` never.
+- **Route check** by handler name against `entry_points`, plus a decorator confirmation that tightens hand-built deltas.
+- **Registration** by literal name in `detectors/__init__.py`; `upload/__init__.py` imports `detectors`.
+- **Docstring truth-fixes** in 4 files.
+- **Tests:** +58 (test_store_upload_fastapi). 1570 passed.
+- **E2E:** `/tmp/b3bfs_target` gains one edge: `writes_to entry_point→store 0.872` (in addition to the resolver's `writes_to sink→store 0.776`).
+- **Attribution inert end-to-end** for a stronger reason than core recorded: an `fs` read is not an `untrusted_source` node at all. Recorded in B.3b-user_upload-attribution.
+
+### 2026-10-29 — B.3b-user_upload-core: upload detector interface, context, writer logic, attribution
+
+- **New `store/context/upload/`** — base, registry, context, writer, attribution.
+- **`UploadDetector` interface** (mirrors framework detectors), `UploadSite`.
+- **`UserUploadContext.identify`** calls registered detectors, merges, dedups.
+- **Writer logic** — entry-point → stores reachable via call graph, base 0.5 (context signal, ADR-0021 §8 revision 2), literal + same-module + context-in-body.
+- **Attribution** — `source_type='user_upload'` on `untrusted_source` in the writer's scope, no overwrite.
+- **`store_resolver` stage** gains the writer/attribution step, merge-by-id for the one collision case.
+- **Tests:** +74. 1512 passed.
+- **Known:** attribution inert end-to-end; `fs` write sites re-derived in the stage; docstrings stale in `registry.py`, `store_resolver.py`.
+
+### 2026-10-29 — ADR-0021 §8 revision 2: base 0.5 for a context-based writer
+
+- One clause in §8: an entry-point handler that a `UploadDetector` identifies as accepting an upload is a context-based writer; base confidence 0.5, not 0.3. Combine as before.
+- Recorded in the header, in a "Revision note 2", and in the commit.
+
+### 2026-10-29 — B.3b-fs: `fs` family
+
+- **New `store/families/fs.py`.** `FsFamily`, `detect_writes` / `detect_reads` for `open`, `aiofiles.open`, `Path.write_*` / `Path.read_*` / `Path.open(mode)`. Write modes `w/a/x/+`; read modes `r` or absent; `r+` is both.
+- **Literal extraction:** `Constant` → full hint; `BinOp` / `JoinedStr` prefix; `Name` / `Attribute` → `None`.
+- **`literal_match`** gains the containment branch (`startswith`, both ways, +0.3); exact +0.6, one-side +0.2.
+- **Registration** by import (`store/families/__init__.py` → `register_family("fs", FsFamily)`).
+- **Tests:** +55. 1438 passed.
+- **Known:** prefix containment is inert through the resolver (`_attached_keys` attaches only to the exact key). Backlog: B.3b-fs-followup. Docstrings in `registry.py`, `resolver.py` stale.
+
+### 2026-10-29 — B.3b-core: store family interface, registry, resolver
+
+- **New `store/` package** (7 files): interface, registry, confidence, resolver, families, context.
+- **`Family` interface**, `WriteSite`, `ReadSite`, `ModuleFacts`, `Context`.
+- **`StoreResolver.resolve(delta, ctx)`** — calls families, pairs, computes `identity_confidence`.
+- **`literal_match`, `code_context`, `combine_signals`** (ADR-0021 §8 signals).
+- **Seam:** normalizer stage 19 (`StoreResolverStage`), before `guardrail_edges` — the correct seam, not `run_scan.py`.
+- **Tests:** +74. 1383 passed.
+
+### 2026-10-29 — B.3a: store node, reads_from, identity_confidence, store join
+
+- **`store`** in `VALID_NODE_KINDS` and `nodes.kind`; **`reads_from`** in `VALID_EDGE_KINDS` and `edges.kind`; **`Edge.identity_confidence`** (`REAL`, `NULL` on all kinds except `writes_to` / `reads_from`).
+- **`upsert`** combines `identity_confidence` by `1 − (1−a)(1−b)` (cap 0.99) for those two kinds; `confidence` stays `max`.
+- **`STRUCTURAL_EDGE_KINDS`** grows to `{"guards", "writes_to", "reads_from"}`; `CONTROL_EDGE_KINDS` loses `writes_to`.
+- **`find_chain_groups(include_weak=False, store_confidence_threshold=0.7)`** joins by store id.
+- **`scan_config.store.confidence_threshold`** (default 0.7); `WEAK_JOIN_FLOOR = 0.3`.
+- **Tests:** +31. 1309 passed.
+- **Known:** transitional `writes_to` flow_kind (B.2 producer still emits control; B.3c retargets); collision with B.2's old path (B.3c resolves); `include_weak` API-only (report not wired).
+
+### 2026-10-29 — ADR-0021 revision 1: family = technology, source type = semantics
+
+- §1 corrected: a store family is the technology (`fs`, `s3`, `db`), not the semantic role. `user_upload` is a source type, not a family.
+- §12 extended: store families are modules with a `detect_writes` / `detect_reads` interface, registered in a `registry.py` — the framework-detector shape.
+- Revision note at the end; header revised.
+
+### 2026-10-29 — ADR-0021: store as a graph entity, with probabilistic write/read links
+
+- `store` node kind; `writes_to` targets a store, not an `untrusted_source`; `reads_from` (`store → untrusted_source`) is a new structural edge.
+- `Edge.identity_confidence` — existence vs identity.
+- `find_chain_groups` joins by store id; weak groups (`0.3 ≤ join confidence < 0.7`) are in the graph, `weak: true`, not in default enumeration.
+- `store_confidence_threshold` in `config.yaml` (default 0.7).
+
+### 2026-10-29 — B.2: write-side for `rag_corpus` and `email_inbox`
+
+- Two new capabilities (`writes_rag_corpus`, `writes_email_inbox`) and two writer rules (closed pattern sets, reasons).
+- `WRITER_RULES` table next to `UNTRUSTED_SOURCE_RULES`; `untrusted_writer_match`.
+- Anchor rule: writer is the node the delta holds for the symbol that credited the capability; visible from the source by same-file or shared-import.
+- **Tests:** +32. 1278 passed.
+- **Known:** `from pkg import module` is not resolved by `_module_matches_file` (shared with B.1). A write site whose symbol has no node gets no edge (deliberate). A read whose reader has no node yields the source but no `source → reader` edge (pre-existing 1.3a).
+
+### 2026-10-29 — B.10b: capability inheritance from a scanned base class
+
+- **New `parsing/capability_inheritance.py`.** `apply_inheritance(capabilities, manifest)` — a second pass after per-file extraction.
+- **§1** one level, **§2** base in scanned tree only, **§3** override does not block, **§4** transitive / method-level / multiple inheritance not done, **§5** cycle safety by construction.
+- `run_scan.py` calls it once, before `run_classifier`.
+- **Tests:** +20. 1246 passed.
+- **Known:** `BaseAgent` in `EXCLUDED_CLASSES` never becomes a node; its capabilities reach `InvoiceAgent`. Docstrings stale in `flow_kind.py` / `ast_normalizer.py` (fixed in follow-up doc-debt).
+
+### 2026-10-29 — ADR-0020: capability inheritance from a scanned base class
+
+- `caps(cls) = caps(cls's own body) ∪ caps(cls's direct base)`, one level, cycle-safe, base resolved in the scanned tree.
+- Override does not block; false positive on kind accepted.
+- Extends ADR-0009 (marker in ADR-0009).
+
+### 2026-10-29 — B.10a: `CALLS_LLM_RULE` — qualifier families for wrapped LLM clients
+
+- `CallPattern.qualifier_prefixes` — a family replaces the literal qualifier (`llm`, `model` as prefixes). `self.llm_client.chat(...)` now credits `calls_llm`.
+- Text form `{llm,model}.invoke`; prefix = exact or underscore boundary.
+- **Tests:** +29. 1226 passed.
+- **Known:** `model.generate` newly credited (unavoidable; one family per verb). `classification.py`'s `calls_llm` alone → `agent` (not `llm_endpoint`) — brief was wrong; code is consistent with ADR-0009.
+
+### 2026-10-29 — Doc-debt after B.4a: `flow_kind.py` and `ast_normalizer.py` docstrings
+
+- Two docstrings that described pre-B.4a state corrected.
+- Follow-up: `flow_kind.py` inline comment, `ast_normalizer.py` edge-list header, `ast_normalizer.py` "fifteen → nineteen stages".
+
+### 2026-10-29 — B.4b: guardrails in the evaluation payload
+
+- Payload gains a `guardrails` section (root for a chain, partition `{write, read, anchor}` for a group).
+- `PROMPT_VERSION` v1.5.0 → v1.6.0; one rule block per system prompt (voter, solo, group, judge); group form splits by side.
+- **Tests:** +19. 1197 passed.
+- **Known:** corpus regression (C2) not run (external); follow-up on `SOLO` step 4 "bypassable" (a question the new rule says the payload cannot answer).
+
+### 2026-10-29 — B.4a: guardrail edges (`guards`) emission
+
+- New stage 19 (`guardrail_edges`), `guardrail → component` from a call site or a `@guardrail(...)` decorator.
+- `flow_kind="structural"`, `observed_by=["ast"]`, `data_flow_confirmed=NULL`.
+- **Tests:** +11. 1179 passed.
+- **Known:** `guards = 0` on all four corpora — no producer of `guardrail` nodes after ADR-0016 (B.4-gap).
+
+### 2026-10-29 — ADR-0019: guardrail emission and evaluation weighting
+
+- Emission from source-level evidence only; `guardrail → component`; co-location not emitted.
+- Influence via weighting (payload), not exclusion or marking; `find_chains` unchanged.
+- Extends ADR-0007 (marker in ADR-0007).
+
+### 2026-10-29 — B.1: cross-file `tool → sink` through imports
+
+- `cross_file_resolution` (stage 14) gains `has_access_to` from a tool to a sink in an imported module, reached through the call graph.
+- Sinks and tools read from `delta.nodes`, not from `ctx.sinks_by_file` (stage 14 runs after the merge).
+- `flow_kind="control"`, `observed_by=["ast"]`, `data_flow_confirmed=NULL`.
+- **Tests:** +6. 1166 passed.
+- **Known:** `from pkg import module` is not resolved by `_module_matches_file` (B.1-followup, shared with B.2).
+
 ### 2026-10-27 — A.4: Layer 3 semantic validation
 
 validate_chain(nodes, edges) -> (ok, validated_kind, notes); existence → connected → typed → untrusted-anchor. is_chain_valid stays as the boolean wrapper.
@@ -85,6 +216,12 @@ evaluator._evaluate_one stores all three values; reporting/markdown.py prints > 
 Direction check is defense in depth: find_chains cannot emit direction-broken candidates (DFS records edges leaving the current node); the check protects chains arriving by any other path.
 Tests: +46 (new tests/test_semantic_validation/, 42; test_query_layer +2; test_reporting +3; repository round-trip). 1160 passed.
 ADR-0006 marked Superseded in part by ADR-0018; ADR-0018 written (separate commit).
+
+### 2026-10-27 — A.3b: `entry_points.py` + `delegation_edges.py` are name-free
+
+- The parked agent-call heuristics deleted; a call site is a raw `SymbolCall`; the resolver decides against existing agent nodes.
+- Two decisions settled: module→file match by trailing path segments; one hop reads invoked names.
+- Tests re-pointed; `tests/fixtures/agent_delegation/` new.
 
 ### 2026-10-25 — A.3a: `patterns.py` and `classification.py` are name-free
 
@@ -100,24 +237,13 @@ The class-A heuristics are gone from both modules. A class name no longer grants
 
 ### 2026-10-25 — A.2: one config file, `--clean` keeps `config/`
 
-- `config/config.yaml` replaces `config/scan.yaml` +
-  `config/models.yaml`. Sections: `detectors`, `llm_classifier`,
-  `runtime`, `evaluation`, `llm_classifier_model`, `unclassified`,
-  `logs`.
-- `scan_config.py`: `ScanConfig` + loader read the scan-side
-  sections from the same file; `write_default_config` writes the
-  full template.
-- `analysis/config_loader.py`: `load_config` reads `evaluation:`;
-  `default_mode` renamed to `evaluation.mode`.
-- `workspace.py`: `config_path` replaces `scan_config_path` and
-  `models_config_path`; `ensure()` creates one template with one
-  warning.
-- `run_scan.py`, `run_eval.py`: `--config` defaults to
-  `<workdir>/config/config.yaml`.
-- `--clean` keeps `config/`; to reset config too, remove the
-  workspace directory.
-- v0.1 is early alpha: legacy `config/models.yaml` and
-  `config/scan.yaml` are ignored, not migrated.
+- `config/config.yaml` replaces `config/scan.yaml` + `config/models.yaml`. Sections: `detectors`, `llm_classifier`, `runtime`, `evaluation`, `llm_classifier_model`, `unclassified`, `logs`, `store`.
+- `scan_config.py`: `ScanConfig` + loader read the scan-side sections from the same file; `write_default_config` writes the full template.
+- `analysis/config_loader.py`: `load_config` reads `evaluation:`; `default_mode` renamed to `evaluation.mode`.
+- `workspace.py`: `config_path` replaces `scan_config_path` and `models_config_path`; `ensure()` creates one template with one warning.
+- `run_scan.py`, `run_eval.py`: `--config` defaults to `<workdir>/config/config.yaml`.
+- `--clean` keeps `config/`; to reset config too, remove the workspace directory.
+- v0.1 is early alpha: legacy `config/models.yaml` and `config/scan.yaml` are ignored, not migrated.
 - Tests: 985 passed.
 
 ### 2026-10-25 — Schema + `observed_by` + `FlowKindStage` (A.1)
@@ -176,250 +302,203 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 
 ## Phase A — Implement ADR-0016 and ADR-0017
 
-**The core promise of this phase:** after Phase A, the graph is honest. `data_edges_only = []` on an AST scan is documented as the correct answer. `observed_by` is on every node and edge. Scan policy is a file. Class-A heuristics are gone. Layer 3 validates semantics, not just existence.
-
-### A.1 — Schema + `observed_by` + `FlowKindStage`
-
-**Priority:** **Critical**
-**Status:** Done (2026-10-25).
-**ADR:** ADR-0016
-**Rationale:** The foundation. Every subsequent item writes into `observed_by`. `FlowKindStage` no longer writes `data_flow_confirmed` on AST edges and sets `flow_kind = "control"` unconditionally. `find_chains(data_edges_only=True)` filters on `"runtime" in observed_by`, not on `flow_kind = "data"`.
-
-**What changed:**
-- `schema.sql`: `observed_by JSON NOT NULL DEFAULT '["ast"]'` on `nodes` and `edges`, with `CHECK (json_valid(observed_by))`.
-- `graph/models.py`: `Node.observed_by: list[str]`, `Edge.observed_by: list[str]`.
-- `graph/repositories/edges.py`, `nodes.py`: `upsert` merges `observed_by` as a set union (matches existing `capabilities` semantics).
-- `parsing/normalizer_stages/flow_kind.py`: sets `flow_kind = "control"` on every AST edge; does not read or write `data_flow_confirmed`.
-- `graph/query.py`: `find_chains(data_edges_only=True)` filters on `"runtime" in edge.observed_by`.
-- Tests on `data_flow_confirmed` were rewritten: the AST-layer value is `NULL`, not `unknown`.
-
-**Size:** ~1 day.
-
-**Risks:** many existing tests assert `data_flow_confirmed = "unknown"`. They must be updated. This is the largest test-rewrite in Phase A.
-
-**References:** ADR-0016 §Schema, §Decision 1–4.
-
-### A.2 — `scan.yaml` + `--clean` fix
-
-**Priority:** **Critical**
-**Status:** Done (2026-10-25). Implemented as a single `config/config.yaml` rather than `config/scan.yaml` — see "Recently done".
-**ADR:** ADR-0016
-**Rationale:** Scan policy must be a file, not flags. `--clean` currently deletes `config/` — a bug. Both are needed before any further configuration is added.
-
-**What changes:**
-- `workspace.py`: `Workspace.scan_config_path`; `ensure()` writes `scan.yaml` from a template with a warning; `clean()` deletes state (db, reports, cache, logs) and keeps `config/`; `ensure()` adds a warning for `models.yaml` too.
-- `scan_config.py` (new): `ScanConfig` dataclass, `load_scan_config`, `default_scan_config`, `write_default_scan_config`.
-- `run_scan.py`: flags become `--target`, `--config`, `--clean`. Everything else is read from `scan.yaml`.
-- `run_eval.py`: flags become `--config`, `--limit`. Mode, voters, judge come from `scan.yaml`.
-- `run_report.py`: `--workdir` (unchanged; this is a path, not policy).
-
-**Size:** ~1 day.
-
-**Risks:** `open_workspace(clean=...)` loses the parameter; callers are updated. `run_scan.py` and `run_eval.py` change behavior; their tests are updated.
-
-**References:** ADR-0016 §Scan policy. - changed to `evaluation: in config/config.yaml`
-
-### A.3 — Remove class-A heuristics
-
-**Priority:** **Critical**
-**ADR:** ADR-0016
-
-The item is split because the two halves touch different modules and
-carry different corpus risk. A.3a lands first; A.3b is a separate
-commit.
-
-#### A.3a — `patterns.py` + `classification.py`
-
-**Status:** Done (2026-10-25).
-**Rationale:** `SINK_METHOD_NAMES`, `SINK_CATEGORY_HINTS`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES`, `PROVIDER_HINTS`, `TOOL_METHOD_PREFIXES`, `SKIP_METHOD_NAMES` are literal names from FinBot. Their removal is the point of ADR-0016.
-
-**What changed:**
-- `patterns.py`: the seven dictionaries are gone, plus `CLASS_SUFFIX_KINDS`, `EXTRA_LLM_CLASSES` and `DELEGATE_METHOD_PREFIX` — the same artefact in three other shapes (class suffix, class name, method prefix) that grant a node its kind. The `*Agent` / `*Orchestrator` / `*LLMClient` / `*Guardrail` / `*Server` suffix rules are removed with them, so a `*Server` class no longer becomes an `mcp_server` node.
-- `classification.py`: `classify_class` and `classify_method` read capabilities and framework provenance only. `provider` on an `llm_endpoint` comes from the detector or the config extractor, never from the class name (`PROVIDER_HINTS` is gone).
-- The agent-call heuristics that `patterns.py` used to export are parked in `entry_points.py` — behaviour unchanged there, marked "on loan, pending A.3b" — so this commit does not change entry-point resolution.
-- Tests: the dictionary tests are replaced by `test_class_a_name_tables_are_gone` / `test_exclusions_remain`; `test_classification.py` is rewritten around "capability → kind" and "framework → kind". Tests that used name-only agent fixtures now give those classes an LLM-calling body, because `calls_llm` is the only remaining trigger.
-- `PATH_SEGMENT_KINDS` is now dead data. It is removed separately (see "Low").
-
-**Risks:** FinBot-style projects produce fewer nodes. This is intentional — the old behavior was FinBot-specific and wrong on other projects. Measured: unchanged on `realistic_agent`, NMB, dvmcp, mcploitable.
-
-**References:** ADR-0016 §Removal of class-A name heuristics, §Decision 7.
-
-#### A.3b — `entry_points.py` + `delegation_edges.py`
-
-**Status:** Done (2026-10-27).
-**Rationale:** The heuristics parked by A.3a are the last name→kind table in the codebase: `delegate_to_<suffix>` → `<Suffix>Agent`, `RUNNER_TO_AGENT`, `EXTRA_AGENT_CLASSES`, the bare `*Agent` class call, and the `"agents" in path` rule that sets `is_agent_to_agent`.
-
-**The rule that replaces them:** a call site never names an agent. An edge exists when the call graph reaches a node the normalizer already knows is an agent.
-
-**What changed:**
-- `entry_points.py`: the tables and `_agent_name_from_suffix` are deleted, `_extract_agent_call` is replaced by a raw `SymbolCall(handler, callee, file_path, line)` record, and `_is_agent_module` is dropped. The `known_agents` parameter of `run()` is deleted — no caller in `src/`, `run_scan.py` or `tests/` ever passed it. `MCPUsage.is_agent_module` goes with the path rule it carried.
-- Call sites are now recorded for **every** function, not just route handlers and `agents/` modules. The old gate (`is_route or is_agent_module`) was the same path heuristic in another shape; the resolver filters instead, and it can only filter what it is given. On FinBot that is 9,799 records — none of which becomes an edge.
-- `delegation_edges.py` resolves the records against nodes that already exist: agent nodes by `(name, source_file)`, symbols by `(file, name)` → enclosing class, plus each file's call graph and import table. Same-file name hit → edge; imported name → follow the import into the defining file and walk that symbol's body **exactly one hop** (`MAX_REACHABILITY_HOPS = 1`, cycle-safe) to find an agent node or a method of one. No match → no edge.
-- Two decisions the item left open, both settled towards "resolve, do not guess": the module→file match compares trailing path segments (the manifest carries no package root, so `app.agents.runner` and `agents/runner.py` are the same file), and one hop reads the names a body invokes — the base name of a call target (`WorkerAgent()`, `OrchestratorAgent().handle(request)`) or an argument of a bare-name call the project defines (`run_agent_with_retry(WorkerAgent, task)`). A name in any other position is a mention, not a delegation (`logger.info("Using %s", InvoiceAgent)`), and a project-wide name match is accepted only when the defining file imports the file the agent node lives in.
-- `entry → agent` vs `agent → agent` is decided by the source node's kind, not by a path. Edge attribute: `resolved_via: "call_graph"` with the hop path as `evidence`.
-- `_agent_to_mcp_server` stops gating on `usage.is_agent_module` and uses the same node-based test — the enclosing class first, then the file's agent node.
-- Tests: 6 heuristic tests in `test_entry_points.py` are replaced by `SymbolCall`-record tests; `test_normalizer_stages/test_delegation_edges.py` is re-pointed at resolution (a capability-real agent behind a route → edge; a name-only lookalike → no edge; the second hop → no edge). `tests/fixtures/agent_delegation/` is new: the positive path end to end, `POST /tasks → OrchestratorAgent → WorkerAgent`.
-
-**Measured:** the resolver emitted **zero** `delegates_to` edges on all three workspaces. That is the intended result — it adds an edge only where an agent node already exists to link to, and only from a source node that is an entry handler or an agent file. Nodes and edges are unchanged from A.3a on all three.
-
-| workspace | nodes / edges | agent nodes | `delegates_to` | target kinds | source |
-|---|---|---|---|---|---|
-| finbot-ctf | 355 / 187 | 1 (`MCPToolProvider`) | 0 | — | — |
-| dvmcp | 33 / 47 | 0 | 14 | `tool` ×14 | `mcp_entry_synthesis` |
-| mcploitable | 76 / 46 | 0 | 33 | `tool` ×33 | `mcp_entry_synthesis` |
-
-- **finbot-ctf.** The resolver does resolve two call sites — `_connect_mcp_servers` in `agents/base.py` and `_connect_mcp` in `agents/chat.py`, both reaching `MCPToolProvider` — and still emits no edge: neither source file holds an agent node, so `_source_for` returns `None`. That is the intended A.3b behaviour, and the cause of `delegates_to` 11 → 0. Its single agent node is also why a project like this has so few: agents here carry no capability evidence (`BaseAgent` calls `self.llm_client.chat(...)`, which `CALLS_LLM_RULE` does not match — the capability gap is B.10).
-- **dvmcp / mcploitable.** Neither workspace has an agent node at all, so the resolver has nothing to link to. Their 14 and 33 `delegates_to` edges are `entry_point → tool`, emitted by `mcp_entry_synthesis` with `resolved_via: "mcp_entry"` — not by the resolver, and not from any name.
-- **Superseded figures.** An earlier report in this item's history gave "dvmcp: agents 11 → 1, `delegates_to` 16 → 16" and "mcploitable: agents 6 → 1, `delegates_to` 8 → 8". **Neither is reproducible** — not on the A.3b tree, not on a pre-A.3b checkout; the table above is what the workspaces' DBs show. Those numbers are superseded, not restated.
-
-The same measurement shows a pre-existing overload: `mcp_entry_synthesis` writes `delegates_to` for `entry_point → tool` while this stage writes it for `entry_point | agent → agent`, so on dvmcp and mcploitable **every** `delegates_to` edge in the graph violates C4's "entry point to agent, agent to agent, agent to MCP server". Identical on the pre-A.3b checkout, so it is not an A.3b regression — see "Precision".
-
-**Size:** ~1 day.
-
-**References:** ADR-0016 §Removal of class-A name heuristics, §Decision 7; B.10.
-
-### A.4 — Layer 3 semantic validation
-
-**Priority:** **High**
-**Status:** Done (2026-10-27) — see "Recently done".
-**Rationale:** `is_chain_valid` checks that nodes and edges exist; it does not check direction, order, or roles. A voter that returns `exploitable: true, evidence: []` produces `validated: true`. This is the most significant remaining correctness gap after ADR-0016.
-
-**What changes:**
-- `QueryLayer.is_chain_connected(nodes, edges)` — edge `i` links `nodes[i]` to `nodes[i+1]`.
-- `QueryLayer.is_chain_typed(nodes, edges, entry_kind, sink_kind)` — first node is `entry_point`, last is `sink` (or has a sink capability, per ADR-0014).
-- `QueryLayer.is_untrusted_anchor_valid(source_id)` — source node has `source_type` and its reader has `reads_untrusted`.
-- Roll these into `is_chain_valid`; report which check failed.
-- `Chain.validated_kind` ∈ `{existence, semantic}` — a new field, populated by the validator.
-
-**Size:** ~1 day.
-
-**Risks:** `validated: true` changes meaning. Chains stored with `validated: true` before this change become retroactively weaker under the new rules. The DB is recreated per scan (ADR-0003), so this is not a migration — but it is a reputation change. Document it in the ADR for Layer 3 semantic validation (new ADR, not yet written).
-
-**References:** ADR-0006 Layer 3; `QueryLayer.is_chain_valid`; ADR-0016 §Decision.
+**Closed.** All items done: A.1, A.2, A.3a, A.3b, A.4.
 
 ---
 
 ## Phase B — Close the coverage gaps
 
+**The core promise of this phase:** coverage gaps that make existing features work — cross-file `tool → sink`, write-side for the source families, guardrails as load-bearing, capability coverage, the store model, judge determinism, evidence presence.
+
 ### B.1 — Cross-file `tool → sink`
 
 **Priority:** **High**
-**Status:** Done (2026-10-29)
-**Rationale:** `has_access_to` (tool → sink) is built only within a single file. Real projects have `tool` in `mcp/servers/findrive/server.py` and `sink` in `mcp/servers/findrive/repositories.py` — no edge exists. Chain enumeration misses these paths.
-
-**Approach:** Extend the call graph to span imports. `has_access_to` edges across files inherit the same `flow_kind` / `observed_by` discipline (`["ast"]` only; `control`). The `flow/` analyzer is not involved — ADR-0016 removed its AST write.
-
+**Status:** Done (2026-10-29).
+**Rationale:** `has_access_to` (tool → sink) was same-file only.
+**Approach:** `cross_file_resolution` (stage 14) gains `has_access_to` from a tool to a sink in an imported module, reached through the call graph; sinks and tools read from `delta.nodes` (stage 14 runs after the merge); `flow_kind="control"`, `observed_by=["ast"]`, `data_flow_confirmed=NULL`.
 **Size:** ~1 day.
-
 **References:** ADR-0013 Deferred.
 
-### B.2 — Write-side for `rag_corpus` / `email_inbox` / `user_upload`
+### B.2 — Write-side for `rag_corpus` / `email_inbox`
 
 **Priority:** **Medium**
-**Status:** Not started
-**Rationale:** 1.3a.1 explicitly says RAG corpora, mailboxes, and user uploads have no writer evidence. Chain groups require a write chain and a read chain. For three of the four source families, the write chain does not exist. ADR-0010 describes four families; only one (`mcp_tool_description`) functions end-to-end.
-
-**What "write-side" means per family:**
-- **`rag_corpus`** — a call that adds documents to a vector store (`add_documents`, `upsert`, `add_texts`, `index`). Detector rule in `patterns.py`, new source-type gate in `untrusted_source_writers`.
-- **`email_inbox`** — a call that sends an email (`sendmail`, `smtp.send`, `send_message`). Detector rule.
-- **`user_upload`** — a structural signal, not a call-site rule. Deferred to B.3.
-
-**Approach:** three rules, one per family, each with corpus evidence. Do not add a rule without a corpus.
-
-**Size:** ~1 day per family, with corpus evidence.
-
-**References:** ADR-0010; ADR-0015 decision 5.
-
-### B.3 — `user_upload` source type
-
-**Priority:** **Medium**
-**Status:** Not started
-**Blocked by:** entry-point detector extension
-**Rationale:** `user_upload` is not a call shape; it is a structural signal — a route handler that writes a file and later reads it. Detecting it requires entry-point analysis (which handler? which directory? which tool reads from it?). This is a cross-component detector, not a `CallPattern`.
-
-**Approach:** entry-point detector gains a `detect_uploads` pass that emits `untrusted_source` nodes with `source_type = "user_upload"` and a `has_access_to` edge to the handler. `untrusted_source_writers` gets a rule for this family (the upload handler is the writer).
-
+**Status:** Done (2026-10-29). Migrates to the store model in B.3c.
+**Rationale:** 1.3a.1 said RAG corpora and mailboxes had no writer evidence; only `mcp_tool_description` had a write side.
+**What changed:** two new capabilities (`writes_rag_corpus`, `writes_email_inbox`) and two writer rules; `WRITER_RULES` table next to `UNTRUSTED_SOURCE_RULES`; `untrusted_writer_match`. Anchor rule: writer is the node the delta holds for the symbol that credited the capability; visible from the source by same-file or shared-import.
 **Size:** ~1 day.
+**References:** ADR-0010; ADR-0015 decision 5; ADR-0021.
 
-**References:** ADR-0010 source families; `parsing/entry_points.py`.
-
-### B.4 — Guardrails affect enumeration
+### B.3 — Store model (the largest Phase B step)
 
 **Priority:** **High**
-**Status:** Not started
-**Blocked by:** `guards` edge emission
-**Rationale:** ADR-0007 is honest: chains do not yet account for guardrails. Guardrail nodes exist but are inert. The prompt tells the model about guardrails, and the model sees nodes without knowing whether they matter.
+**Status:** In progress.
 
-**Three sub-problems:**
-1. **`guards` edge emission** — the edge kind is registered, `flow_kind = "structural"`, and nothing emits it.
-2. **`bypassed_by` derived edge** — the reverse: which agent or tool bypasses which guardrail.
-3. **Guardrail-aware `find_chains`** — either chains through a guardrail are marked `blocked_by_guardrail` (soft) or excluded from default enumeration (hard). This is a new decision, not covered by ADR-0007. It should be an ADR.
+#### B.3a — Mechanism: store node, reads_from, identity_confidence, store join
 
-**Size:** ~3 days total, across three sub-items.
+**Priority:** **High**
+**Status:** Done (2026-10-29).
+**Rationale:** ADR-0021 makes the store an entity. B.3a builds the shape, without a family.
+**What changed:** `store` node kind; `reads_from` edge kind; `Edge.identity_confidence`; `STRUCTURAL_EDGE_KINDS` grows to `{"guards", "writes_to", "reads_from"}`; `find_chain_groups(include_weak=False, store_confidence_threshold=0.7)` joins by store id; `scan_config.store.confidence_threshold`.
+**Size:** ~1 day.
+**References:** ADR-0021 §1–§9.
 
-**References:** ADR-0007; ADR-0015 (structural edges excluded from `find_chains`).
+#### B.3b-core — Store family interface, registry, resolver
+
+**Priority:** **High**
+**Status:** Done (2026-10-29).
+**Rationale:** ADR-0021 (revision 1) makes a store family a module. B.3b-core builds the interface, the registry, the resolver.
+**What changed:** new `store/` package (interface, registry, confidence, resolver, families, context); `Family` interface; `WriteSite` / `ReadSite` / `ModuleFacts` / `Context`; `StoreResolver.resolve`; seam is normalizer stage 19 (`StoreResolverStage`).
+**Size:** ~1 day.
+**References:** ADR-0021 §1, §7, §8, §12 (revision 1).
+
+#### B.3b-fs — `fs` family
+
+**Priority:** **High**
+**Status:** Done (2026-10-29).
+**Rationale:** First real family. `open`, `aiofiles.open`, `Path.write_*` / `Path.read_*` / `Path.open(mode)` are store call sites.
+**What changed:** `store/families/fs.py`; `literal_match` gains the containment branch (+0.3); registration by import.
+**Size:** ~1 day.
+**References:** ADR-0021 §8.
+
+#### B.3b-user_upload-core — Upload detector interface, context, writer logic, attribution
+
+**Priority:** **High**
+**Status:** Done (2026-10-29).
+**Rationale:** Upload is a context, not a family (ADR-0021 §1 revision 1). The interface, the registry, the writer logic (entry-point → stores reachable via call graph, base 0.5, ADR-0021 §8 revision 2), the attribution (source_type='user_upload' in the writer's scope).
+**What changed:** new `store/context/upload/` — base, registry, context, writer, attribution; `store_resolver` stage gains the writer/attribution step; merge-by-id for the one collision case.
+**Size:** ~1 day.
+**References:** ADR-0021 §1, §8 (revision 2).
+
+#### B.3b-user_upload-fastapi — First upload detector
+
+**Priority:** **Medium**
+**Status:** Done (2026-10-29).
+**Rationale:** First `UploadDetector`. `UploadFile` / `list[UploadFile]` / `bytes = File(...)`; `Form(...)` beats; `bytes` alone is not.
+**What changed:** `store/context/upload/detectors/fastapi.py`; registration; docstring truth-fixes.
+**Size:** ~0.5 day.
+**References:** ADR-0011; ADR-0021.
+
+#### B.3b-user_upload-streamlit — Second upload detector
+
+**Priority:** **Medium**
+**Status:** **Next.**
+**Rationale:** `st.file_uploader` is already an entry point (`STREAMLIT_ENTRY_CALLS`). The detector emits an `UploadSite` for a module-level entry point whose body calls `st.file_uploader`.
+**Open question:** module-level entries currently get no writer edge (B.3b-user_upload-core decision #5). The Streamlit step must decide: accept no edge, or extend the interface with a module-level entry shape (a new step). The **retro** before the brief settles this.
+**Size:** ~0.5 day.
+**References:** B.3b-user_upload-core; `parsing/entry_points.py`.
+
+#### B.3b-user_upload-django — Third upload detector
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** `request.FILES` in a Django view. Same interface.
+**Size:** ~0.5 day.
+**References:** B.3b-user_upload-core.
+
+#### B.3b-user_upload-flask — Fourth upload detector
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** `request.files` in a Flask view. Same interface.
+**Size:** ~0.5 day.
+**References:** B.3b-user_upload-core.
+
+#### B.3b-s3 — `s3` family
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** Second family. `s3.put_object` / `s3.get_object`, `boto3` / `s3fs` / `MinIO`. Literal `Bucket` / `Key` extraction; prefix containment.
+**Size:** ~1 day.
+**References:** ADR-0021 §8; B.3b-fs.
+
+#### B.3b-db — `db` family
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** Third family. SQLAlchemy / asyncpg. Literal `INSERT INTO` / `SELECT FROM` table extraction (simple regex, not a SQL parser).
+**Size:** ~1 day.
+**References:** ADR-0021 §8.
+
+#### B.3b-llm_fallback — LLM identity fallback
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** When the AST does not find a literal (unresolved identity), the LLM classifier (D.2) proposes an identity hint from the surrounding code. `identity_source='llm'`, confidence 0.2.
+**Size:** ~1 day.
+**References:** ADR-0021 §7; D.2; `store/context/llm_fallback.py` (new).
+
+#### B.3c — Migrate B.2 to the store model
+
+**Priority:** **Medium**
+**Status:** Not started. **Blocked by** B.3b-s3 and B.3b-db (both families must be in the store model), and by B.3b-user_upload-* (the upload context must be in the store model).
+**Rationale:** `writes_to` targets `store` for every family, including `rag_corpus`, `email_inbox`, `mcp_catalogue`. `untrusted_source` remains the read site. `reads_from` connects the store to the read site. `find_chain_groups` joins by store id for all families.
+**What changes:** B.2's writer rules emit `writes_to → store`; `untrusted_source_writers` and `untrusted_source_writers` retarget; the transitional control flow_kind for `writes_to` becomes structural; the collision between the old path and the store path is removed; `report.md` and `chain_groups.json` gain `weak: true` when relevant.
+**Size:** ~2 days.
+**References:** ADR-0021 §11.
+
+#### B.3b-fs-followup — Prefix containment through the resolver
+
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** `literal_match`'s containment branch (+0.3) is correct and tested, but inert end-to-end: `_attached_keys` attaches a site only to the exact key it equals, so a write hint `/uploads/` and a read hint `/uploads/x` produce two stores, not one. Making containment live means changing `_attached_keys` (a resolver change, not a family change), and the two stores should become one store with two edges — a rule, not a one-liner.
+**Size:** ~1 day.
+**References:** B.3b-fs; ADR-0021 §8.
+
+#### B.3b-user_upload-attribution — `source_type='user_upload'` end-to-end
+
+**Priority:** **High** (blocks B.3b-user_upload-* from producing a `user_upload` chain group)
+**Status:** Not started.
+**Rationale:** The attribution logic works (unit-tested), but end-to-end it is inert: a filesystem read (`open('/uploads/x', 'rb')`) is not one of 1.3a's source types, so the reader has no `untrusted_source` node to stamp. The `user_upload` read side has no producer yet — the same shape as B.4-gap.
+**Two options:**
+- **(a)** Upload context creates an `untrusted_source` node for an `fs` read in the writer's scope. New producer, new identity rule.
+- **(b)** Multi-role `source_type` on an existing `untrusted_source` node (a source can be both `user_upload` and `rag_corpus` in different scopes). ADR-0022 territory.
+**Decision needed before any implementation:** (a) or (b), with a corpus or fixture that motivates it.
+**Size:** ~1 day.
+**References:** B.3b-user_upload-core; ADR-0021 §10; ADR-0022 (not yet written).
+
+### B.4 — Guardrails affect evaluation
+
+**Priority:** **High**
+**Status:** In progress.
+
+#### B.4a — `guards` edge emission
+
+**Priority:** **High**
+**Status:** Done (2026-10-29).
+**Rationale:** `guards` was registered, structural, and nothing emitted it.
+**What changed:** new stage 19 (`guardrail_edges`); `guardrail → component` from a call site or a `@guardrail(...)` decorator; `flow_kind="structural"`, `observed_by=["ast"]`, `data_flow_confirmed=NULL`.
+**Known:** `guards = 0` on all four corpora (B.4-gap).
+**References:** ADR-0019 §1.
+
+#### B.4b — Guardrails in the evaluation payload
+
+**Priority:** **High**
+**Status:** Done (2026-10-29).
+**Rationale:** A guardrail on or near a path lowers the model's confidence; it does not exclude or mark.
+**What changed:** payload `guardrails` section (root for a chain, partition for a group); `PROMPT_VERSION` v1.5.0 → v1.6.0; one rule block per system prompt.
+**References:** ADR-0019 §2–§3.
 
 #### B.4-gap — No producer of `guardrail` nodes after ADR-0016
 
 **Priority:** **High** (blocks B.4 end-to-end)
-**Status:** Not started
-**Found in:** B.4a implementation (2026-10-29)
-**Rationale:** B.4a emits `guards` edges from `guardrail` nodes. It is
-correct and tested, but on all four corpora `guards = 0` — there are no
-`guardrail` nodes for it to link. ADR-0016 decision 7 removed the
-class-A name heuristics, which included the path rule
-(`PATH_SEGMENT_KINDS`' `("guardrails", "guardrail")`, read by nobody)
-and the `GuardrailHookService`-style class suffix. `classify_class` and
-`classify_method` return `sink` / `agent` / `llm_endpoint` / `tool` and
-nothing else; no deterministic layer produces a `guardrail` node. The
-LLM classifier (D.2) can, via its `DetectionResult` merged at stage 10 —
-which is why `guardrail_edges` runs after the merge — but on the four
-corpora no source produces them.
+**Status:** Not started.
+**Found in:** B.4a implementation (2026-10-29).
+**Rationale:** B.4a emits `guards` edges from `guardrail` nodes. On all four corpora `guards = 0` — there are no `guardrail` nodes for it to link. ADR-0016 decision 7 removed the class-A name heuristics (path rule, class suffix). `classify_class` / `classify_method` return `sink` / `agent` / `llm_endpoint` / `tool` and nothing else. The LLM classifier (D.2) can, via its `DetectionResult` merged at stage 10 (which is why `guardrail_edges` runs after the merge), but on the four corpora no source produces them.
+**Consequence:** B.4a and B.4b are correct and ready; end-to-end guardrail influence does not fire until a producer exists.
+**What does not close this gap:** re-adding the path rule or class suffix (class-A heuristics in another shape); LLM classifier as the only source (opt-in, off by default).
+**What could close it (decision for a later planning session):**
+- Capability-based detection (a class or function whose body calls a known filter / validator API). Needs new `CapabilityRule`s and corpus evidence.
+- Framework detector (LangChain callbacks, FastMCP middleware, Guardrails AI, NeMo Guardrails). ADR-0011 route; a new detector (D.1 territory).
+- LLM classifier as the only source. B.4 must not depend on it being on.
+**Decision needed before any implementation:** which producer, with which corpus evidence. A new ADR records it.
 
-**Consequence:** B.4a and B.4b are correct and ready; end-to-end
-guardrail influence does not fire until a producer exists. B.4b's
-payload section will be empty on every corpus that has no guardrail
-nodes; the code path is exercised only by unit tests.
+#### B.4b-followup — `SOLO` step 4 and user prompt questions
 
-**What does not close this gap, and why:**
-
-- **Re-adding a path rule** (`guardrails/` → `guardrail`). This is a
-  class-A heuristic in another shape — ADR-0016 decision 7 rejects it.
-  `PATH_SEGMENT_KINDS` still has the entry; it is dead data and should
-  not be resurrected.
-- **Re-adding a class-name suffix** (`*Guardrail`). Same reason.
-- **LLM classifier only.** D.2 is opt-in and off by default, and it is
-  the fallback, not the primary. B.4 must not depend on it being on.
-
-**What could close it, and is a decision for a later planning session:**
-
-- **Capability-based detection.** A class or function whose body calls a
-  known filter / validator API (`validate_input`, `filter_output`,
-  policy hooks with a recognized signature) exercises a capability the
-  AST can see. This requires new `CapabilityRule`s in `patterns.py` —
-  and every new rule needs corpus evidence, which the four corpora do
-  not provide. Not B.4.
-- **Framework detector.** A `FrameworkDetector` that recognizes a
-  guardrail SDK (LangChain callbacks, FastMCP middleware, Guardrails AI,
-  NeMo Guardrails) and emits `guardrail` nodes from that SDK's own
-  conventions. This is the ADR-0011 route, and it is a **new detector**
-  (D.1 territory), not B.4. No source in the four corpora uses such an
-  SDK.
-- **`guardrail` as a node kind that no layer produces today, and a
-  separate phase that gives it one.** The honest answer. B.4 ships the
-  edges, the edges wait for the nodes.
-
-**Not to be confused with:**
-
-- `@guardrail(...)` decorator recognition in B.4a is literal and
-  intentional (ADR-0019 §1): a custom decorator named `@pii_guard` is
-  not recognized. That is a known false negative, not a gap.
-- The absent `bypassed_by` edge is a separate decision (ADR-0019 §4).
-
-**Decision needed before any implementation:** which producer
-(capability rule / framework detector / LLM classifier as the only
-source), with which corpus evidence. A new ADR would record it, in the
-same way ADR-0019 records the emission and the weighting.
+**Priority:** **Medium**
+**Status:** Not started.
+**Rationale:** `SOLO_SYSTEM_PROMPT` step 4 ("are they bypassable?") and the voter/solo/group user prompts ("are there guardrails on the path? are they bypassable?") ask a question the new rule says the payload cannot answer. Aligning those questions with ADR-0019 is a prompt iteration, not a code change.
+**Size:** ~0.5 day.
+**References:** ADR-0019 §2; B.4b.
 
 ### B.5 — Judge determinism
 
@@ -484,19 +563,36 @@ same way ADR-0019 records the emission and the weighting.
 ### B.10 — Capability coverage for wrapped LLM clients and inherited capabilities
 
 **Priority:** **High**
-**Status:** Not started
-**Rationale:** Found by the A.3b measurement on FinBot. `CALLS_LLM_RULE` matches `self.llm.invoke(...)` but not `self.llm_client.chat(...)`, because the rule requires the segment immediately before the verb to be exactly `llm`. FinBot's whole agent hierarchy calls `self.llm_client.chat(...)`, so once A.3a/A.3b remove the name rules, no node in that corpus carries `calls_llm` and the `*Agent` nodes disappear. Second gap: `BaseAgent` is in `EXCLUDED_CLASSES`, and a capability is not propagated from a base class to its subclasses, so even a matching rule would mark the base rather than `InvoiceAgent`.
+**Status:** Done (2026-10-29). Split into B.10a and B.10b.
 
-**What changes:**
-- `capability_extractor.py`: match qualifier *families* (`llm`, `llm_client`, `llm_*`) rather than one exact segment, and record which rule matched.
-- Capability inheritance: a class node inherits `calls_llm` (and the other call capabilities) from its base class when the base is defined in the scanned tree. One level up, cycle-safe.
-- Re-measure all five corpora. The target is FinBot's `*Agent` nodes returning **without** a name rule.
+#### B.10a — Qualifier families
 
-**Size:** ~0.5 day.
+**Status:** Done (2026-10-29). `CallPattern.qualifier_prefixes` (`llm`, `model`); `self.llm_client.chat` credits `calls_llm`; `model.generate` newly credited (unavoidable); `classification.py`'s `calls_llm` alone → `agent`.
 
-**Risks:** Verb/qualifier families are where false positives come from (`client.get(...)` on a database client). Every widening needs a negative test.
+#### B.10b — Capability inheritance
 
-**References:** `parsing/capability_extractor.py`; A.3b; ADR-0016 §Classification layers.
+**Status:** Done (2026-10-29). `parsing/capability_inheritance.py`; `apply_inheritance` runs after per-file extraction, before `run_classifier`. Override does not block; transitive / method-level / multiple inheritance not done (ADR-0020 §4).
+
+#### B.10c — `classification.py`'s `calls_llm` alone → `agent`
+
+**Priority:** **Low**
+**Status:** Not started. Documented in B.10a's brief error; the code is consistent with ADR-0009 (`llm_endpoint` is a config node, not a capability-derived class). No code change needed; the note is the whole item.
+
+### B.11 — `max_depth` in `find_chain_groups`
+
+**Priority:** **High** (post-release)
+**Status:** Not started.
+**Rationale:** `find_chain_groups(max_depth=1)` is the current enumeration; `max_depth=2+` (three-hop and longer) makes a multi-store chain (write → store → read → write → store → read) enumerable. Depth is a **parameter**, default 1; `max_depth=2` after the release, when the corpora show that depth 2 is real.
+**Size:** ~1–2 days.
+**References:** ADR-0021 §6; B.3a; B.3d (planned).
+
+### B.12 — Sorting by depth before LLM evaluation
+
+**Priority:** **Medium** (post-release)
+**Status:** Not started. **Blocked by** B.11.
+**Rationale:** When `max_depth=2`, the top-N sent to the LLM must weigh depth: a depth-1 group is cheaper to evaluate and simpler; a depth-2 group is more expensive but potentially more powerful. The prioritization (ADR-0012) is the consumer.
+**Size:** ~1 day.
+**References:** ADR-0012; B.11.
 
 ---
 
@@ -555,40 +651,30 @@ same way ADR-0019 records the emission and the weighting.
 
 ### D.2 — LLM classifier (`parsing/llm_classifier/`)
 
-### 2026-10-27 — D.2: opt-in LLM classifier (Layer 1b)
+**Status:** Done (2026-10-27).
 
-- `parsing/llm_classifier/` — 6 modules, 117 tests. `mode: off`
-  default (literal opt-in; ADR-0016). Cache in `cache/llm_classifier.sqlite3`
-  keyed on `(content_hash, prompt_version, model_id)`.
-- Three provenance limiters: (1) `part_of_parent` → no node;
-  (2) method inside an agent-class → no `agent` node, capability
-  to parent; (3) `tool` inside `mcp_server` without a decorator →
-  node created with `unverified_tool: true`.
-- Limiters 1–2 only merge into LLM-created parents; deterministic
-  parents are not enriched (post-classification stage, not D.2).
+- `parsing/llm_classifier/` — 6 modules, 117 tests. `mode: off` default (literal opt-in; ADR-0016). Cache in `cache/llm_classifier.sqlite3` keyed on `(content_hash, prompt_version, model_id)`.
+- Three provenance limiters: (1) `part_of_parent` → no node; (2) method inside an agent-class → no `agent` node, capability to parent; (3) `tool` inside `mcp_server` without a decorator → node created with `unverified_tool: true`.
+- Limiters 1–2 only merge into LLM-created parents; deterministic parents are not enriched (post-classification stage, not D.2).
 - `required` keeps only gaps (deterministic wins).
 - `ask` = warning, not interactive. `interactive.py` not built.
-- `PROMPT_VERSION = "v1.0.0"` in `llm_classifier/prompt.py`, byte-
-  identical to `tools/bench_classifier.py`.
-- **Dependency note:** first `parsing → analysis` import
-  (`parse_json_response`, `LLMResponseError`). New direction,
-  documented here.
+- `PROMPT_VERSION = "v1.0.0"` in `llm_classifier/prompt.py`, byte-identical to `tools/bench_classifier.py`.
 
-### D.3 — 1.4 — Prompt engineering
+### D.3 — Prompt engineering
 
 **Priority:** **Medium**
-**Status:** Partially done (P0/P2 v1.2.0; v1.3.0 `flow_kind`; v1.5.0 group prompt). Full version blocked by Phase A and Phase C.
+**Status:** Partially done (P0/P2 v1.2.0; v1.3.0 `flow_kind`; v1.4.0 sink_data_flow/returns_data; v1.4.1 test-file nodes; v1.5.0 group prompt; v1.6.0 guardrails). Full version blocked by Phase C.
 **Rationale:** The prompt currently says "a chain with data edges is stronger evidence" — and on AST corpora such chains do not exist. The prompt teaches the model to ignore a signal that is never present. After Phase C, data edges exist, and the prompt can be grounded.
 
 **Remaining work:**
 - `observed_by` instructions: `["ast"]` vs `["ast", "runtime"]`.
 - `uncertain` verdict with concrete criteria.
-- Explicit production-vs-test entry point distinction (already partly done in v1.4.1).
+- Guardrail prompt follow-up (B.4b-followup).
 - Prompt regression tests.
 
 **Size:** ~1 day.
 
-**References:** ADR-0016 §Positive 6.
+**References:** ADR-0016 §Positive 6; ADR-0019.
 
 ### D.3a — Fine-tune a compact AST classifier (LoRA on Qwen3-4B)
 
@@ -638,7 +724,7 @@ writing LLM capabilities into a deterministic classification is a
 different operation, and it needs a post-`normalize()` stage. Not
 required for D.2; record it so the limitation is visible.
 
-### D.4 — 1.3c.2 — Any-node semantics for impact sink capabilities
+### D.4 — Any-node semantics for impact sink capabilities
 
 **Priority:** **Low**
 **Status:** Not started
@@ -650,278 +736,85 @@ required for D.2; record it so the limitation is visible.
 
 **References:** ADR-0012 table.
 
-### D.5 — Guardrails — `guards` edge emission
+### D.5 — Guardrails — `bypassed_by` derived edge
 
-**Priority:** **High** (part of B.4)
-**Status:** Partially done (node kind only).
-**Rationale:** `guards` is registered, `flow_kind = "structural"`, and nothing emits it.
-
-**Approach:** detect guardrail-to-agent and guardrail-to-tool relationships. Emit `guards` edges with `flow_kind = "structural"`. Depends on guardrail attributes (D.6).
+**Priority:** **Medium**
+**Status:** Not started. **Blocked by** B.4-gap (needs `guardrail` nodes and `guards` edges on a real corpus to test the reverse).
 
 ### D.6 — Guardrails — attributes
 
-**Priority:** **High** (part of B.4)
-**Status:** Not started
+**Priority:** **High** (part of B.4-gap, in the longer term)
+**Status:** Not started.
 **Rationale:** Nodes exist without attributes. To know whether a guardrail blocks a chain, the graph needs to know what it filters and where it sits.
-
 **Approach:** source-level analysis. `policy` ∈ `prompt_injection`, `pii`, `tool_allowlist`, `rate_limit`, `unknown`. `enforcement_point` ∈ `pre_tool_call`, `post_llm_response`, `pre_agent_step`, `unknown`.
 
-### D.7 — Guardrails — `bypassed_by` derived edge
+---
 
-**Priority:** **Medium** (part of B.4)
-**Status:** Blocked by D.5.
+## Doc-debt
 
-### D.8 — Guardrails — guardrail-aware chain evaluation
+All in the "do not change" sets of past steps; each is one line or one sentence. A single doc-debt commit clears them.
 
-**Priority:** **Medium** (part of B.4)
-**Status:** Blocked by B.4.
+### `store/registry.py` — "empty in B.3b-core"
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** Docstring says the registry is empty in B.3b-core. After B.3b-fs it is not.
+
+### `store/context/upload/registry.py` — "empty in B.3b-user_upload-core"
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** Same shape. After B.3b-user_upload-fastapi it is not.
+
+### `store/resolver.py::_link_confidence` — case list
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** Docstring enumerates `literal_match`'s cases; it should mention the containment branch.
+
+### `families/base.py` — `B.3b-user_upload` naming
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** Docstring names `B.3b-user_upload` as the first context; the actual first context is `B.3b-user_upload-core`.
+
+### `store_resolver.py` — stale sentence + duplicate `__all__`
+
+**Priority:** **Low**
+**Status:** Not started.
+**Rationale:** Lines 23–26 ("detector registry is empty in this step") are stale after B.3b-user_upload-fastapi. `__all__` appears twice (312 and 315, committed in `3dcec80`). One-line fix each.
+
+### `flow_kind.py` inline comment + `ast_normalizer.py` edge-list header
+
+**Priority:** **Low**
+**Status:** Done (2026-10-29) — first doc-debt commit; the follow-up commit touched `flow_kind.py`'s inline comment and `ast_normalizer.py`'s edge-list header. `ast_normalizer.py`'s "fifteen → nineteen stages" also fixed.
+
+### `family/base.py` — `B.3b-user_upload` and `B.3b-core` naming
+
+**Priority:** **Low**
+**Status:** Done (2026-10-29) — part of B.3b-user_upload-core's "left alone deliberately" flags; **not** actually fixed. The `B.3b-user_upload` naming in `base.py` is stale.
 
 ---
 
-## Deferred (documented, not scheduled)
+## Known gaps
 
-### 1.3e.2 — Linear-chain prompt v1.6.0
+Three gaps recorded during Phase B, none blocking, none papered over.
 
-**Priority:** **Low**
-**Rationale:** The group prompt (v1.5.0) and the linear prompt (v1.4.1) diverge. Compare line by line; either lift the group's "OUR SCORING" framing into the linear prompt, or document the divergence. **Blocked by D.2** (the prompt gains `observed_by`).
+### B.4-gap — No producer of `guardrail` nodes
 
-### `openai_agents` — enrichment parity
+(see §B.4-gap above)
 
-**Priority:** **Low**
-**Rationale:** When D.1 lands, verify it does not reintroduce the "enrichment only when the prompt names the tool" pattern.
+### B.3b-user_upload-attribution — `source_type='user_upload'` end-to-end
 
-### Enrichment — cross-file `uses_tool`
+(see §B.3b-user_upload-attribution above)
 
-**Priority:** **Medium**
-**Rationale:** NMB's 9 `uses_tool` edges are built by `cross_file
+### B.3b-fs prefix-inert — containment branch inert through the resolver
 
-### 1.3c.1 — Triples and quadruples (`max_chain_group_size > 2`)
+(see §B.3b-fs-followup above)
 
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** ADR-0012's default is pairs only (`max_chain_group_size = 2`). Scoring and selection code paths for larger groups are not implemented. The cap exists in the ADR, not in the code.
+### B.3b-fs-followup — prefix containment through the resolver
 
----
-
-## Icebox (deferred indefinitely)
-
-- **TUI** (was Medium × 3 — demoted; not a security tool feature).
-- **Non-Python runtime analysis** (eBPF for Go/Rust, bytecode agents for Java). Deferred until Python works (Phase C).
-- **Multi-host (Core + Agent).**
-- **Schema migrations.** Deferred until the schema stabilizes. The DB is recreated per scan.
-- **SCIP integration.** TSA provides symbols; that is what the AST layer needs.
-- **Standalone executable** (mac / linux / win). A Docker image is under "Low" and covers most of the same ground.
-- **Production runtime monitoring.** Not planned. Taint tracking belongs in staging or test.
-- **Phase 2 enrichment queue + static workers** (AAK, LLM-scanner, MCP-scanner). Not planned; the honest description is "static correlator with an enrichment interface that has no implementations".
-- **DynamicWorker implementations** (file watcher, Docker diff, OSSEC).
-
----
-
-## Low — when there is time
-
-### Docker image
-
-**Priority:** **Low**
-**Rationale:** The current entry cost is `pip install -e .` + `uvx` + Python 3.11+. A Docker image removes the Python/uv dependency from the user's machine. It is not a "standalone executable" (which is Icebox) — it is a runnable artifact for evaluation.
-
-### CLI wrapper (`cli.py`) and console script (`[project.scripts]`)
-
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** Currently the entry points are `run_scan.py`, `run_eval.py`, `run_report.py`. A single `aicorellator` command with subcommands would be friendlier, but it is not a security-tool feature.
-
-### TSAOutput cleanup
-
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** `TSAOutput.call_edges` is never populated (the TSA investigation, item 1.1). The field is dead. Remove it, or document that it stays empty by design.
-
-### `PATH_SEGMENT_KINDS` — remove the dead path→kind table
-
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** `patterns.py`. Nothing reads it — the only caller of `_has_path_segment` is the `mcp/servers/` layout rule. It still encodes `agents/` → agent, `tools/` → tool, `llm/` → llm_endpoint, `guardrails/` → guardrail, i.e. kind by path, which makes it the last member of the class-A family. Removed on its own, outside A.3, so the A.3a/A.3b diffs stay reviewable.
-
-### Relative imports in cross-file resolution
-
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** `framework_detectors/cross_file.py` skips relative imports (`from .tools import X`) — resolving them requires a package root, which the manifest does not provide. Rare in agent code; deferred.
-
-### Per-name resolution in cross-file tool edges
-
-**Priority:** **Medium** — see "Precision" below.
-
-### `MAX_CHAINS_PER_ENTRY` — configurable
-
-**Priority:** **Low**
-**Rationale:** `reporting/markdown.py` caps at 30 chains per entry point. On FinBot, 182 chains → "… and 152 more chains". The summary count is truthful; the detail is truncated. Make it configurable, or remove the cap and paginate.
-
-### A.3b resolver — call `_source_for` before `_target_for`
-
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** `SymbolCallResolver.resolve` reads the target first (the caller's import list, then a module→file match per import) and the source second (two dict lookups). Reversing them is output-identical — a `None` from `_source_for` yields `None` either way — and skips every target-side lookup for the call sites that have no source node: 8,215 of finbot-ctf's 9,799 (1,584 keep one). Measured cost of the stage: 0.157 s for 9,799 call sites on finbot-ctf, 1.3 µs per site on mcploitable (1,594 sites) and 4.9 µs on dvmcp (411 sites) — the A.3b fixes leave that in the same range. A micro-optimisation, not a bottleneck; kept out of A.3b so that commit stays a behaviour change.
-
-### Hop-1 does not follow method calls with agent-name arguments
-
-**Priority:** **Low**
-**Status:** Not started.
-**Rationale:** `delegation_edges.py` reads an agent name in argument position only when the callee is a bare `ast.Name` that the project defines (`run_agent_with_retry(WorkerAgent, task)`). A method call — `self.run_agent(WorkerAgent)` — has an `ast.Attribute` callee, so the rule does not fire and the argument is not read. Whether that shape is a delegation is an open design question: the AST does not resolve the receiver (ADR-0001), so "is `self.run_agent` project code?" has no local answer. Effect **unknown** — none of the three workspaces measured here shows the shape. Revisit if a corpus does; the module docstring of `delegation_edges.py` records the boundary and why it was left open.
-
----
-
-## Precision — better matching, not more matching
-
-### `delegates_to` is overloaded
-
-**Priority:** **Medium**
-**Status:** Not started.
-**Rationale:** Three stages write this edge kind, and one of them means something else by it. C4's stage table defines it at row 8 as "`delegates_to` — entry → agent, agent → agent, agent → MCP server", and that is how `delegation_edges` (row 8) and `orphan_entry` (row 16) use it. `mcp_entry_synthesis` (row 15) also emits `delegates_to`, but for `entry_point → tool` — an MCP exposure, not a delegation — with `resolved_via: "mcp_entry"`. On dvmcp and mcploitable **every** `delegates_to` edge in the graph is that kind: 14 and 33 edges, all targeting `tool` nodes. Pre-existing: identical on a pre-A.3b checkout, so not an A.3b regression. A reader — or a query — cannot tell the two apart without reading `resolved_via`. The fix is a decision, not a patch: either a new edge kind for the MCP exposure, or a rename. Not A.3b.
-
-### Enrichment — cross-file `uses_tool`
-
-**Priority:** **Medium**
-**Status:** Not started.
-**Rationale:** NMB's 9 `uses_tool` edges are built by `cross_file.py` (import-driven) and never read the system prompt, so they stay `control` / `unknown`. The enrichment that `LangChainDetector._find_agent_edges` applies within a file does not run for cross-file edges.
-
-### Per-name resolution in cross-file tool edges
-
-**Priority:** **Medium**
-**Status:** Not started.
-**Rationale:** `resolve_agent_tool_edges` links an agent to **every tool in each imported module**. A module with 20 tools produces 20 edges even if the agent uses 3. Accepted false-positive trade-off (ADR-0009), but it inflates chain counts on real projects.
-
-### Verb families — audit for overreach
-
-**Priority:** **Low**
-**Status:** Done (2026-10-20).
-**Note:** verb families (`repo.get*` etc.) were added to cover `<verb>_<noun>` method names. They match **any** noun. A `repo.get_or_create` lands in reads rather than writes. Audited on the four corpora: no misfires found. Not re-audited since.
-
-### Adapter patterns — monitor
-
-**Priority:** **Low**
-**Status:** Done (2026-10-20).
-**Note:** the adapter patterns are a new source of false positives (they match `adapter.execute`, `client.post`, etc.). No corpus has exercised them yet at scale.
-
-### Test-file sinks — monitor
-
-**Priority:** **Low**
-**Status:** Done (2026-10-20) — prompt note in voter, solo, judge.
-
-### Cursor fetch reads — monitor
-
-**Priority:** **Low**
-**Status:** Done (2026-10-20).
-
-### Dev script discovery
-
-**Priority:** **Low**
-**Rationale:** `scripts/test_websocket.py` (FinBot) contributes a sink `push_event` and a chain edge — low-value noise. `is_dev_code: true` node attribute or discovery exclusion.
-
----
-
-## Reporting
-
-### SARIF output
-
-**Priority:** **Low**
-**Status:** Deferred until a consumer appears.
-
-### Report tiers (`--fast` / `--full`)
-
-**Priority:** **Low**
-**Status:** Not started.
-
-### Incremental reports
-
-**Priority:** **Low**
-**Status:** Not started.
-
-### Report honesty — candidate vs finding
-
-**Priority:** **Medium**
-**Rationale:** A `report.md` on a Phase 1 scan shows "Candidate chains (Phase 1 enumeration)" — and 182 candidates look like 182 findings to a reader who does not read the header.
-
-**Two fixes:**
-1. Rename the section to "Enumerated paths (not findings)".
-2. Add a banner: "This report contains candidate paths, not evaluated findings. Run `python run_eval.py` to evaluate."
-
-Neither is a code change; both are a trust change.
-
-### `run_scan.py` writes a bundle — but ADR-0004 says "report on demand"
-
-**Priority:** **Low** (documentation)
-**Rationale:** ADR-0004 says reports are generated on request. `run_scan.py` always writes a bundle at the end. Either ADR-0004 is wrong, or `run_scan.py` should not write. **Recommendation:** keep the bundle write (it is useful for Phase 1 inspection), and update ADR-0004 to say "the initial Phase 1 bundle is written by the scan; evaluated reports are on-demand". A one-line ADR update.
-
-### Report — `data_edges_only` on an AST-only scan
-
-**Priority:** **Low**
-**Rationale:** After ADR-0016, an AST-only scan has `data_edges_only = []` by construction. The report should say so explicitly, not leave the reader to infer it. A one-line note in the chains section: "This scan has no runtime layer; data-flow edges are not produced. See `Documentation/Architecture/OVERVIEW.md` §Layer 2."
-
----
-
-## Cancelled / absorbed (do not resurrect)
-
-### `1.2a.1` — Analyzer asks the right question
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** The AST layer does not compute `data_flow_confirmed` after ADR-0016. The analyzer is the mechanism Layer 2 will use, but its output does not land on AST edges. Improving it on the AST side is improving something that is not written.
-
-### `1.2a.2` — Enrichment on MCP edges
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** Same reason: `data_flow_confirmed` does not land on AST edges after ADR-0016.
-
-### `1.2a.2a` / `1.2a.2b` / `1.2a.2c` — Enrichment sub-items
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** Same reason. The enrichment path was an attempt to compute `data_flow_confirmed` on the AST layer; ADR-0016 removed that target.
-
-### `1.2a.3*` — Argument analysis refinements
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** Same reason. The refinements improved `data_flow_confirmed` values that no longer land on AST edges.
-
-### `1.2a.4` — Constant collections
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** Same reason.
-
-### `1.2a.5` — Class-kind sinks
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** Same reason. The class-kind sink analyzer remains in `flow/` (Layer 2 uses it), but its result no longer lands on AST nodes.
-
-### Old "ADR-0016 — `data_flow_confirmed` quality"
-
-**Status:** Cancelled (ADR-0016 is written and accepted; it is not "quality", it is "the AST layer does not answer this question").
-**Rationale:** The old item framed the problem as "improve `data_flow_confirmed` quality". The accepted ADR framed it as "the AST layer does not answer this question". The framing that won is the second.
-
-### `1.5` — Graph densification
-
-**Status:** Cancelled (superseded by ADR-0016).
-**Rationale:** Densification was proposed as a way to give flow analysis more edges to work with. After ADR-0016, flow analysis on the AST side is not a target. Densification remains a Layer 1a concern only if it improves control-graph coverage — that is a different item, not this one.
-
-### `1.2a.3` — ORM call sites in capability patterns
-
-**Status:** Cancelled (absorbed by 1.2a.3b/c/e/f/g, which are themselves cancelled).
-**Rationale:** The parent was "Done — covered by children". The children are cancelled. The parent is cancelled.
-
-### `structural_heuristics.py`
-
-**Status:** Cancelled. Its role was absorbed by `classification.py`.
-
----
-
-## Maintenance
-
-- **Update priorities** when external conditions change.
-- **Update status** when work begins or ends.
-- **Add new entries** when a deferred item surfaces.
-- **Remove entries** when they are done or cancelled. Keep "Recently done" to one quarter.
-- **Do not** add a "Done" entry whose sub-items are still open — mark it "Partially done" and link the open children.
-- **Do not** add a "Low" item whose rationale is "no-op on the four corpora". On a new corpus, "no-op" is a hypothesis, not a fact. If the effect is unknown, say "unknown".
-- This file records *what to do next*. The ADRs remain the authoritative record of *why*.
+(see §B.3b-fs-followup above)
 
 ---
 
@@ -929,18 +822,25 @@ Neither is a code change; both are a trust change.
 
 These are not backlog items; they are decisions the next planning session should settle before the backlog is revised again.
 
-### Resolved by ADR-0016 / ADR-0017
+### Resolved by ADR-0016 / ADR-0017 / ADR-0019 / ADR-0020 / ADR-0021
 
 1. **Is `data_flow_confirmed` a promise, or enrichment metadata?** → **Resolved.** It is enrichment metadata. The AST layer does not answer the question; `data_flow_confirmed` is `NULL` on AST edges and populated only by Layer 2.
 2. **Is `lethal_trifecta` a claim?** → **Resolved.** Yes, and it is valid on the AST layer. It is a node property, computed from capabilities. Runtime strengthens the path evidence around it, not the flag.
-3. Does validated: true mean "correct"? → Resolved by A.4 (2026-10-27). validated: true now means "existence and semantic coherence" (connected, typed, anchor-valid); validated_kind = "semantic" is that state, validated_kind = "existence" is the pre-A.4 meaning kept for read-path compatibility. The reputation change is documented in ADR-0018.
+3. **Does validated: true mean "correct"?** → **Resolved** by A.4 (2026-10-27). `validated: true` now means "existence and semantic coherence" (connected, typed, anchor-valid); `validated_kind = "semantic"` is that state, `validated_kind = "existence"` is the pre-A.4 meaning kept for read-path compatibility. The reputation change is documented in ADR-0018.
+4. **Is Phase 2 (runtime) planned at all?** → **Resolved:** yes, Phase C. The README and ADR-0003 have been updated to say so. ADR-0017 specifies the stitching.
+5. **Guardrail influence: exclusion, marking, or weighting?** → **Resolved** by ADR-0019. Weighting; the model lowers confidence; no exclusion, no marking.
+6. **Capability inheritance: from base class, one level?** → **Resolved** by ADR-0020. Yes; override does not block; transitive and method-level are separate ADRs.
+7. **Store model: node, edges, confidence?** → **Resolved** by ADR-0021. A `store` node, `writes_to` / `reads_from` as structural edges, `identity_confidence` as a second field, a join by store id in `find_chain_groups`.
+8. **`user_upload`: family or source type?** → **Resolved** by ADR-0021 §1 (revision 1). Source type, not family. The store is the technology (`fs`, `s3`, `db`); `user_upload` is the semantic role.
+9. **Context-based writer base confidence?** → **Resolved** by ADR-0021 §8 (revision 2). 0.5, not 0.3.
 
 ### Still open
 
-4. **Is Phase 2 (runtime) planned at all?** → **Resolved:** yes, Phase C. The README and ADR-0003 have been updated to say so. ADR-0017 specifies the stitching.
-5. **Should `provides_tool` chains survive `data_edges_only=True`?** → **Still open.** The parameter is named "data edges only" and `provides_tool` is control — by construction, MCP chains vanish on the shortlist. Either the parameter is misnamed, or MCP is not a first-class use case. Decide after Phase C, when runtime produces real data edges and the question can be answered with data.
-6. **Is `user_upload` a source family?** → **Still open.** ADR-0010 lists four families; the implementation supports one and a half (two read-side, one write-side). The gap is acknowledged in B.2 and B.3. Decide when B.3 lands.
-7. **What is the identity of an `untrusted_source` node when two read sites are the same store?** → **Still open.** B.8 will produce a short ADR or documentation note.
+10. **Should `provides_tool` chains survive `data_edges_only=True`?** → **Still open.** The parameter is named "data edges only" and `provides_tool` is control — by construction, MCP chains vanish on the shortlist. Either the parameter is misnamed, or MCP is not a first-class use case. Decide after Phase C, when runtime produces real data edges and the question can be answered with data.
+11. **What is the identity of an `untrusted_source` node when two read sites are the same store?** → **Still open.** B.8 will produce a short ADR or documentation note.
+12. **`source_type` for `user_upload` end-to-end: (a) new node, (b) multi-role?** → **Open** (B.3b-user_upload-attribution). A single decision before the attribution can fire.
+13. **Prefix containment through the resolver: `_attached_keys` change.** → **Open** (B.3b-fs-followup). The containment branch is inert; making it live is a rule, not a one-liner.
+14. **`max_depth` default after release: 1 or 2?** → **Open** (B.11, post-release). Depends on the corpora.
 
 ---
 
@@ -949,6 +849,6 @@ These are not backlog items; they are decisions the next planning session should
 | Phase | What | Stops at |
 |---|---|---|
 | A | Implement ADR-0016 and ADR-0017 (schema, `evaluation: in config/config.yaml`, class-A removal, Layer 3 semantic) | v0.2 — the graph is honest |
-| B | Close the coverage gaps (cross-file tool → sink, write-side, guardrails, judge determinism) | — |
+| B | Close the coverage gaps (cross-file tool → sink, write-side, guardrails, store model, capability coverage, judge determinism, evidence presence) | v0.3 — coverage gaps closed |
 | C | Layer 2 runtime (Python) | v1.0 — `data_edges_only > 0` on a real corpus |
 | D | Resume the roadmap (`openai_agents`, LLM classifier, prompt engineering) | v1.1 — framework-agnostic, grounded prompt |
