@@ -8,11 +8,14 @@ pieces:
 
   - `base` — `UploadDetector` and `UploadSite`: the interface a framework
     detector implements (ADR-0011's shape), and the value it returns.
-  - `registry` — `UPLOAD_DETECTORS`, the detectors a scan has. **Empty in
-    B.3b-user_upload-core**: no detector, no site, no edge, no
-    attribution, on every scan.
-  - `detectors` — the framework modules (fastapi, streamlit, django,
-    flask), each a later step.
+  - `registry` — `UPLOAD_DETECTORS`, the detectors a scan has. Empty in
+    B.3b-user_upload-core, and one name in it today: `fastapi`
+    (B.3b-user_upload-fastapi). A detector nobody imports does not run,
+    so the registry holds what the tree shipped, not what it could do.
+  - `detectors` — the framework modules, one per framework: `fastapi`
+    today, `streamlit`, `django` and `flask` in later steps. Importing
+    the package registers them; it is imported below, so importing the
+    upload context is enough.
   - `context` — `UserUploadContext`, which runs the detectors over one
     file and merges what they report.
   - `writer` — `find_upload_stores`: the BFS from a handler to the `fs`
@@ -29,6 +32,7 @@ same reason the resolver defers it: the stage package imports this one.
 from .base import UploadDetector, UploadSite
 from .context import UserUploadContext
 from .registry import register_upload_detector, registered_detectors
+from . import detectors  # noqa: F401 — registers the detectors
 
 __all__ = [
     "UploadDetector",
