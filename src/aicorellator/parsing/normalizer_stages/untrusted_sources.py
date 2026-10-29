@@ -1,6 +1,6 @@
 """UntrustedSourceStage — `untrusted_source` nodes and their readers.
 
-Run order: 6 of 19 (see `normalizer_stages.STAGES`).
+Run order: 6 of 20 (see `normalizer_stages.STAGES`).
 
 C4: no step of the pre-1.3 pipeline corresponds to this one; it is the
 node kind ADR-0010 introduces, and it sits here for two mechanical

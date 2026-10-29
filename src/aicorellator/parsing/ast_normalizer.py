@@ -7,7 +7,7 @@ One entry point:
 `ctx` is a `NormalizeContext` (`make_context` builds one): the manifest,
 TSA symbols, entry points, LLM configs, capabilities and detector output,
 plus the per-scan caches and the indexes the stages share. The pipeline
-itself is `normalizer_stages.STAGES` — nineteen stages, one per step of
+itself is `normalizer_stages.STAGES` — twenty stages, one per step of
 the C4 L3 Phase 1 pipeline, each with an `apply(delta, ctx) -> delta`
 (`normalizer_stages.base.NormalizerStage`).
 

@@ -30,6 +30,13 @@ The order encodes four facts that are easy to lose in a refactor:
     and no other, and it emits `structural` edges only, so `flow_kind`'s
     position is not a constraint on it either way (see
     `normalizer_stages.guardrail_edges`).
+  - `store_resolver` runs before it, and after the merge for the same
+    reason: it resolves both ends of a store link — the component a
+    write call sits in, and the `untrusted_source` a read belongs to —
+    against the delta, so the node set has to be final. It shares the
+    merge constraint with `guardrail_edges` and nothing else, and
+    neither reads what the other writes (see
+    `normalizer_stages.store_resolver`).
 """
 
 from __future__ import annotations
@@ -56,6 +63,7 @@ EXPECTED = (
     "orphan_entry",
     "body_attributes",
     "lethal_trifecta",
+    "store_resolver",
     "guardrail_edges",
 )
 
@@ -64,9 +72,9 @@ def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
 
 
-def test_stage_count_is_nineteen() -> None:
-    """The count is quoted in the per-stage docstrings (`N of 19`)."""
-    assert len(STAGES) == 19
+def test_stage_count_is_twenty() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 20`)."""
+    assert len(STAGES) == 20
 
 
 def test_every_stage_satisfies_the_protocol() -> None:
@@ -104,6 +112,29 @@ def test_guardrail_edges_follows_the_detector_merge() -> None:
     it in the delta (`normalizer_stages.guardrail_edges`)."""
     names = [stage.name for stage in STAGES]
     assert names.index("detector_merge") < names.index("guardrail_edges")
+
+
+def test_store_resolver_follows_the_merge_and_precedes_guardrails() -> None:
+    """Both need the final node set, and neither needs the other.
+
+    `store_resolver` resolves a write call to the component node it sits
+    in and a read site to its `untrusted_source`; the merge (stage 10)
+    re-points both, so it cannot run earlier. `guardrail_edges` documents
+    itself as the last slot, and the store resolver has no claim on it,
+    so it runs before it (`normalizer_stages.store_resolver`).
+    """
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("detector_merge")
+        < names.index("store_resolver")
+        < names.index("guardrail_edges")
+    )
+
+
+def test_store_resolver_runs_after_the_read_sites() -> None:
+    """`reads_from` needs the `untrusted_source` nodes (1.3a, stage 6)."""
+    names = [stage.name for stage in STAGES]
+    assert names.index("untrusted_sources") < names.index("store_resolver")
 
 
 def test_body_attributes_precedes_lethal_trifecta() -> None:

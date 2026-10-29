@@ -1,6 +1,6 @@
 """LethalTrifectaStage — the `lethal_trifecta` node attribute (1.3d).
 
-Run order: 18 of 19 (see `normalizer_stages.STAGES`) — second to last.
+Run order: 18 of 20 (see `normalizer_stages.STAGES`) — second to last.
 
 One node fact, derived from the node's own capabilities: does this node
 read untrusted input, can it read secrets, and can it get data out?

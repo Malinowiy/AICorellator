@@ -28,7 +28,8 @@ order:
     16  orphan_entry           orphan entry → single agent (Resolver 2)
     17  body_attributes        sink_data_flow / returns_data backfill
     18  lethal_trifecta        lethal trifecta as a node attribute (1.3d)
-    19  guardrail_edges        guards (guardrail → component), B.4a
+    19  store_resolver         store nodes, writes_to / reads_from (B.3b)
+    20  guardrail_edges        guards (guardrail → component), B.4a
 
 Note on the order:
 
@@ -74,6 +75,16 @@ Note on the order:
     the pipeline is where the node set is final. It is `structural`-only,
     so `flow_kind`'s position is not a constraint on it either way. See
     `normalizer_stages.guardrail_edges`.
+  - `store_resolver` (B.3b) runs after the merge and after everything
+    that builds a node or an edge, because `StoreResolver` resolves both
+    ends of a store link against the delta: the component a write call
+    sits in, and the `untrusted_source` a read belongs to, are nodes
+    stages 2–10 created or re-pointed. It needs nothing `guardrail_edges`
+    writes and vice versa, so its position relative to that stage is
+    free, and it takes 19 so the stage that documents itself as last
+    keeps that slot. `flow_kind` (stage 12) is not a constraint: the
+    resolver classifies its own edges `structural` (ADR-0021 §4). See
+    `normalizer_stages.store_resolver`.
 """
 
 from __future__ import annotations
@@ -96,6 +107,7 @@ from .mcp_entry_synthesis import McpEntrySynthesisStage
 from .mcp_server_nodes import McpServerNodeStage
 from .method_nodes import MethodNodeStage
 from .orphan_entry import OrphanEntryStage
+from .store_resolver import StoreResolverStage
 from .untrusted_source_writers import UntrustedSourceWriterStage
 from .untrusted_sources import UntrustedSourceStage
 
@@ -124,5 +136,6 @@ STAGES: tuple[NormalizerStage, ...] = (
     OrphanEntryStage(),
     BodyAttributeStage(),
     LethalTrifectaStage(),
+    StoreResolverStage(),
     GuardrailEdgeStage(),
 )
