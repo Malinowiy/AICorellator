@@ -5,13 +5,15 @@ for families, and the reason both registries are plain dicts rather than
 loaders: an import that failed is not a detector, and a name that
 resolves to nothing is a config mistake to report, not a crash.
 
-The registry is **empty in B.3b-user_upload-core**, and that is
-load-bearing: `UserUploadContext.identify` finds no detector, no
-`UploadSite` is identified, and the writer emits nothing. Every scan
-still runs the context step, and the step is a no-op. B.3b-user_upload-
-fastapi adds the first line; a detector module is imported by
-`detectors/__init__.py`, so a detector nobody imports does not run (the
-same rule the family registry follows).
+The registry is **empty until a detector is imported**, and that is
+B.3b-user_upload-core's contract: `UPLOAD_DETECTORS` starts as a plain
+dict, `UserUploadContext.identify` then finds no detector, no
+`UploadSite` is identified, and the writer emits nothing — every scan
+still runs the context step, and the step is a no-op with no branch for
+it. The tree ships two names today: `fastapi` (B.3b-user_upload-fastapi)
+and `streamlit` (B.3b-user_upload-streamlit), both registered by the line
+in `detectors/__init__.py`, so a detector nobody imports does not run
+(the same rule the family registry follows).
 
 This registry is **separate** from `store.registry.FAMILIES`, and the
 separation is the point: a family is a store technology, a detector is a

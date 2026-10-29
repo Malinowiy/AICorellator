@@ -20,10 +20,11 @@ context-based writer, and the step is three calls —
 `UserUploadContext.identify` over the files that have entry points,
 `writer.find_upload_stores` for the `writes_to` edges, and
 `attribution.attribute_source_type` for the `source_type` on the read
-sites in a writer's scope. Its **detector registry is empty** in this
-step, so no upload is identified and the step is a no-op on every scan;
-B.3b-user_upload-fastapi adds the first detector and the step starts to
-run.
+sites in a writer's scope. Its detector registry holds **two names**
+today — `fastapi` (B.3b-user_upload-fastapi) and `streamlit`
+(B.3b-user_upload-streamlit) — so the step identifies an upload wherever
+one of them recognizes an entry point, and stays a no-op on the files it
+does not.
 
 Why the context is called from the stage and not from the resolver: the
 resolver's job is pairing a write site with a read site, and the upload
@@ -307,9 +308,6 @@ def _modules_for(
         if module is not None:
             modules[file_path] = module
     return modules
-
-
-__all__ = ["StoreResolverStage"]
 
 
 __all__ = ["StoreResolverStage"]

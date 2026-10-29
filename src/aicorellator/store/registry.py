@@ -5,11 +5,15 @@ framework detectors, and the reason the registry is a plain dict rather
 than a loader: an import that failed is not a family, and a name that
 resolves to nothing is a config mistake to report, not a crash.
 
-The registry is **empty in B.3b-core** and that is load-bearing: every
-scan still runs the resolver, the resolver finds no family, and no store
-edge is emitted. B.3b-fs adds the first line. Importing the family
-module is what registers it, so a family that nobody imports does not
-run (the same rule the detector registry follows).
+The registry is **empty until a family is imported**, and that is
+B.3b-core's contract: `FAMILIES` starts as a plain dict, every scan
+still runs the resolver, a registry holding no family yields no store
+edge rather than a special case, and the pipeline needs no branch for
+either state. The tree ships one name today — `fs`, added by B.3b-fs —
+and it arrives by importing `families/__init__.py`, which is where the
+registration line lives (`register_family("fs", FsFamily)`). A family
+that nobody imports does not run (the same rule the detector registry
+follows).
 """
 
 from __future__ import annotations

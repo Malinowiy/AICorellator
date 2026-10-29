@@ -21,8 +21,9 @@ The pieces:
     an `UploadDetector` per framework, a `UserUploadContext` that runs
     them, and the writer logic that links an upload handler to the `fs`
     stores it writes into. Importing this package imports the detectors,
-    so the one the tree ships (`fastapi`, B.3b-user_upload-fastapi) is
-    registered without a caller naming it.
+    so the ones the tree ships (`fastapi`, B.3b-user_upload-fastapi, and
+    `streamlit`, B.3b-user_upload-streamlit) are registered without a
+    caller naming one.
 
 The package depends on `graph.models` and the standard library, and on
 `parsing` only through a deferred import inside the resolver (see

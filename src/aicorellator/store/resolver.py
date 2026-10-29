@@ -366,6 +366,17 @@ def _link_confidence(
     "both sides have a literal and they are equal" is exactly "this
     site's literal is the store's", and "one side has a literal" is an
     unresolved site pointing at a store it did not name.
+
+    Its cases, in the order it tests them, are the whole of whether this
+    link exists at all: equal hints give `LITERAL_EQUAL` (+0.6); a site
+    with **no** hint gives `LITERAL_ONE_SIDE` (+0.2) — `key` is never
+    `None`, since a store exists only where a literal named one, so this
+    branch is the unresolved site and not a symmetric one; a hint
+    *containing* the other gives `LITERAL_PREFIX` (+0.3, B.3b-fs's row:
+    `startswith` in both directions, nothing normalised); and two hints
+    that differ and contain neither way give `None` — no link, and the
+    pair is dropped. The function's other `None` (neither side has a
+    hint) cannot arise here, for the same reason `key` cannot.
     """
     literal = literal_match(site.identity_hint, key)
     if literal is None:

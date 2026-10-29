@@ -43,10 +43,10 @@ class Context:
     B.3b-core declares the *parameter* and not its shape: the resolver
     threads one through when a scan has one, and a family that needs
     nothing reads the default `None`. `UserUploadContext`
-    (B.3b-user_upload) is the first concrete one, and it is what decides
-    this type's fields — a context exists to carry facts a single file
-    does not hold (an upload endpoint's path, a request-scoped sink),
-    which is why it is a value type and not a service.
+    (B.3b-user_upload-core) is the first concrete one, and it is what
+    decides this type's fields — a context exists to carry facts a single
+    file does not hold (an upload endpoint's path, a request-scoped
+    sink), which is why it is a value type and not a service.
     """
 
 
