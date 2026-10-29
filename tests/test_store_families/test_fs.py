@@ -28,6 +28,7 @@ import ast
 
 from aicorellator.store import registry
 from aicorellator.store.families.base import Family, ReadSite, WriteSite
+from aicorellator.store.families.db import DbFamily
 from aicorellator.store.families.fs import FsFamily
 from aicorellator.store.families.s3 import S3Family
 
@@ -418,13 +419,14 @@ def test_importing_the_store_package_registers_the_family() -> None:
     pipeline will find is the one this module defines.
     """
     assert registry.FAMILIES["fs"] is FsFamily
-    # `s3` joined the tree in B.3b-s3; the two are the families it ships.
-    assert registry.all_names() == ["fs", "s3"]
+    # `s3` joined the tree in B.3b-s3 and `db` in B.3b-db; the three are
+    # the families it ships.
+    assert registry.all_names() == ["db", "fs", "s3"]
 
 
 def test_the_registry_resolves_the_family() -> None:
     """The resolver's default input, in the order it was asked for."""
     assert [type(f) for f in registry.resolve(["fs"])] == [FsFamily]
     assert [type(f) for f in registry.registered_families()] == [
-        FsFamily, S3Family,
+        FsFamily, S3Family, DbFamily,
     ]

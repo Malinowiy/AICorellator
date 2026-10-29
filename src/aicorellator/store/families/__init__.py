@@ -6,18 +6,20 @@ family implements `base.Family` and is registered in
 `store.registry.register_family`.
 
 **Importing this package is what registers the families it ships**
-(`fs` and `s3` today). The registration line lives here, in one place,
-rather than in each family module, for the reason ADR-0011 gives for
-detectors: a family that nobody imports must not run, and the package
-every caller already imports is this one. `store/__init__.py` imports
-this package, so `import aicorellator.store` — which the pipeline, the
-stage and the tests all do — is enough to make the families visible to
-the resolver. The resolver reads the registry when it *runs*, so the
-order that matters is "import the package, then resolve".
+(`fs`, `s3` and `db` today). The registration line lives here, in one
+place, rather than in each family module, for the reason ADR-0011 gives
+for detectors: a family that nobody imports must not run, and the
+package every caller already imports is this one. `store/__init__.py`
+imports this package, so `import aicorellator.store` — which the
+pipeline, the stage and the tests all do — is enough to make the
+families visible to the resolver. The resolver reads the registry when
+it *runs*, so the order that matters is "import the package, then
+resolve".
 """
 
 from __future__ import annotations
 
+from .db import DbFamily
 from .fs import FsFamily
 from .s3 import S3Family
 from ..registry import register_family
@@ -33,4 +35,9 @@ register_family("fs", FsFamily)
 #: `fs`, and the same reason the line lives here.
 register_family("s3", S3Family)
 
-__all__ = ["FsFamily", "S3Family"]
+#: The third family (B.3b-db): the tables a `cursor.execute` statement
+#: names, by the table its literal SQL string carries. Same rule as the
+#: other two, and the same reason the line lives here.
+register_family("db", DbFamily)
+
+__all__ = ["DbFamily", "FsFamily", "S3Family"]
