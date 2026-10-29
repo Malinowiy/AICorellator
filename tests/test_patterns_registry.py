@@ -560,6 +560,86 @@ def test_intentional_overlaps_are_real() -> None:
     assert patterns.INTENTIONAL_OVERLAPS <= seen
 
 
+# ------------------------------------------------------------
+# Untrusted-source writer rules (B.2)
+# ------------------------------------------------------------
+# The read side's table-and-lookup agreement is
+# `test_untrusted_sources.test_every_declared_pattern_matches_its_own_family`;
+# these are the write side's, and they pin the same property for
+# `WRITER_RULES` / `untrusted_writer_match`.
+
+def test_the_writer_table_pairs_each_family_with_its_own_rule() -> None:
+    """A writer family and its rule are one entry, not two lists.
+
+    The table is what says "this rule evidences a write into this
+    family", and the capability on the rule is the family's — the two
+    halves `untrusted_source_writers` reads to pair a write with a
+    same-family read.
+    """
+    assert dict(patterns.WRITER_RULES) == {
+        "rag_corpus": patterns.WRITES_RAG_CORPUS_RULE,
+        "email_inbox": patterns.WRITES_EMAIL_INBOX_RULE,
+    }
+
+
+def test_every_writer_pattern_resolves_to_its_own_family() -> None:
+    """Every pattern of every writer rule matches its own family first."""
+    for source_type, rule in patterns.WRITER_RULES:
+        for pattern in rule.patterns:
+            match = patterns.untrusted_writer_match(pattern.text)
+            assert match is not None, pattern.text
+            assert match[0] == source_type, pattern.text
+            assert match[1] is rule, pattern.text
+
+
+def test_the_writer_families_are_source_families() -> None:
+    """A writer writes into a family the read side knows.
+
+    A rule for a source type no read rule defines would produce edges
+    into nodes nothing ever creates — the capability would be a name
+    with no source behind it.
+    """
+    read_families = {name for name, _ in patterns.UNTRUSTED_SOURCE_RULES}
+
+    assert {name for name, _ in patterns.WRITER_RULES} <= read_families
+
+
+def test_the_writer_capabilities_are_declared_and_distinct() -> None:
+    """Two families, two capabilities, both in the vocabulary.
+
+    One name would let a write of one family stand in as the writer of a
+    read of the other, which is the pairing the two names exist to
+    prevent.
+    """
+    capabilities = [rule.capability for _, rule in patterns.WRITER_RULES]
+
+    assert len(set(capabilities)) == len(capabilities)
+    assert set(capabilities) <= patterns.VALID_CAPABILITIES
+
+
+def test_the_writer_views_are_derived_from_the_rules() -> None:
+    """The `CAPABILITY_WRITES_*` names are renderings, not lists."""
+    assert patterns.CAPABILITY_WRITES_RAG_CORPUS == (
+        patterns.WRITES_RAG_CORPUS_RULE.text_patterns
+    )
+    assert patterns.CAPABILITY_WRITES_EMAIL_INBOX == (
+        patterns.WRITES_EMAIL_INBOX_RULE.text_patterns
+    )
+
+
+def test_the_writer_rules_add_no_overlap() -> None:
+    """B.2 declares no new capability overlap (the set is unchanged).
+
+    No other rule credits `writes_rag_corpus` or `writes_email_inbox`,
+    so `test_no_unlisted_capability_overlap` above stays green without a
+    new entry — and this pins that the set was not widened to hide one.
+    """
+    assert patterns.INTENTIONAL_OVERLAPS == frozenset({
+        frozenset({"executes_code", "executes_shell"}),
+        frozenset({"writes_db", "commit"}),
+    })
+
+
 def test_no_rule_duplicates_another_rules_capability() -> None:
     """A name may not reach the same capability through two rules.
 

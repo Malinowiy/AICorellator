@@ -20,7 +20,7 @@ order:
      8  delegation_edges       entry → agent, agent → agent, agent → server
      9  entry_to_sink          entry → same-file sink reachability
     10  detector_merge         detector nodes authoritative; id remap
-    11  untrusted_source_writers  server → writes_to → source (1.3a.1)
+    11  untrusted_source_writers  writer → writes_to → source (1.3a.1, B.2)
     12  flow_kind              flow_kind = control on every edge (ADR-0016)
     13  dynamic_mcp_invocation agent → uses_tool → tool (1.3a.1.2)
     14  cross_file_resolution  uses_tool across modules (Resolver 1)
@@ -51,7 +51,10 @@ Note on the order:
     the file the rule matches on — only exists once `detector_merge` has
     run. It runs before `flow_kind` so the kind is pinned once, by
     `FlowKindStage`, rather than the edge arriving at that stage carrying
-    a `flow_kind` of its own.
+    a `flow_kind` of its own. B.2's two call-written families want the
+    same position for the same reason: the component a write belongs to
+    is a node stages 2–5 created, and the merge may re-point it, so the
+    edge is drawn against the node the merge settled on.
   - `dynamic_mcp_invocation` (1.3a.1.2) runs after both: it walks the
     `writes_to` edges stage 11 emitted, and it is a resolver, so it sits
     with the other post-`flow_kind` resolvers and passes `CONTROL_FLOW`

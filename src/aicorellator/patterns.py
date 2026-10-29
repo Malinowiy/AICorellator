@@ -27,11 +27,12 @@ below is a `CallPattern` and every capability entry is a
 `CapabilityRule`. The types and the matching rules live in
 `patterns_registry.py`.
 
-The two exceptions are predicates that belong beside their table rather
+The exceptions are predicates that belong beside their table rather
 than in a consumer: `untrusted_source_match` with the
-`UNTRUSTED_SOURCE_*` tables, and `lethal_trifecta_caps` with the
-`LETHAL_TRIFECTA_*` sets. Both have more than one caller, and a
-definition shared by the graph and the score cannot drift.
+`UNTRUSTED_SOURCE_*` tables, `untrusted_writer_match` with
+`WRITER_RULES` (B.2), and `lethal_trifecta_caps` with the
+`LETHAL_TRIFECTA_*` sets. Each has more than one caller, and a
+definition shared by two consumers cannot drift.
 
 Each rule carries one sentence explaining why it exists
 (`CapabilityRule.reason`) — the registries are what a reviewer reads to
@@ -338,6 +339,15 @@ VALID_CAPABILITIES: frozenset[str] = frozenset({
     "calls_llm",
     "invokes_mcp_tool",
     "reads_untrusted",
+    # The write side of ADR-0010's channel (B.2). Two names, not one:
+    # unlike `reads_untrusted` — whose family is carried by the
+    # `untrusted_source` node the read creates — a write has no node of
+    # its own, so the capability is the only thing that says *which*
+    # family the write belongs to. `untrusted_source_writers` pairs a
+    # write with a read of the same family, and a shared name would let
+    # a mail send stand in as the writer of a corpus read.
+    "writes_rag_corpus",
+    "writes_email_inbox",
 })
 
 # --- Adapter attribute patterns (1.2a.3i) ---
@@ -925,6 +935,82 @@ READS_UNTRUSTED_EMAIL_RULE = CapabilityRule(
     ),
 )
 
+# --- Untrusted-source writes (B.2, ADR-0010) ---
+# The write half of the two families whose writer is a *call* rather
+# than a declaration. 1.3a.1 built `mcp_tool_description`'s write side
+# from the server that declares the catalogue; a corpus and a mailbox
+# are not declared by anyone, they are written by a component that
+# calls the store. So each family gets a `CapabilityRule` in the same
+# shape as its read rule: a closed set of call sites, one reason, and a
+# capability that `untrusted_source_writers` matches a same-family read
+# against.
+#
+# A write is *not* a read of the same family, and the two rule sets are
+# disjoint by construction: `collection.query` / `collection.search`
+# stay reads (READS_UNTRUSTED_RAG_RULE), `collection.insert` /
+# `collection.upsert` are writes. One call site is one fact, and
+# crediting both would make every write site a reader of the store it
+# writes (a chain group whose read half is the write half).
+#
+# rag_corpus — the write end of a vector store. The verbs are the ones
+# a store spells its write end with, under the same qualifiers the read
+# rule uses (`vectorstore`, `vector_store`, `collection`), plus the
+# LangChain spellings. Deliberately absent: a bare `add` / `upsert` /
+# `insert` (a `dict.insert` is not a store, and a one-segment pattern is
+# matched on the final segment alone), and the constructors
+# (`chromadb.Client`, `FAISS.from_documents`) — a handle is not a write,
+# exactly as a handle is not a read (1.3a).
+WRITES_RAG_CORPUS_RULE = CapabilityRule(
+    capability="writes_rag_corpus",
+    patterns=(
+        CallPattern("vectorstore", "add_documents"),
+        CallPattern("vectorstore", "add_texts"),
+        CallPattern("vectorstore", "upsert"),
+        CallPattern("vectorstore", "index"),
+        CallPattern("vector_store", "add_documents"),
+        CallPattern("vector_store", "add_texts"),
+        CallPattern("collection", "add"),
+        CallPattern("collection", "upsert"),
+        CallPattern("collection", "insert"),
+    ),
+    reason=(
+        "the call adds documents to a vector store, the write end of a "
+        "corpus a later read retrieves from (indirect prompt injection "
+        "through RAG)"
+    ),
+)
+
+# email_inbox — the send end of a mailbox. Two spellings matter and
+# they are different segments: a project that wraps `smtplib` holds the
+# connection in a local named `smtp` (`smtp.sendmail(...)`), and a
+# project that calls the class directly spells `SMTP` as the receiver
+# (`smtplib.SMTP.sendmail(...)`) — the qualifier is matched on the
+# segment immediately before the verb, so `smtp` and `SMTP` are two
+# patterns, and neither is a name table. `imap.append` is the write
+# verb of the read rule's own handle (IMAP `APPEND` files a message
+# into a mailbox), and `mailbox.add` / `mailbox.put` are the
+# `mailbox`-handle spellings, mirroring its `get_message(s)` reads.
+# Deliberately absent: a bare `send` (a websocket frame, a queue
+# message, an SMS — not an email), and `smtp.connect` /
+# `imap.login` (a connection is a handle, not a write).
+WRITES_EMAIL_INBOX_RULE = CapabilityRule(
+    capability="writes_email_inbox",
+    patterns=(
+        CallPattern("smtp", "send"),
+        CallPattern("smtp", "sendmail"),
+        CallPattern("smtp", "send_message"),
+        CallPattern("SMTP", "sendmail"),
+        CallPattern("SMTP", "send_message"),
+        CallPattern("imap", "append"),
+        CallPattern("mailbox", "add"),
+        CallPattern("mailbox", "put"),
+    ),
+    reason=(
+        "the call delivers a message into a mailbox, the write end of "
+        "the channel a later read pulls in (phishing / spam poisoning)"
+    ),
+)
+
 # --- The registry ---
 # Every call-pattern rule in this file, in declaration order. The order
 # that matters for classification lives in capability_extractor; this
@@ -948,6 +1034,8 @@ CALL_RULES: tuple[CapabilityRule, ...] = (
     READS_UNTRUSTED_RAG_RULE,
     READS_UNTRUSTED_MCP_DESCRIPTION_RULE,
     READS_UNTRUSTED_EMAIL_RULE,
+    WRITES_RAG_CORPUS_RULE,
+    WRITES_EMAIL_INBOX_RULE,
 )
 
 # --- Source-type table (1.3a) ---
@@ -971,6 +1059,35 @@ UNTRUSTED_SOURCE_RULES: tuple[tuple[str, CapabilityRule], ...] = (
     ("email_inbox", READS_UNTRUSTED_EMAIL_RULE),
 )
 
+# --- Writer-type table (B.2) ---
+# Source type → the rule that evidences a *write* into that family. The
+# same shape and the same reasoning as `UNTRUSTED_SOURCE_RULES`: a tuple
+# of pairs, declaration order is call order, and the name ends in
+# `RULES` so `test_no_rule_is_missing_from_the_registry` does not read
+# the table as a rule (its owners are in `CALL_RULES` above).
+#
+# Two families are here and one is not, and that asymmetry is the whole
+# point of B.2:
+#
+#   - `rag_corpus` and `email_inbox` are written by a *call* — a
+#     component that adds documents to a store or sends a message — so
+#     the rule is a `CapabilityRule` and the writer is the node that
+#     credited the capability.
+#   - `mcp_tool_description` has no entry: its writer is the *server*
+#     that declares the catalogue, which is a declaration rather than a
+#     call, and `untrusted_source_writers` reads it from the
+#     `mcp_server` nodes (1.3a.1). A rule here would be a call pattern
+#     for something no call site spells.
+#
+# The table is what a reader consults to answer "which family does this
+# writer rule belong to?", and it is the only place that answer exists:
+# `untrusted_writer_match` (below) and `untrusted_source_writers` both
+# go through it.
+WRITER_RULES: tuple[tuple[str, CapabilityRule], ...] = (
+    ("rag_corpus", WRITES_RAG_CORPUS_RULE),
+    ("email_inbox", WRITES_EMAIL_INBOX_RULE),
+)
+
 
 def untrusted_source_match(
     call_target: str,
@@ -991,6 +1108,30 @@ def untrusted_source_match(
     above is what a declared overlap would look like).
     """
     for source_type, rule in UNTRUSTED_SOURCE_RULES:
+        if rule.matches(call_target):
+            return source_type, rule
+    return None
+
+
+def untrusted_writer_match(
+    call_target: str,
+) -> tuple[str, CapabilityRule] | None:
+    """The `(source_type, rule)` whose *writer* rule matches `call_target`.
+
+    The write-side twin of `untrusted_source_match` (B.2), over
+    `WRITER_RULES`. The pair, not just the rule, because the two
+    consumers want different halves of it exactly as they do for a read:
+    `capability_extractor` credits the rule's capability (which names the
+    family, since a write has no node), and
+    `untrusted_source_writers` uses the source type to pick the reads the
+    write can belong to.
+
+    Returns None when the call is not a write into a known source. A
+    call matches at most one family: the rule sets are disjoint by
+    construction (`collection.upsert` is a write, `collection.query` is a
+    read), and the first match wins if that ever changes.
+    """
+    for source_type, rule in WRITER_RULES:
         if rule.matches(call_target):
             return source_type, rule
     return None
@@ -1056,6 +1197,11 @@ CAPABILITY_READS_UNTRUSTED = (
     + READS_UNTRUSTED_MCP_DESCRIPTION_RULE.text_patterns
     + READS_UNTRUSTED_EMAIL_RULE.text_patterns
 )
+# The write side (B.2): one view per family, because each write rule
+# credits its own capability. There is no flat union — the union would
+# suggest one capability, and the two families are deliberately two.
+CAPABILITY_WRITES_RAG_CORPUS = WRITES_RAG_CORPUS_RULE.text_patterns
+CAPABILITY_WRITES_EMAIL_INBOX = WRITES_EMAIL_INBOX_RULE.text_patterns
 
 
 # --- Secret-like env variable names ---

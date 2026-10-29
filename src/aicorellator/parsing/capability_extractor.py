@@ -51,6 +51,7 @@ from ..patterns import (
     SQL_READ_KEYWORDS,
     SQL_WRITE_KEYWORDS,
     untrusted_source_match,
+    untrusted_writer_match,
 )
 from ..patterns_registry import CallPattern, CapabilityRule, matches_any
 
@@ -341,6 +342,16 @@ def _classify_call(call: ast.Call) -> set[str]:
     source_match = untrusted_source_match(target)
     if source_match is not None:
         _credit(caps, "reads_untrusted", source_match[1], target)
+
+    # untrusted-source writes (B.2, ADR-0010)
+    # The write half, credited the same way and for the same reason: the
+    # rule is the evidence, and the capability it carries names the
+    # family. The capability is what `untrusted_source_writers` matches a
+    # same-family read against, because a write site produces no node of
+    # its own — the source node belongs to the read site (1.3a).
+    writer_match = untrusted_writer_match(target)
+    if writer_match is not None:
+        _credit(caps, writer_match[1].capability, writer_match[1], target)
 
     return caps
 

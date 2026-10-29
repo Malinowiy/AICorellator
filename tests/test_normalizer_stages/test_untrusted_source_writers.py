@@ -16,11 +16,18 @@ from __future__ import annotations
 import ast
 
 from aicorellator.graph.models import Node
+from aicorellator.parsing.capability_extractor import (
+    FileCapabilities,
+    SymbolCapabilities,
+)
+from aicorellator.parsing.entry_points import EntryPointOutput
+from aicorellator.parsing.models import TSASymbol
 from aicorellator.parsing.normalizer_stages import (
     FlowKindStage,
     UntrustedSourceWriterStage,
 )
 from aicorellator.parsing.normalizer_stages.untrusted_source_writers import (
+    WRITER_SOURCE_TYPES,
     declared_server_names,
 )
 
@@ -51,21 +58,85 @@ def _source(
     file_path: str = "app.py",
     *,
     node_id: str = "untrusted_source:1",
+    call_target: str = "client.list_tools",
     **attrs,
 ) -> Node:
     return Node(
         id=node_id,
         kind="untrusted_source",
-        name=f"{source_type}:client.list_tools",
+        name=f"{source_type}:{call_target}",
         host_id="localhost",
         attributes={
             "source_type": source_type,
-            "call_target": "client.list_tools",
+            "call_target": call_target,
             "source_file": file_path,
             "line_start": 1,
             **attrs,
         },
     )
+
+
+def _component(
+    name: str,
+    file_path: str,
+    *,
+    node_id: str | None = None,
+    kind: str = "tool",
+    **attrs,
+) -> Node:
+    """A node a write site can belong to (B.2).
+
+    `tool` by default, because that is what a component that writes a
+    store usually is once it is classified; `kind` is a parameter so a
+    test can use an `entry_point` (the ingest-route shape) or a `sink`.
+    """
+    return Node(
+        id=node_id or f"{kind}:{name}",
+        kind=kind,
+        name=name,
+        host_id="localhost",
+        attributes={"source_file": file_path, **attrs},
+    )
+
+
+def _symbols(
+    file_path: str,
+    *entries: tuple[str, str | None],
+) -> list[TSASymbol]:
+    """TSA symbols for one file: `(name, class_name)` pairs.
+
+    A `class_name` makes the symbol a method, which is what
+    `_writing_symbols` reads to find the enclosing class.
+    """
+    return [
+        TSASymbol(
+            name=name,
+            kind="method" if class_name else "function",
+            file_path=file_path,
+            line_start=index + 1,
+            line_end=index + 2,
+            class_name=class_name,
+        )
+        for index, (name, class_name) in enumerate(entries)
+    ]
+
+
+def _caps(file_path: str, **symbol_caps: set[str]) -> FileCapabilities:
+    """`FileCapabilities` for one file, from `symbol=capabilities`."""
+    return FileCapabilities(
+        file_path=file_path,
+        symbols=[
+            SymbolCapabilities(
+                symbol_name=name, file_path=file_path, capabilities=caps,
+            )
+            for name, caps in symbol_caps.items()
+        ],
+    )
+
+
+def _imports(**by_file: list[str]) -> EntryPointOutput:
+    """An `EntryPointOutput` carrying only an import table (B.2)."""
+    return EntryPointOutput(imports=by_file)
 
 
 def test_a_server_in_the_same_file_writes_the_catalogue(project) -> None:
@@ -180,13 +251,15 @@ def test_a_parent_server_that_names_no_server_writes_nothing(project) -> None:
     assert delta.edges == []
 
 
-def test_a_rag_corpus_has_no_writer_rule(project) -> None:
-    """The scope is `mcp_tool_description` — one family, with evidence.
+def test_a_server_is_not_a_writer_of_a_corpus(project) -> None:
+    """The server anchors are `mcp_tool_description`'s alone (B.2).
 
     A corpus read inside a server file is the server *reading* its
     store, not writing it: `vectorstore.similarity_search` in
     `mcp/servers/knowledge/server.py` (the pipeline fixture) is exactly
-    that, and it must not produce a writer edge.
+    that. A corpus is written by a *call*, so the only writer a corpus
+    source can have is a component that credits `writes_rag_corpus` —
+    and a server is not one, whatever file the read is in.
     """
     p = project(files={"mcp/servers/knowledge/server.py": ""})
     p.delta.nodes.append(_server("knowledge", server_name="knowledge"))
@@ -375,7 +448,12 @@ def test_a_path_quoted_in_a_docstring_is_not_evidence(project) -> None:
 
 
 def test_a_literal_does_not_anchor_a_non_catalogue_source(project) -> None:
-    """The family gate is first: a corpus in that file is still no match."""
+    """A literal names a server, so it anchors a catalogue, not a corpus.
+
+    The family decides which anchors apply: a factory path is evidence
+    about a *server declaration*, and a corpus is written by a call
+    (B.2) — the literal is not a write site, in this file or any other.
+    """
     p = project(files={
         "apps/routes/api.py": INTROSPECTORS,
         **_server_modules("finmail", "findrive"),
@@ -568,3 +646,392 @@ def test_declared_server_names_ignores_a_non_factory_literal() -> None:
 
     assert declared_server_names(module) == ["finmail"]
 
+    assert declared_server_names(module) == ["finmail"]
+
+
+# ------------------------------------------------------------
+# B.2 — the call-written families: rag_corpus and email_inbox
+# ------------------------------------------------------------
+# The writer of these families is a component that calls the store, so
+# the tests build the two inputs the stage reads: the capability the
+# extractor credited (`ctx.capabilities`) and the node the delta holds
+# for the symbol that credited it. The rules themselves are the
+# extractor's tests' subject (`tests/test_capability_extractor.py`):
+# here the capability is the given, because that is what the stage sees.
+
+CORPUS_READ = "vectorstore.similarity_search"
+MAIL_READ = "imap.search"
+
+
+def _corpus_source(file_path: str, **kwargs) -> Node:
+    return _source(
+        source_type="rag_corpus",
+        file_path=file_path,
+        call_target=CORPUS_READ,
+        **kwargs,
+    )
+
+
+def _mail_source(file_path: str, **kwargs) -> Node:
+    return _source(
+        source_type="email_inbox",
+        file_path=file_path,
+        call_target=MAIL_READ,
+        **kwargs,
+    )
+
+
+def test_a_corpus_write_in_the_reads_file_writes_the_source(project) -> None:
+    """R1 — `vectorstore.add_documents` in the file the read is in.
+
+    The component that writes and the read are in one module, which is
+    the shape an ingest route and its retriever have: the writer is the
+    node the delta holds for the symbol that credited the capability.
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [("writes_to", "tool:index_documents", "untrusted_source:1")]
+
+
+def test_a_corpus_write_in_an_imported_file_writes_the_source(
+    project,
+) -> None:
+    """R2 — the writer imports the reader's module.
+
+    The two halves of the channel need not share a file: the service
+    that writes the store imports the module the read is in, which is
+    the trailing-segment match `cross_file._module_matches_file` makes
+    (B.1's rule).
+    """
+    p = project(
+        files={"apps/routes.py": "", "services/indexer.py": ""},
+        capabilities={
+            "services/indexer.py": _caps(
+                "services/indexer.py", **{"index_documents": {
+                    "writes_rag_corpus",
+                }},
+            ),
+        },
+        entry_points=_imports(**{"services/indexer.py": ["apps.routes"]}),
+    )
+    p.delta.nodes.append(_component("index_documents", "services/indexer.py"))
+    p.delta.nodes.append(_corpus_source("apps/routes.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["tool:index_documents"]
+
+
+def test_a_corpus_write_the_reader_imports_writes_the_source(
+    project,
+) -> None:
+    """R2, the other direction: the reader imports the writer's module.
+
+    A route module that imports the ingest service is the same channel
+    as an ingest service that imports the store module, so both
+    directions of the import are checked (`_shares_an_import`).
+    """
+    p = project(
+        files={"apps/routes.py": "", "services/indexer.py": ""},
+        capabilities={
+            "services/indexer.py": _caps(
+                "services/indexer.py", **{"index_documents": {
+                    "writes_rag_corpus",
+                }},
+            ),
+        },
+        entry_points=_imports(**{"apps/routes.py": ["services.indexer"]}),
+    )
+    p.delta.nodes.append(_component("index_documents", "services/indexer.py"))
+    p.delta.nodes.append(_corpus_source("apps/routes.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["tool:index_documents"]
+
+
+def test_a_corpus_write_in_an_unrelated_file_writes_nothing(project) -> None:
+    """R3 — a writer, but no read of the same source it can see.
+
+    The write is in one file and the corpus read in another, and neither
+    imports the other: the writer cannot name the read site, so there is
+    no edge — the same honest absence `_writers_for`'s third anchor
+    produces for a server.
+    """
+    p = project(
+        files={"app.py": "", "other.py": ""},
+        capabilities={
+            "other.py": _caps("other.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "other.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_corpus_reader_with_no_write_site_writes_nothing(project) -> None:
+    """R4 — the read half alone is not a write.
+
+    The unchanged 1.3a result: a corpus read with no component that
+    credits a write capability produces no `writes_to` edge. Nothing in
+    the file is a writer, so nothing is matched.
+    """
+    p = project(files={"app.py": ""})
+    p.delta.nodes.append(_component("read_documents", "app.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_write_of_the_other_family_does_not_write_this_source(
+    project,
+) -> None:
+    """The capability names the family, so only the same family pairs.
+
+    A mail send and a corpus read in one file are two channels: the
+    writer credits `writes_email_inbox`, the source is a `rag_corpus`,
+    and the family gate keeps them apart. This is what two capability
+    names buy over one (`writes_untrusted`).
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"notify": {"writes_email_inbox"}}),
+        },
+    )
+    p.delta.nodes.append(_component("notify", "app.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_mailbox_write_in_the_reads_file_writes_the_source(project) -> None:
+    """E1 — `smtp.sendmail` in the file the mailbox read is in."""
+    p = project(
+        files={"mail.py": ""},
+        capabilities={
+            "mail.py": _caps("mail.py", **{"send_reply": {
+                "writes_email_inbox",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("send_reply", "mail.py"))
+    p.delta.nodes.append(_mail_source("mail.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [("writes_to", "tool:send_reply", "untrusted_source:1")]
+
+
+def test_a_mailbox_write_in_an_imported_file_writes_the_source(
+    project,
+) -> None:
+    """E2 — the send is in a module the mailbox read's file imports.
+
+    `smtplib.SMTP.send_message` credits `writes_email_inbox` in the
+    notification module (the spelling is the extractor's test); the
+    stage's question is only whether the two files can see each other.
+    """
+    p = project(
+        files={"apps/inbox.py": "", "notify/mailer.py": ""},
+        capabilities={
+            "notify/mailer.py": _caps("notify/mailer.py", **{"send": {
+                "writes_email_inbox",
+            }}),
+        },
+        entry_points=_imports(**{"apps/inbox.py": ["notify.mailer"]}),
+    )
+    p.delta.nodes.append(_component("send", "notify/mailer.py"))
+    p.delta.nodes.append(_mail_source("apps/inbox.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["tool:send"]
+
+
+def test_a_mailbox_write_in_an_unrelated_file_writes_nothing(
+    project,
+) -> None:
+    """E3 — a writer, but no read of the same source it can see."""
+    p = project(
+        files={"app.py": "", "other.py": ""},
+        capabilities={
+            "other.py": _caps("other.py", **{"send": {
+                "writes_email_inbox",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("send", "other.py"))
+    p.delta.nodes.append(_mail_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_write_in_a_route_handler_is_the_entry_point(project) -> None:
+    """The ingest-route shape: the handler's node is the entry point.
+
+    A write inside a route handler has no node of its own — a plain
+    handler is not a tool or a sink — so the entry point that carries
+    its `handler` name is the writer, exactly as the read stage resolves
+    a read inside a handler (1.3a). This is the shape ADR-0010's write
+    chain starts from: `POST /documents → … → rag_corpus`.
+    """
+    p = project(
+        files={"apps/routes.py": ""},
+        capabilities={
+            "apps/routes.py": _caps("apps/routes.py", **{"upload": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component(
+        "POST /documents", "apps/routes.py",
+        node_id="entry_point:upload", kind="entry_point", handler="upload",
+    ))
+    p.delta.nodes.append(_corpus_source("apps/routes.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["entry_point:upload"]
+
+
+def test_a_write_in_an_unclassified_method_is_its_class(project) -> None:
+    """The class is the fallback writer, as it is the read fallback.
+
+    A method that credits the capability but is not classified has no
+    node; the class that encloses it does, so the class node is the
+    writer — the same "most specific node" rule the read stage applies
+    to `reader` and `container`.
+    """
+    p = project(
+        files={"app.py": ""},
+        symbols=_symbols("app.py", ("index_documents", "Corpus")),
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("Corpus", "app.py", node_id="tool:Corpus"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [e.source_id for e in delta.edges] == ["tool:Corpus"]
+
+
+def test_a_write_site_with_no_node_writes_nothing(project) -> None:
+    """A component that is not in the graph cannot write into it.
+
+    The symbol credits the capability, but no stage gave it a node: a
+    write chain cannot start at a node that does not exist, and this
+    stage creates none (its contract is to emit edges between nodes
+    other stages created).
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_the_call_written_edges_carry_the_flow_discipline(project) -> None:
+    """F1 — every B.2 edge: control, `["ast"]`, no confirmed data flow.
+
+    The edge is evidence of a call site, not a traced value (ADR-0015,
+    decision 5; ADR-0016, decision 3), so `FlowKindStage` pins
+    `control`, `observed_by` is the `Edge` default and
+    `data_flow_confirmed` stays `NULL`.
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }, "send_reply": {"writes_email_inbox"}}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(_component("send_reply", "app.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+    p.delta.nodes.append(_mail_source("app.py", node_id="untrusted_source:2"))
+
+    UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+    FlowKindStage().apply(p.delta, p.ctx)
+
+    assert len(p.delta.edges) == 2
+    assert {e.flow_kind for e in p.delta.edges} == {"control"}
+    assert {tuple(e.observed_by) for e in p.delta.edges} == {("ast",)}
+    assert {e.data_flow_confirmed for e in p.delta.edges} == {None}
+
+
+def test_the_source_family_gate_is_the_writer_table(project) -> None:
+    """The gate is derived: two call-written families and one declared.
+
+    `WRITER_SOURCE_TYPES` is `patterns.WRITER_RULES`' families plus the
+    declaration-written one, so a family with a writer rule is a family
+    this stage matches and `user_upload` (B.3, no rule yet) is not.
+    """
+    assert WRITER_SOURCE_TYPES == {
+        "mcp_tool_description", "rag_corpus", "email_inbox",
+    }
+    """E3 — a writer, but no read of the same source it can see."""
+    p = project(
+        files={"app.py": "", "other.py": ""},
+        capabilities={
+            "other.py": _caps("other.py", **{"send": {
+                "writes_email_inbox",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("send", "other.py"))
+    p.delta.nodes.append(_mail_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+
+
+def test_a_mailbox_reader_with_no_write_site_writes_nothing(project) -> None:
+    """E4 — the read half alone is not a write."""
+    p = project(files={"mail.py": ""})
+    p.delta.nodes.append(_component("read_inbox", "mail.py"))
+    p.delta.nodes.append(_mail_source("mail.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []

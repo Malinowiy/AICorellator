@@ -1155,6 +1155,227 @@ def test_a_source_read_is_not_a_sink_capability() -> None:
     assert patterns.LETHAL_TRIFECTA_READ_CAPS == {"reads_untrusted"}
 
 
+# ------------------------------------------------------------
+# Untrusted-source writes (B.2)
+# ------------------------------------------------------------
+
+def test_writes_rag_corpus_is_credited_per_pattern(tmp_path: Path) -> None:
+    """Every write spelling of a vector store credits the family.
+
+    One symbol per pattern, so a pattern that stops matching shows up as
+    that symbol losing the capability rather than as a count.
+    """
+    path = _write(tmp_path, "a.py", """
+def add_documents(docs):
+    return vectorstore.add_documents(docs)
+
+
+def add_texts(texts):
+    return vectorstore.add_texts(texts)
+
+
+def upsert(rows):
+    return vectorstore.upsert(rows)
+
+
+def index(rows):
+    return vectorstore.index(rows)
+
+
+def store_documents(docs):
+    return vector_store.add_documents(docs)
+
+
+def store_texts(texts):
+    return self.vector_store.add_texts(texts)
+
+
+def add(rows):
+    return collection.add(rows)
+
+
+def upsert_rows(rows):
+    return collection.upsert(rows)
+
+
+def insert(rows):
+    return self.collection.insert(rows)
+""")
+    result = extract(path, "a.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+
+    for name in (
+        "add_documents", "add_texts", "upsert", "index", "store_documents",
+        "store_texts", "add", "upsert_rows", "insert",
+    ):
+        assert caps[name] == {"writes_rag_corpus"}, name
+
+
+def test_writes_email_inbox_is_credited_per_pattern(tmp_path: Path) -> None:
+    """Every send spelling credits the mailbox family.
+
+    `smtp` and `SMTP` are two patterns because the qualifier is the
+    segment immediately before the verb: a project that wraps `smtplib`
+    in a local handle spells one, a project that calls the class spells
+    the other.
+    """
+    path = _write(tmp_path, "a.py", """
+import smtplib
+
+
+def send(msg):
+    return smtp.send(msg)
+
+
+def sendmail(sender, to, msg):
+    return smtp.sendmail(sender, to, msg)
+
+
+def send_message(msg):
+    return self.smtp.send_message(msg)
+
+
+def class_sendmail(sender, to, msg):
+    return smtplib.SMTP.sendmail(sender, to, msg)
+
+
+def class_send_message(msg):
+    return smtplib.SMTP.send_message(msg)
+
+
+def append(msg):
+    return imap.append("INBOX", msg)
+
+
+def add(msg):
+    return mailbox.add(msg)
+
+
+def put(msg):
+    return self.mailbox.put(msg)
+""")
+    result = extract(path, "a.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+
+    for name in (
+        "send", "sendmail", "send_message", "class_sendmail",
+        "class_send_message", "append", "add", "put",
+    ):
+        assert caps[name] == {"writes_email_inbox"}, name
+
+
+def test_a_bare_write_verb_is_not_a_store_or_a_mailbox(
+    tmp_path: Path,
+) -> None:
+    """A one-segment pattern would match every `add`, `send`, `insert`.
+
+    A bare `add` is a list, a bare `send` is a websocket frame, a bare
+    `insert` is a set — none of them is a store or a mailbox. Neither is
+    a write under a qualifier that names no store.
+    """
+    path = _write(tmp_path, "a.py", """
+def add(item):
+    return items.add(item)
+
+
+def send(frame):
+    return ws.send(frame)
+
+
+def insert(item):
+    return seen.insert(item)
+
+
+def upsert(row):
+    return db.upsert(row)
+
+
+def store(rows):
+    return cache.insert(rows)
+""")
+    result = extract(path, "a.py")
+
+    for symbol in result.symbols:
+        assert symbol.capabilities == set(), symbol.symbol_name
+
+
+def test_a_corpus_read_is_not_a_corpus_write(tmp_path: Path) -> None:
+    """The read verbs stay reads: one call site is one fact.
+
+    `collection.query` and `vectorstore.similarity_search` are the read
+    rule's; crediting them as writes too would make a reader the writer
+    of the store it reads.
+    """
+    path = _write(tmp_path, "a.py", """
+def query(q):
+    return collection.query(q)
+
+
+def search(q):
+    return collection.search(q)
+
+
+def similarity(q):
+    return vectorstore.similarity_search(q)
+""")
+    result = extract(path, "a.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+
+    assert caps == {
+        "query": {"reads_untrusted"},
+        "search": {"reads_untrusted"},
+        "similarity": {"reads_untrusted"},
+    }
+
+
+def test_writes_untrusted_folds_into_the_class(tmp_path: Path) -> None:
+    """A method's write is the class's capability, like every other."""
+    path = _write(tmp_path, "a.py", """
+class Corpus:
+    def index(self, docs):
+        return vectorstore.add_documents(docs)
+""")
+    result = extract(path, "a.py")
+    by_name = {s.symbol_name: s.capabilities for s in result.symbols}
+
+    assert by_name["Corpus"] == {"writes_rag_corpus"}
+    assert by_name["index"] == {"writes_rag_corpus"}
+
+
+def test_a_writer_capability_classifies_nothing() -> None:
+    """The write side is a source property, not a node kind (B.2).
+
+    Like `reads_untrusted`, the two writer capabilities are declared and
+    credited, and they decide no kind: a component that writes a store
+    is not a sink (the store is not an egress the graph reports) and not
+    a tool. Adding one to a classification set would change node kinds
+    for every project, which is not what a write edge is about.
+    """
+    for capability in ("writes_rag_corpus", "writes_email_inbox"):
+        assert capability in patterns.VALID_CAPABILITIES
+        assert capability not in patterns.SINK_CAPABILITIES
+        assert capability not in patterns.TOOL_CAPABILITIES
+        assert capability not in patterns.AGENT_CAPABILITIES
+        assert capability not in patterns.LLM_ENDPOINT_CAPABILITIES
+        assert capability not in patterns.LETHAL_TRIFECTA_READ_CAPS
+
+
+def test_the_write_tables_are_disjoint_from_the_read_tables() -> None:
+    """No call is both a read and a write of an untrusted family.
+
+    The two tables are consulted by different branches of
+    `_classify_call`, and a name in both would credit two capabilities
+    on one call site — the overlap the registry's overlap test would
+    reject as an undeclared pair.
+    """
+    for _, read_rule in patterns.UNTRUSTED_SOURCE_RULES:
+        for _, write_rule in patterns.WRITER_RULES:
+            for pattern in read_rule.patterns:
+                assert not write_rule.matches(pattern.text), pattern.text
+            for pattern in write_rule.patterns:
+                assert not read_rule.matches(pattern.text), pattern.text
+
+
 def test_credit_rejects_an_unknown_capability() -> None:
     """The vocabulary is closed at the one place a rule writes it."""
     with pytest.raises(ValueError, match="unknown capability"):

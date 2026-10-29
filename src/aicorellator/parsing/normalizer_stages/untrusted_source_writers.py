@@ -26,26 +26,66 @@ edge to walk.
     reaches `FlowKindStage` without a kind of its own and the kind is
     pinned in exactly one place (ADR-0016, decision 3).
 
-**The writer is the server, and for one source family only.** Of the
-five families in ADR-0010's table, exactly one is evidenced on the four
-corpora: `mcp_tool_description`. Its writer is not a call — it is a
-declaration. The MCP server declares its tool catalogue
-(`@mcp.tool()`), and the client reads it back (`list_tools`). So the
-write edge is `mcp_server → untrusted_source`, and the source is the
-one the server declares. RAG corpora, mailboxes and user uploads have
-no writer evidence at all (1.3a.1's report records the scan), so no
-rule is guessed for them: a pattern that fires nowhere is a claim the
-data does not support (ADR-0009, and 1.3a's "deferred rather than
-guessed at").
+**Two writers, two mechanisms** (B.2). A source family is written in
+one of two ways, and which one it is decides how this stage finds the
+writer:
+
+  - **A declaration** — `mcp_tool_description`. The MCP server declares
+    its tool catalogue (`@mcp.tool()`) and the client reads it back
+    (`list_tools`), so the write edge is `mcp_server →
+    untrusted_source` and the writer is a `mcp_server` node (1.3a.1).
+  - **A call** — `rag_corpus` and `email_inbox` (B.2). A corpus and a
+    mailbox are declared by nobody: they are written by a component
+    that calls the store (`vectorstore.add_documents`,
+    `smtp.sendmail`). The call is credited by a `CapabilityRule`
+    (`patterns.WRITER_RULES`) exactly the way a read is credited by
+    `READS_UNTRUSTED_*` (ADR-0009), and the writer is the node the
+    delta already holds for the symbol that credited it.
+
+The second mechanism is why `WRITER_RULES` exists and why it has no
+`mcp_tool_description` entry: a rule for that family would be a call
+pattern for something no call site spells. `user_upload` (ADR-0010's
+fourth family) stays out of both — it is a structural signal rather
+than a call shape, and B.3 owns it.
+
+**The writer of a call-written family is a component, not the store.**
+`_component_writers_for` reads the crediting symbols from
+`ctx.capabilities`, resolves each to the most specific node the delta
+holds for it (the symbol itself, else the class that encloses it), and
+keeps the ones the source is visible from. A write site whose symbol
+was never classified has no node, and therefore no edge: a component
+that is not in the graph cannot be the first hop of a write chain
+either, and inventing a node for it here would put a component in the
+graph that no other stage knows about.
 
 **Anchoring** is 1.3a's: the source node is one *read site*, so a writer
 cannot name it by what it writes. It can only be matched to a source
 that is visible from it — `_writers_for` states the four ways that
-happens. The fourth is the literal module path: a file that spells out
+happens for a server-declared family, and `_component_writers_for`
+states the two ways for a call-written one:
+
+  - **the same file** — the write and the read are in one module, which
+    is the shape an ingest route and its retriever have;
+  - **a shared import path** — the file that writes imports the file
+    that reads, or the other way round, matched on trailing path
+    segments exactly as `cross_file._module_matches_file` matches a
+    module name to a file (B.1's rule, reused rather than
+    re-implemented). The two halves of ADR-0010's channel need not
+    share a file: a service module writes the corpus and the route
+    module reads it, and both name the same store module.
+
+Both are evidence about *visibility*, not about identity: the two
+anchors say "this write and this read are in the same module or in
+modules that import each other", which is why they over-match by
+construction (ADR-0009).
+
+The server-declared family's fourth anchor is the literal module path: a
+file that spells out
 `...mcp.servers.<name>.server.create_<name>_server` is naming a server
 it talks to, so that server is a writer of a catalogue the file reads
 even when the server's own module is elsewhere. That is FinBot's
-`_SERVER_INTROSPECTORS` shape.
+`_SERVER_INTROSPECTORS` shape, it is a rule about a server declaration,
+and it does not apply to a call-written family.
 
 1.3a.1.2 read that literal in the source's own file. 1.3a.1.3 reads it
 **project-wide**, because the two halves of the channel need not share a
@@ -70,6 +110,8 @@ import re
 from typing import TYPE_CHECKING
 
 from ...graph.models import Edge, Node
+from ...patterns import WRITER_RULES
+from ..framework_detectors.cross_file import _module_matches_file
 from ..normalizer_context import NormalizeContext
 from ..normalizer_helpers import edge_id, server_name_for_file
 
@@ -89,10 +131,22 @@ log = logging.getLogger(__name__)
 MAX_WRITER_EDGES: int = 1000
 
 
-# The source families a writer rule exists for. One entry, deliberately:
-# see the module docstring. Widening this set is widening the write side,
-# and each addition needs corpus evidence before it lands.
-WRITER_SOURCE_TYPES: frozenset[str] = frozenset({"mcp_tool_description"})
+# The one family whose writer is a declaration (1.3a.1): the server
+# declares the catalogue, so the writer is a `mcp_server` node and the
+# anchors are `_writers_for`'s. It is named here rather than derived,
+# because the family is the thing the server anchors are about.
+SERVER_DECLARED_SOURCE_TYPE: str = "mcp_tool_description"
+
+
+# The source families this stage writes edges for. The
+# declaration-written family plus every family `patterns.WRITER_RULES`
+# has a call rule for (B.2), derived rather than listed: a family with a
+# writer rule is a family this stage must match, and one without a rule
+# is a family nothing has evidence for (`user_upload` — B.3).
+WRITER_SOURCE_TYPES: frozenset[str] = frozenset(
+    {SERVER_DECLARED_SOURCE_TYPE}
+    | {source_type for source_type, _ in WRITER_RULES}
+)
 
 
 # A literal that names a server's factory: the module path of the
@@ -107,7 +161,13 @@ _SERVER_FACTORY_PATH = re.compile(
 
 
 class UntrustedSourceWriterStage:
-    """`mcp_server → writes_to → untrusted_source`, one edge per pair."""
+    """`writer → writes_to → untrusted_source`, one edge per pair.
+
+    Two ways a writer is found, one per family mechanism: an
+    `mcp_server` for the declaration-written catalogue (1.3a.1), and the
+    node of the component that calls the store for the call-written
+    corpus and mailbox (B.2).
+    """
 
     name = "untrusted_source_writers"
 
@@ -121,9 +181,6 @@ class UntrustedSourceWriterStage:
     def apply(
         self, delta: "GraphDelta", ctx: NormalizeContext
     ) -> "GraphDelta":
-        servers = [n for n in delta.nodes if n.kind == "mcp_server"]
-        if not servers:
-            return delta
         sources = [
             node for node in delta.nodes
             if node.kind == "untrusted_source"
@@ -132,19 +189,50 @@ class UntrustedSourceWriterStage:
         if not sources:
             return delta
 
+        # --- The server-declared family's anchors (1.3a.1) ---
+        # Built only when the delta holds a catalogue source: the
+        # project-wide literal pass below is O(files), and a scan of a
+        # target with no MCP client has nothing for it to answer.
+        servers = [n for n in delta.nodes if n.kind == "mcp_server"]
         by_file, by_name = _server_indexes(servers)
-        manifest_paths = [entry.path for entry in ctx.manifest.files]
-        # One project pass, not one pass per source (1.3a.1.3): the
-        # literal is evidence about the project, and a source's own file
-        # need not carry it. The pass is O(files), and `ctx.module_for`
-        # keeps each file parsed at most once per scan.
-        declared = _project_declared_servers(ctx, by_name, manifest_paths)
-        writers = [by_name[name] for name in declared]
+        declared: list[Node] = []
+        if servers and any(
+            _source_type(node) == SERVER_DECLARED_SOURCE_TYPE
+            for node in sources
+        ):
+            # One project pass, not one pass per source (1.3a.1.3): the
+            # literal is evidence about the project, and a source's own
+            # file need not carry it. The pass is O(files), and
+            # `ctx.module_for` keeps each file parsed at most once.
+            manifest_paths = [entry.path for entry in ctx.manifest.files]
+            declared = [
+                by_name[name]
+                for name in _project_declared_servers(
+                    ctx, by_name, manifest_paths
+                )
+            ]
+
+        # --- The call-written families' anchors (B.2) ---
+        # `source_type → rule`, from the one table that pairs them; the
+        # rule's capability is what the extractor credited the writing
+        # symbol with. The node index is built once and only when a
+        # call-written source is in the delta.
+        component_rules = dict(WRITER_RULES)
+        writer_index: dict[tuple[str, str], Node] = {}
+        if any(_source_type(node) in component_rules for node in sources):
+            writer_index = _writer_index(delta)
 
         emitted: set[str] = set()
         for source in sources:
-            for server in _writers_for(source, by_file, by_name, writers):
-                edge = _write_edge(server, source, ctx)
+            rule = component_rules.get(_source_type(source))
+            if rule is None:
+                writers = _writers_for(source, by_file, by_name, declared)
+            else:
+                writers = _component_writers_for(
+                    source, rule.capability, ctx, writer_index
+                )
+            for writer in writers:
+                edge = _write_edge(writer, source, ctx)
                 if edge.id in emitted:
                     continue
                 if len(emitted) >= self.max_writer_edges:
@@ -259,6 +347,175 @@ def _writers_for(
         if server not in found:
             found.append(server)
     return sorted(found, key=lambda node: node.id)
+
+
+def _source_type(source: Node) -> str | None:
+    """The source node's family, or None.
+
+    `untrusted_source` nodes always carry one (`_source_node` writes it),
+    but the attribute is read as an unknown: a node built by a detector
+    that is not this pipeline's would otherwise be matched against a
+    table by a value that is not a string.
+    """
+    source_type = source.attributes.get("source_type")
+    return source_type if isinstance(source_type, str) else None
+
+
+def _component_writers_for(
+    source: Node,
+    capability: str,
+    ctx: NormalizeContext,
+    writer_index: dict[tuple[str, str], Node],
+) -> list[Node]:
+    """The nodes that call the write site of `capability`, in id order.
+
+    The call-written families' anchor (B.2). Three gates, in this order:
+
+      1. the source names a file — a source with no `source_file` is not
+         visible from anything, exactly as in `_writers_for`;
+      2. a symbol that credited `capability` resolves to a node — the
+         symbol's own node, else the class that encloses it (see
+         `_writing_symbols`). No node, no writer;
+      3. the node is visible from the source: the same file, or a file
+         that shares an import path with it (`_shares_an_import`).
+
+    Nothing here looks at the store's name, the collection name or the
+    mailbox address — none of them is in either call site. What is
+    matched is a family (`capability`) and a file, which is the same
+    evidence 1.3a uses for the read half.
+    """
+    file_path = source.attributes.get("source_file")
+    if not isinstance(file_path, str):
+        return []
+
+    found: list[Node] = []
+    for writer_file, names in _writing_symbols(ctx, capability):
+        node = _resolve_writer_node(writer_file, names, writer_index)
+        if node is None:
+            continue
+        if not _shares_an_import(writer_file, file_path, ctx):
+            continue
+        if node not in found:
+            found.append(node)
+    return sorted(found, key=lambda node: node.id)
+
+
+def _writing_symbols(
+    ctx: NormalizeContext,
+    capability: str,
+) -> list[tuple[str, tuple[str, ...]]]:
+    """`(file, (candidate node names, most specific first))` per writer.
+
+    One entry per symbol whose extracted capabilities include
+    `capability` — the write is a property of the symbol's body, so the
+    symbol is the evidence (ADR-0009). A method's capabilities are
+    folded into its class by the extractor, and a method that is not
+    classified has no node while its class does, so the enclosing class
+    is the fallback name — the same "most specific node" rule the read
+    side applies to `reader` and `container` (1.3a).
+
+    The order is `ctx.capabilities`' own (manifest order), so the result
+    is a function of the scan, not of a set's iteration order.
+    """
+    containers: dict[tuple[str, str], str] = {}
+    for symbol in ctx.tsa_output.symbols:
+        if symbol.kind == "method" and symbol.class_name:
+            containers[(symbol.file_path, symbol.name)] = symbol.class_name
+
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for file_path, file_caps in ctx.capabilities.items():
+        for symbol in file_caps.symbols:
+            if capability not in symbol.capabilities:
+                continue
+            container = containers.get((file_path, symbol.symbol_name))
+            names = (
+                (symbol.symbol_name, container)
+                if container is not None
+                else (symbol.symbol_name,)
+            )
+            out.append((file_path, names))
+    return out
+
+
+def _resolve_writer_node(
+    file_path: str,
+    names: tuple[str, ...],
+    writer_index: dict[tuple[str, str], Node],
+) -> Node | None:
+    """The first of `names` that has a node in that file, or None."""
+    for name in names:
+        node = writer_index.get((file_path, name))
+        if node is not None:
+            return node
+    return None
+
+
+def _writer_index(delta: "GraphDelta") -> dict[tuple[str, str], Node]:
+    """`(source_file, name)` → node, plus each node's `handler` alias.
+
+    The nodes a writing symbol can be, indexed the way the read side
+    indexes its readers: a node's own `name`, and — for entry points,
+    whose name is `"GET /path"` rather than the handler's — its
+    `handler` attribute. That is what lets a write inside a route
+    handler resolve to the entry point, which is the shape an ingest
+    route has (`POST /documents` calls `vectorstore.add_documents`).
+
+    First write wins (`setdefault`), and `delta.nodes` is in stage order,
+    so a method node takes precedence over an entry point of the same
+    name: the more specific node is the writer. A node with no
+    `source_file` — a detector node that has not been merged — is not a
+    candidate at all, and neither is an `untrusted_source`: a source is a
+    place, and a place does not write.
+
+    `untrusted_sources._reader_index` is the twin of this function; the
+    two are not shared because the read stage's index maps to ids (it
+    runs before the merge that invalidates them) while this one holds the
+    final nodes.
+    """
+    index: dict[tuple[str, str], Node] = {}
+    for node in delta.nodes:
+        if node.kind == "untrusted_source":
+            continue
+        file_path = node.attributes.get("source_file")
+        if not isinstance(file_path, str):
+            continue
+        index.setdefault((file_path, node.name), node)
+        handler = node.attributes.get("handler")
+        if isinstance(handler, str):
+            index.setdefault((file_path, handler), node)
+    return index
+
+
+def _shares_an_import(
+    writer_file: str,
+    source_file: str,
+    ctx: NormalizeContext,
+) -> bool:
+    """True if the two files are the same, or import each other.
+
+    The call-written families' visibility rule (B.2). `a == b` is the
+    same-file write; the two `_module_matches_file` calls are the
+    directional ones — the writer's module imports the reader's file, or
+    the reader's module imports the writer's — and both directions are
+    checked because the channel's two halves can be on either side of
+    the import: an ingest service that imports the store module, or a
+    route module that imports the ingest service.
+
+    The match is `cross_file._module_matches_file`'s (B.1): trailing path
+    segments, so a target root's prefix does not matter. Relative
+    imports are already dropped by the entry-point parser, so they
+    resolve to nothing here, as everywhere else.
+    """
+    if writer_file == source_file:
+        return True
+    imports = ctx.entry_points.imports
+    return any(
+        _module_matches_file(module, source_file)
+        for module in imports.get(writer_file, ())
+    ) or any(
+        _module_matches_file(module, writer_file)
+        for module in imports.get(source_file, ())
+    )
 
 
 def _project_declared_servers(
@@ -380,26 +637,32 @@ def _server_module_exists(name: str, manifest_paths: list[str]) -> bool:
 
 
 def _write_edge(
-    server: Node,
+    writer: Node,
     source: Node,
     ctx: NormalizeContext,
 ) -> Edge:
-    """`writes_to` from the server that declares the catalogue.
+    """`writes_to` from the writer that produces the source.
+
+    One edge shape for both mechanisms (B.2): a `mcp_server` that
+    declares a catalogue and a component that calls a store write the
+    same way — into a source that a later read pulls from — and the
+    graph does not need to tell them apart to enumerate a chain.
 
     Direction is the data's, like the read edge and for the same reason:
-    the catalogue is produced by the server and flows into the client, so
+    the content is produced by the writer and flows into the reader, so
     the write chain ends at the source and the read chain leaves it.
 
-    The rule is structural — a server and a source visible from the same
-    file — and the producer never traced a value into the source, so the
-    edge makes no data-flow claim: `data_flow_confirmed` stays at its
-    schema default (`NULL`) and the edge is control, like `provides_tool`
-    — the parallel server → declared-artifact edge (ADR-0015, decision 5;
-    ADR-0016, decision 3).
+    The rule is structural — a writer and a source visible from the same
+    file, or from files that import each other — and the producer never
+    traced a value into the source, so the edge makes no data-flow claim:
+    `data_flow_confirmed` stays at its schema default (`NULL`) and the
+    edge is control, like `provides_tool` — the parallel
+    server → declared-artifact edge (ADR-0015, decision 5; ADR-0016,
+    decision 3).
     """
     return Edge(
-        id=edge_id(server.id, source.id, "writes_to"),
-        source_id=server.id,
+        id=edge_id(writer.id, source.id, "writes_to"),
+        source_id=writer.id,
         target_id=source.id,
         kind="writes_to",
         host_id=ctx.host_id,
@@ -408,6 +671,7 @@ def _write_edge(
 
 __all__ = [
     "MAX_WRITER_EDGES",
+    "SERVER_DECLARED_SOURCE_TYPE",
     "UntrustedSourceWriterStage",
     "WRITER_SOURCE_TYPES",
     "declared_server_names",
