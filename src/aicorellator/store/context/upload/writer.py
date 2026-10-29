@@ -7,14 +7,36 @@ this handler takes an upload — is evidence the family-only rules do not
 have. The chain this module walks:
 
     UploadSite (entry_point, file, line)
-      → BFS from the entry point's `handler` over the call graph
-      → the `fs` write sites whose enclosing function is reachable
+      → the entry point node, which is one of two shapes:
+          - `entry_kind` `"cli"` or `"streamlit"` → a **module-level**
+            entry point: the module's top-level functions, BFS from each
+            of them, and the writes directly in the module body
+          - a `handler`, a function name → BFS from it over the call graph
+      → the `fs` write sites in that reachable set
       → the `store` node each write names (family `fs` + its literal)
       → writes_to: entry_point → store, at the signals' confidence
 
+The module-level branch is B.3b-user_upload-core-module's, and it is the
+answer to "which writes does an upload at module level reach": the
+module's own writes — its top-level functions and its body — and not
+every sink in the target (`entry_to_sink`'s CLI fallback, deliberately
+**not** copied: an upload writer's scope is its module). Its selector is
+`entry_kind`, and not the `entry_points` stage's `<module>` sentinel
+(B.3b-user_upload-core-module-followup): the sentinel is on the
+`EntryPoint` **record**, and the **node** a site carries has no `handler`
+at all — `EntryPointStage` writes that attribute for HTTP and WebSocket
+entries only — so a branch keyed on the sentinel could not fire on a real
+scan. `entry_kind`, which the stage writes for every entry it builds, is
+the structural marker, and `handler` stays function-only, so
+`ctx.entry_node_by_handler` is not polluted with a sentinel either.
+
 The signals, all of them §8's:
 
-  - **base 0.5** — the context signal, and the whole of the revision;
+  - **base 0.5** — the context signal, and the whole of the revision:
+    the write is inside a function the entry point reaches, and a
+    function is a discrete unit. A write in a **module-level** entry
+    point's own body is weaker evidence — the module is a file — and
+    carries `UPLOAD_WRITER_BASE_MODULE` (0.4) instead;
   - **literal match** — `confidence.literal_match` against the store's
     own literal. The store lookup is exact equality, so this is
     `LITERAL_EQUAL` (0.6) whenever a store is named at all;
@@ -28,7 +50,11 @@ The signals, all of them §8's:
     check, and the *innermost* enclosing function is what decides it: a
     nested function inside the handler is inside the handler's line
     range but the write is the nested function's, so the signal does not
-    fire for it and the handler merely calls it.
+    fire for it and the handler merely calls it. **Never fires for a
+    module-level entry point**: its body is the module, and the writes
+    this branch claims are either in the module body (which is the 0.4
+    base, not this signal) or in a top-level function (which is not the
+    entry point's own body).
 
 So a write in the handler's body, in the handler's own file, is
 `1 − 0.5 × 0.4 × 0.8 × 0.8 = 0.872`; the same write reached through a
@@ -38,6 +64,14 @@ more certainly the handler's write than a write a helper does and the
 handler merely calls — which is what the 0.2 buys. `test_writer.py` pins
 all three.
 
+A module-level entry point's writes are the other two numbers, and they
+are the same shape: a write in the module body is `1 − 0.6 × 0.4 × 0.8 =
+0.808` (base 0.4, no context-in-body) and a write in one of the module's
+top-level functions is `1 − 0.5 × 0.4 × 0.8 = 0.84` (base 0.5, no
+context-in-body either). A function is a stronger signal than a module
+body; `tests/test_store_upload_core_module/` pins both from the
+constants.
+
 **The rule lives here and only here.** The writer is called by the stage
 (`normalizer_stages.store_resolver`), after the resolver's own edges
 exist; the resolver is not involved, because its job is pairing a write
@@ -45,15 +79,23 @@ site with a read site and this is a claim about one side.
 
 What this module does not do, and why:
 
-  - **A module-level entry point gets no edge.** The BFS starts from the
-    entry point node's `handler` attribute, and a CLI or Streamlit entry
-    has none (`entry_points.EntryPointStage` records `handler` for HTTP
-    and WebSocket routes only): a module body is not a function, so
-    "which writes does this upload reach" has no honest answer here. It
-    is a false negative the Streamlit detector's step may revisit.
-  - **A write with no enclosing function is not reachable.** The handler
-    does not run the module body, so a module-level `open(...)` is not
-    the handler's write even when it shares the file.
+  - **A write with no enclosing function is not a function-level entry
+    point's write.** The handler does not run the module body, so a
+    module-level `open(...)` is not the handler's write even when it
+    shares the file. A **module-level** entry point is the other side of
+    that rule and the reason the branch exists: the module body *is* its
+    body, so the write is claimed — at the weaker 0.4 base.
+  - **A module body write in another file is not the module-level entry
+    point's.** The branch claims the module's **own** file: its top-level
+    functions (through the call graph, which is scan-wide) and its own
+    body. A module body elsewhere runs at that file's import, which this
+    writer has no import graph to establish, so claiming it would be the
+    CLI fallback's breadth by another route. A stated false negative.
+  - **A module the caller did not parse yields no edge.** The
+    module-level branch reads the module's top-level functions and its
+    body from the AST, and a module that is not in `modules` is skipped
+    rather than guessed — the same rule as the enclosing-function check
+    below, and a false negative.
   - **`self.`-calls are not in the call graph** (ADR-0016: only
     `ast.Name` calls are recorded), so a method handler that calls
     `self._save()` does not reach the write `_save` makes. A false
@@ -99,9 +141,19 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: family-only writer keeps `confidence.BASE` (0.3).
 UPLOAD_WRITER_BASE = 0.5
 
+#: The base for a write in a **module-level** entry point's own body
+#: (B.3b-user_upload-core-module). Lower than `UPLOAD_WRITER_BASE`
+#: because the claim is weaker: a function is a discrete unit that runs
+#: when it is called, and a module body is a file that runs when it is
+#: imported — the same write, one step further from "the upload handler
+#: does this". A write inside one of the module's top-level functions
+#: keeps `UPLOAD_WRITER_BASE`, because that write *is* in a function.
+UPLOAD_WRITER_BASE_MODULE = 0.4
+
 #: The context-in-body signal: the write is directly in the handler's
 #: body, not reached through a helper. Separate from §8's code-context
-#: rows, and added on top of them.
+#: rows, and added on top of them. Never fires for a module-level entry
+#: point (`_confidence`).
 CONTEXT_IN_BODY = 0.2
 
 #: The family whose write sites the writer looks at. §8's first context
@@ -109,9 +161,16 @@ CONTEXT_IN_BODY = 0.2
 #: by `(family, literal)`, so the family is named once, here.
 FS_FAMILY = "fs"
 
-#: `entry_points.EntryPointStage`'s handler for a module-level entry
-#: (CLI, Streamlit). Not a function name, so the BFS cannot start there.
-MODULE_SENTINEL = "<module>"
+#: `entry_points.EntryPointStage`'s `entry_kind`s for a module-level entry
+#: (CLI, Streamlit) — the closed set `_module_level` selects on
+#: (B.3b-user_upload-core-module-followup). Closed, and a `frozenset` for
+#: that reason: a third module-level entry kind is a separate step with
+#: its own test, not a member added here. The stage writes `entry_kind`
+#: for every node it builds — `"cli"` for a CLI entry and `"streamlit"`
+#: for a Streamlit entry, and **no** `handler` for either — and an MCP
+#: entry carries `entry_kind="mcp"`, which is a framework-detected server
+#: and not an upload at module level.
+MODULE_LEVEL_ENTRY_KINDS = frozenset({"cli", "streamlit"})
 
 #: §9's default threshold (`graph.query.DEFAULT_STORE_CONFIDENCE_THRESHOLD`,
 #: `config.yaml`'s `store_confidence_threshold`), restated rather than
@@ -139,11 +198,20 @@ def find_upload_stores(
     which the reader-in-scope rule is what decides the fate of
     (`attribution`).
 
+    A site whose entry point carries a function-name `handler` reaches
+    that function's writes; a site whose entry point is module-level
+    (`_module_level`: `entry_kind` `"cli"` or `"streamlit"`) reaches the
+    module's **own** writes — its top-level functions, and its body
+    (`_reach`, `_is_module_body`). Nothing else: the CLI fallback's
+    "every sink in the target" is not this rule.
+
     `delta` is read for its node ids and written by nobody: the edges
     come back, the way `StoreResolver.resolve` returns its own.
     `fs_writes` is the `fs` family's report and `store_nodes` the store
     nodes the resolver built into the delta; the caller (the stage) has
-    both.
+    both. `modules` is read for two things per site: the enclosing
+    function of a write (either branch) and the module-level branch's
+    top-level functions.
 
     `confidence_threshold` is a floor. §9 puts the threshold on the
     *join* (`find_chain_groups`) and the resolver states the same, so
@@ -159,10 +227,12 @@ def find_upload_stores(
 
     for site in upload_sites:
         entry_id = site.entry_point.id
-        handler = _handler_name(site)
-        if handler is None or entry_id not in node_ids:
+        if entry_id not in node_ids:
             continue
-        reachable = _reachable(handler, call_graph)
+        reach = _reach(site, call_graph, modules)
+        if reach is None:
+            continue
+        reachable, module_level = reach
         for write in fs_writes:
             store = _named_store(write, stores)
             if store is None:
@@ -170,9 +240,14 @@ def find_upload_stores(
             chain = _enclosing_functions(
                 _module_for(modules, write.file_path), write.line
             )
-            if not any(name in reachable for name in chain):
+            module_body = _is_module_body(site, write, chain, module_level)
+            if not module_body and not any(
+                name in reachable for name in chain
+            ):
                 continue
-            confidence = _confidence(site, write, store, chain, handler)
+            confidence = _confidence(
+                site, write, store, chain, module_level, module_body,
+            )
             if confidence is None or confidence < confidence_threshold:
                 continue
             _keep_edge(edges, _writes_to_edge(entry_id, store, confidence))
@@ -180,24 +255,123 @@ def find_upload_stores(
     return list(edges.values())
 
 
+def _reach(
+    site: UploadSite,
+    call_graph: Mapping[str, set[str]],
+    modules: Mapping[str, ast.Module] | None,
+) -> tuple[set[str], bool] | None:
+    """`(the names the site reaches, is it module-level)`, or None.
+
+    A function-level site reaches its handler and everything the call
+    graph puts under it. A module-level site (`_module_level`) reaches its
+    module's top-level functions and everything under **them**; its own
+    body is not a name and is handled per write (`_is_module_body`).
+
+    `None` means the site earns no edge at all: no `handler` attribute to
+    start from, or a module-level site whose own module the caller did
+    not parse — the branch is skipped rather than guessed, the same
+    answer the enclosing-function check gives for a write it cannot
+    place. The reachable set is a set of names and only membership is
+    read from it, so the writer's output does not depend on its
+    iteration order.
+    """
+    if _module_level(site.entry_point):
+        module = _module_for(modules, site.file_path)
+        if module is None:
+            return None
+        reachable: set[str] = set()
+        for name in _top_level_functions(module):
+            reachable |= _reachable(name, call_graph)
+        return reachable, True
+
+    handler = _handler_name(site)
+    if handler is None:
+        return None
+    return _reachable(handler, call_graph), False
+
+
+def _is_module_body(
+    site: UploadSite,
+    write: WriteSite,
+    chain: list[str],
+    module_level: bool,
+) -> bool:
+    """True if the write sits in a module-level entry point's own body.
+
+    Three things, and all three are needed: the site is module-level, the
+    write is inside no function (`chain` empty — the brief's "does the
+    line fall inside a top-level function's range" read off the AST
+    instead of computed), and the write is in the entry point's **own**
+    file, because the module body that runs when the entry point's module
+    is imported is that file's. A module body in another file is another
+    module's, and this writer has no import graph to relate the two.
+
+    A write in a class body — inside no function, inside a class — counts
+    as module body, which is the brief's rule as written: the test is the
+    function line ranges, and a class body is outside all of them.
+    """
+    return module_level and not chain and write.file_path == site.file_path
+
+
 # ------------------------------------------------------------------
 # One site, one write
 # ------------------------------------------------------------------
 
 def _handler_name(site: UploadSite) -> str | None:
-    """The function the BFS starts from, or None for a module-level entry.
+    """The function the BFS starts from, or None.
 
     The entry-point node's `handler` attribute names the function the
     route decorator sits on — the same shape `entry_to_sink` reads. A
-    module-level entry (CLI, Streamlit) either has no `handler` or
-    carries the `<module>` sentinel, and neither is a function name.
+    module-level entry has no `handler` at all (`_module_level`), and a
+    hand-built node may have none either; neither is a function name, and
+    neither starts a BFS.
     """
     handler = site.entry_point.attributes.get("handler")
     if not isinstance(handler, str) or not handler:
         return None
-    if handler == MODULE_SENTINEL:
-        return None
     return handler
+
+
+def _module_level(entry_point: Node) -> bool:
+    """True for an entry point whose upload lives at module level.
+
+    The marker is `entry_kind`, and the set is
+    `MODULE_LEVEL_ENTRY_KINDS` — the two kinds
+    `entry_points.EntryPointStage` gives a module-level entry
+    (B.3b-user_upload-core-module-followup). The kind is read exactly,
+    not as a prefix or a case, and the set is closed: a third `entry_kind`
+    is a different entry kind and a separate step with its own test, not a
+    member added here.
+
+    Not the `entry_points` stage's `<module>` sentinel, which is what
+    this branch read before: the sentinel is on the `EntryPoint`
+    **record**, and the **node** the stage builds for a CLI or a
+    Streamlit entry carries no `handler` at all, so the sentinel never
+    appeared here and the branch could not fire on a real scan.
+    `entry_kind` is on every node the stage builds. HTTP and WebSocket
+    entries carry a `handler` and no `entry_kind`, and an MCP entry
+    carries `entry_kind="mcp"` — a framework-detected server, not an
+    upload at module level — so neither is module-level, and a node with
+    neither attribute (a hand-built delta) is not either.
+    """
+    return entry_point.attributes.get("entry_kind") in MODULE_LEVEL_ENTRY_KINDS
+
+
+def _top_level_functions(module: ast.Module) -> list[str]:
+    """The names of a module's top-level functions, in source order.
+
+    Top level means `module.body`, so a nested function is not one of
+    them: it is reached through its enclosing function's name, which is
+    how the call graph records the call (`_reachable`). A class body is
+    not a top-level function either, so a method is not a BFS start —
+    `self.`-calls are not in the call graph and a module-level entry point
+    has no `self` to call it through.
+    """
+    return [
+        node.name
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
 
 
 def _named_store(
@@ -222,13 +396,24 @@ def _confidence(
     write: WriteSite,
     store: Node,
     chain: list[str],
-    handler: str,
+    module_level: bool,
+    module_body: bool,
 ) -> float | None:
-    """`identity_confidence` for one (handler, store) link (§8).
+    """`identity_confidence` for one (entry point, store) link (§8).
 
-    The base is `UPLOAD_WRITER_BASE` and not the site's own
-    `confidence_base`: the family reports a call site at 0.3, and the
-    context is what raises this link to a context-based writer's 0.5.
+    The base is `UPLOAD_WRITER_BASE`, or `UPLOAD_WRITER_BASE_MODULE` for
+    a write in a module-level entry point's own body, and never the
+    site's own `confidence_base`: the family reports a call site at 0.3,
+    and the context is what raises this link to a context-based writer's
+    numbers.
+
+    The context-in-body signal is the handler's own body, so it needs a
+    handler: a module-level site has none (`module_level`), and the two
+    placements this branch claims are the module body (which the base
+    already accounts for) and a top-level function (which is not the
+    entry point's body — the entry point's body is the module). It
+    therefore never fires here, and `test_writer_module.py` pins both of
+    the numbers that follow from that.
 
     `None` means no link, which `literal_match` decides: two different
     literals name two stores, and a store this write did not name is not
@@ -241,12 +426,13 @@ def _confidence(
     if literal is None:
         return None
 
+    base = UPLOAD_WRITER_BASE_MODULE if module_body else UPLOAD_WRITER_BASE
     signals = [literal]
     if write.file_path == site.file_path:
         signals.append(CODE_CONTEXT_SAME_MODULE)
-    if chain and chain[0] == handler:
+    if not module_level and chain and chain[0] == _handler_name(site):
         signals.append(CONTEXT_IN_BODY)
-    return combine_signals(UPLOAD_WRITER_BASE, signals)
+    return combine_signals(base, signals)
 
 
 def _writes_to_edge(entry_id: str, store: Node, confidence: float) -> Edge:
@@ -392,7 +578,9 @@ __all__ = [
     "CONTEXT_IN_BODY",
     "DEFAULT_CONFIDENCE_THRESHOLD",
     "FS_FAMILY",
+    "MODULE_LEVEL_ENTRY_KINDS",
     "UPLOAD_WRITER_BASE",
+    "UPLOAD_WRITER_BASE_MODULE",
     "find_upload_stores",
 ]
 

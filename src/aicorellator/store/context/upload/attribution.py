@@ -16,6 +16,12 @@ The rule, and it is the whole rule:
     B.2's `mcp_tool_description` from being relabelled by an upload
     handler that happens to sit in the same module.
 
+The file, not a line range, decides, and that is what makes a
+**module-level** site (`writer._module_level`: `entry_kind` `"cli"` or
+`"streamlit"`) need no extra rule (B.3b-user_upload-core-module): the
+module is its own scope, so every read in that file is in scope, exactly
+as the same-file clause already answers.
+
 **The scope is the handler's, not the stores it was found to write
 into.** Accepting an upload is the fact that makes the reads around it
 upload reads, and a handler whose stores this scan did not recognize is
@@ -115,6 +121,18 @@ def _in_scope(
 
     Any site is enough: two handlers in two files are two writers, and a
     read in either file is in one of their scopes.
+
+    The same-file clause is the whole file, for either kind of site, and
+    that is the point of stating it here: a **function-level** site's
+    scope is its file because the handler's line range would say nothing
+    about a read elsewhere in the module (the reads an upload handler's
+    file makes are the handler's neighbourhood, and the ADR's scope rule
+    is the file), and a **module-level** site (`writer._module_level`,
+    B.3b-user_upload-core-module) *is* its file — the module is the
+    scope, so a read at any line of it is in scope, with no range to
+    consult. The two readings coincide, which is why the clause needs no
+    branch for the module-level case; `test_attribution_module.py` pins
+    it for a module-level site.
     """
     for site in upload_sites:
         if file_path == site.file_path:

@@ -292,7 +292,14 @@ def test_a_write_in_the_module_body_is_not_the_handlers(project) -> None:
 
 
 def test_a_module_level_entry_point_gets_no_edge(project) -> None:
-    """No handler, no BFS — the Streamlit step's question, deferred."""
+    """A node with neither marker is not a name to start from.
+
+    A Streamlit or CLI entry node is module-level by its `entry_kind`
+    (`tests/test_store_upload_core_module/` pins that branch); this is
+    the other shape — a node the stage could not name, carrying no
+    `handler` and no `entry_kind`. It is neither a handler to BFS from
+    nor a module-level entry, so it earns no edge.
+    """
     module_entry = Node(
         id="entry_point:9", kind="entry_point",
         name=f"Streamlit:{HANDLER}:file_uploader", host_id="localhost",
@@ -306,10 +313,24 @@ def test_a_module_level_entry_point_gets_no_edge(project) -> None:
     assert edges == []
 
 
-def test_a_module_sentinel_handler_gets_no_edge(project) -> None:
-    """`<module>` is not a function name the call graph holds."""
+def test_a_sentinel_handler_with_no_entry_kind_is_not_module_level(
+    project,
+) -> None:
+    """A site with no AST gets no edge, sentinel or not.
+
+    `<module>` is the `EntryPoint` **record**'s handler and no longer a
+    marker (B.3b-user_upload-core-module-followup): a node carrying it
+    and no `entry_kind` is a function-level site, and `<module>` is not a
+    name the call graph holds, so there is no BFS to start. What is
+    pinned here is the false negative the enclosing-function check
+    shares: a caller that handed the writer no AST gets nothing back
+    rather than a guess. `tests/test_store_upload_core_module/` pins the
+    module-level branch itself, and that its marker is `entry_kind`.
+    """
     sentinel = _entry_node(handler="<module>")
-    _, edges = _run(project, {HANDLER: IN_BODY}, entry_node=sentinel)
+    _, edges = _run(
+        project, {HANDLER: IN_BODY}, entry_node=sentinel, modules=False,
+    )
     assert edges == []
 
 
