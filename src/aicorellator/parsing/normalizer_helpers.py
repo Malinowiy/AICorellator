@@ -50,9 +50,10 @@ HOST_ID = "localhost"       # Phase 0/1 — single host
 # monitoring (Phase 2) can distinguish an exposed tool from an invoked
 # one. `guards` stays structural — a guardrail is a defensive control,
 # not a step in an attack path.
-# Reserved for `guards` (guardrail → component). No resolver emits
-# that edge yet; the constant is kept so the kind has one declared
-# source of truth.
+# Reserved for `guards` (guardrail → component), and `guards` is the one
+# edge that carries it: `normalizer_stages.guardrail_edges` emits it
+# (B.4a, ADR-0019). The constant stays the kind's single declared source
+# of truth.
 STRUCTURAL_FLOW: dict[str, str] = {"flow_kind": "structural"}
 CONTROL_FLOW: dict[str, str] = {"flow_kind": "control"}
 

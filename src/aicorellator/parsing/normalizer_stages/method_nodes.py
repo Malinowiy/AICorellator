@@ -1,6 +1,6 @@
 """MethodNodeStage — `method` symbols to nodes; tools and sinks indexed.
 
-Run order: 3 of 18 (see `normalizer_stages.STAGES`).
+Run order: 3 of 19 (see `normalizer_stages.STAGES`).
 
 C4: "**Method nodes** — Level 3 classification, with capabilities.
 Tools and sinks are tracked per file."

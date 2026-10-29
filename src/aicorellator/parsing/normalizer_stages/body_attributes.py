@@ -1,6 +1,6 @@
 """BodyAttributeStage — `sink_data_flow` / `returns_data` backfill.
 
-Run order: 17 of 18 (see `normalizer_stages.STAGES`) — second to last.
+Run order: 17 of 19 (see `normalizer_stages.STAGES`) — second to last.
 
 Two prompt signals (1.2a.1) that ask the same shape of question — *what
 does this node's own body do?* — of two node kinds:

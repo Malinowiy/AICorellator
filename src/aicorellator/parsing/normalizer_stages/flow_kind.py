@@ -1,6 +1,6 @@
 """FlowKindStage — `flow_kind` on every AST edge (ADR-0016).
 
-Run order: 12 of 18 (see `normalizer_stages.STAGES`).
+Run order: 12 of 19 (see `normalizer_stages.STAGES`).
 
 Every edge the AST layer produces is a *control* edge. The AST knows
 that one symbol reaches another; it does not know whether data moves

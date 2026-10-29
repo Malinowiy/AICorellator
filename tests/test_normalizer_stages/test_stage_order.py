@@ -21,10 +21,15 @@ The order encodes four facts that are easy to lose in a refactor:
     `normalizer_stages.dynamic_mcp_invocation`);
   - `body_attributes` runs last but one, because the merge replaces
     nodes and the replacement is what the graph keeps;
-  - `lethal_trifecta` runs last: it shares the "after the merge"
+  - `lethal_trifecta` runs last but two: it shares the "after the merge"
     constraint and has no other, and it reads capabilities rather than
     source, which is why it is not a branch inside `body_attributes`
     (see `normalizer_stages.lethal_trifecta`).
+  - `guardrail_edges` runs last: it shares the same "after the merge"
+    constraint — the merge is what puts a `guardrail` node in the delta —
+    and no other, and it emits `structural` edges only, so `flow_kind`'s
+    position is not a constraint on it either way (see
+    `normalizer_stages.guardrail_edges`).
 """
 
 from __future__ import annotations
@@ -51,6 +56,7 @@ EXPECTED = (
     "orphan_entry",
     "body_attributes",
     "lethal_trifecta",
+    "guardrail_edges",
 )
 
 
@@ -58,9 +64,9 @@ def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
 
 
-def test_stage_count_is_eighteen() -> None:
-    """The count is quoted in the per-stage docstrings (`N of 18`)."""
-    assert len(STAGES) == 18
+def test_stage_count_is_nineteen() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 19`)."""
+    assert len(STAGES) == 19
 
 
 def test_every_stage_satisfies_the_protocol() -> None:
@@ -75,11 +81,29 @@ def test_stage_names_are_unique() -> None:
     assert len(names) == len(set(names))
 
 
-def test_lethal_trifecta_runs_last() -> None:
-    """Last of the pipeline: the node set is final there, and 1.3d reads
-    capabilities rather than source, so it has no constraint that would
-    place it earlier."""
-    assert STAGES[-1].name == "lethal_trifecta"
+def test_guardrail_edges_runs_last() -> None:
+    """Last of the pipeline: the node set is final there, and B.4a reads
+    the delta and the call graph rather than anything a later stage would
+    produce."""
+    assert STAGES[-1].name == "guardrail_edges"
+
+
+def test_lethal_trifecta_precedes_guardrail_edges() -> None:
+    """Both run after the merge; neither reads what the other writes."""
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("detector_merge")
+        < names.index("lethal_trifecta")
+        < names.index("guardrail_edges")
+    )
+
+
+def test_guardrail_edges_follows_the_detector_merge() -> None:
+    """A framework detector or the LLM classifier can produce the
+    `guardrail` node the resolver links from, and the merge is what puts
+    it in the delta (`normalizer_stages.guardrail_edges`)."""
+    names = [stage.name for stage in STAGES]
+    assert names.index("detector_merge") < names.index("guardrail_edges")
 
 
 def test_body_attributes_precedes_lethal_trifecta() -> None:

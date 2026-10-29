@@ -28,6 +28,7 @@ order:
     16  orphan_entry           orphan entry → single agent (Resolver 2)
     17  body_attributes        sink_data_flow / returns_data backfill
     18  lethal_trifecta        lethal trifecta as a node attribute (1.3d)
+    19  guardrail_edges        guards (guardrail → component), B.4a
 
 Note on the order:
 
@@ -59,11 +60,17 @@ Note on the order:
     *position* is load-bearing for the same kind of reason: the merge can
     replace a TSA node with a detector node that arrives without the
     attributes, and the replacement is what ends up in the graph.
-  - `LethalTrifectaStage` (1.3d) runs after it, and last. It shares the
-    "after the merge" constraint and has no other, so it takes the end
+  - `LethalTrifectaStage` (1.3d) runs after it, and last-but-one. It shares
+    the "after the merge" constraint and has no other, so it takes the end
     of the pipeline, where the node set is final. It reads capabilities
     rather than source, which is why it is not a branch inside
     `body_attributes` — see `normalizer_stages.lethal_trifecta`.
+  - `guardrail_edges` (B.4a) runs last, and after `lethal_trifecta`. It
+    shares the same single constraint — the detector merge, which is what
+    puts a `guardrail` node in the delta — and no other, and the end of
+    the pipeline is where the node set is final. It is `structural`-only,
+    so `flow_kind`'s position is not a constraint on it either way. See
+    `normalizer_stages.guardrail_edges`.
 """
 
 from __future__ import annotations
@@ -78,6 +85,7 @@ from .dynamic_mcp_invocation import DynamicMcpInvocationStage
 from .entry_points import EntryPointStage
 from .entry_to_sink import EntryToSinkStage
 from .flow_kind import FlowKindStage
+from .guardrail_edges import GuardrailEdgeStage
 from .intra_file_edges import IntraFileEdgeStage
 from .lethal_trifecta import LethalTrifectaStage
 from .llm_endpoints import LlmEndpointStage
@@ -113,4 +121,5 @@ STAGES: tuple[NormalizerStage, ...] = (
     OrphanEntryStage(),
     BodyAttributeStage(),
     LethalTrifectaStage(),
+    GuardrailEdgeStage(),
 )

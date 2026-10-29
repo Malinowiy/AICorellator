@@ -18,7 +18,7 @@ The phase has three classification layers (ADR-0009, ADR-0011):
 
 Every edge produced in Phase 1 carries `flow_kind` — `control`, `data`, or `structural` (ADR-0015). Cross-file edges and MCP entry synthesis are resolved by the normalizer after detector merge (ADR-0013).
 
-**Architectural repair (v0.2.0-dev).** The parsing layer was refactored in four steps: `FlowDecision` type (one flow-decision contract, one `flow_kind_for` mapping), `flow/` split (one module per analyzer question), `patterns_registry.py` (matching semantics separated from data), and `normalizer_stages/` (17 explicitly ordered `NormalizerStage` objects). The component descriptions below reflect the post-repair layout.
+**Architectural repair (v0.2.0-dev).** The parsing layer was refactored in four steps: `FlowDecision` type (one flow-decision contract, one `flow_kind_for` mapping), `flow/` split (one module per analyzer question), `patterns_registry.py` (matching semantics separated from data), and `normalizer_stages/` (19 explicitly ordered `NormalizerStage` objects). The component descriptions below reflect the post-repair layout.
 
 ---
 
@@ -36,7 +36,7 @@ flowchart TB
         EP[Entry Points Detector<br/>routes, call sites,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
         FLOW["flow/ package<br/>arguments, edge_analyzer,<br/>sink_analyzer, tool_analyzer"]
-        NORM["AST Normalizer<br/>17 stages (normalizer_stages/)"]
+        NORM["AST Normalizer<br/>19 stages (normalizer_stages/)"]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
     end
@@ -285,7 +285,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 
 ---
 
-### 10. AST Normalizer (17-stage pipeline)
+### 10. AST Normalizer (19-stage pipeline)
 
 **Responsibility:** The central merge component. Takes all Phase 1 outputs and produces a single `GraphDelta` of nodes and edges.
 
@@ -296,9 +296,9 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 - `GraphDelta.edges: list[Edge]`
 - `make_context(manifest, tsa_output, entry_points=None, llm_output=None, capabilities=None, framework_detection=None, host_id="localhost") -> NormalizeContext`
 
-`normalize` is a 135-line loop over `STAGES`; the work is in 17 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
+`normalize` is a 135-line loop over `STAGES`; the work is in 19 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
 
-**The 17 stages, in order:**
+**The 19 stages, in order:**
 
 | # | Stage | Responsibility |
 |---|---|---|
@@ -319,6 +319,8 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 | 15 | `mcp_entry_synthesis` | Virtual MCP entry point per framework-detected server + `delegates_to` to each tool whose `parent_server` matches (ADR-0013, Resolver 3). Carries the enrichment value from `tool_data_flow` through `flow_for_tool_node`. |
 | 16 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
 | 17 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
+| 18 | `lethal_trifecta` | `lethal_trifecta` node attribute (1.3d, ADR-0009): the node reads untrusted input, holds secrets and can get data out. Written on every node, `True` or `False`, recomputed from capabilities rather than source, which is why it is not a branch inside `body_attributes`. |
+| 19 | `guardrail_edges` | `guards` — `guardrail → component` from source evidence only (B.4a, ADR-0019): a call site through the call graph, or a `@guardrail(...)` decorator. **Not** emitted on co-location, and not for a guardrail wired in by DI, a framework hook or a `self.`-call. `structural` with `observed_by = ["ast"]` and no `data_flow_confirmed`; not traversed by `find_chains`. **Must run after `detector_merge`** (a framework detector or the LLM classifier can produce the `guardrail` node, and the merge is what puts it in the delta). |
 
 **Key invariants:**
 
@@ -441,7 +443,7 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 16. **`provides_tool` is control because the access path is the attack path.** "The agent can reach a server that exposes `delete_file`" puts `delete_file` in the agent's reachable action set. Whether a particular request invokes it is a runtime question. Classifying the edge as a declaration would hide reachable dangerous actions whenever invocation is indirect — dispatched by the MCP framework, selected by the model, or triggered by a prompt — which are exactly the cases the analysis exists to evaluate. `guards` stays `structural`: a guardrail is a defensive control, and no data or control flows from it to the guarded component along that edge. Phase 2 runtime monitoring will separate exposure from invocation (ADR-0015, Deferred).
 17. **`data_flow_confirmed` is enrichable.** The generic `flow/` analyzers set it on `has_access_to`. Framework detectors set it on the edges they own (LangChain `uses_tool`/`uses_model`) and record `tool_data_flow` on tool nodes for the normalizer to copy onto the MCP edges it builds (1.2a.2). An explicit `"unknown"` in `EdgesRepository.upsert` currently overwrites an enriched value; no duplicate edge ids exist today (backlog 1.2a.2c).
 18. **`FlowDecision` is the one flow contract.** Every analyzer and enrichment helper returns `FlowDecision(kind, evidence, source)`. `flow_kind_for(decision)` is the single mapping to `flow_kind`. No second implementation, no per-caller copy. The decision's `kind` is what `data_flow_confirmed` stores.
-19. **Stage pipeline.** `normalize(ctx)` is a loop over 17 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `untrusted_sources` after `entry_points`, `entry_to_sink` before `detector_merge`, `untrusted_source_writers` between `detector_merge` and `flow_kind`, and `dynamic_mcp_invocation` after `untrusted_source_writers` and `flow_kind`.
+19. **Stage pipeline.** `normalize(ctx)` is a loop over 19 explicitly ordered `NormalizerStage` objects. `NormalizeContext` holds inputs, per-scan caches, and derived indexes. Each stage is independently testable; `test_stage_order.py` pins the order, including `untrusted_sources` after `entry_points`, `entry_to_sink` before `detector_merge`, `untrusted_source_writers` between `detector_merge` and `flow_kind`, and `dynamic_mcp_invocation` after `untrusted_source_writers` and `flow_kind`.
 20. **Pattern registry.** `patterns.py` is data (17 rules, 217 patterns, reasons, the `INTENTIONAL_OVERLAPS` allowlist); `patterns_registry.py` is matching semantics (`CallPattern.matches`, `matches_any`, the two validation invariants). Wildcards are not a concept in the matcher.
 
 ---
