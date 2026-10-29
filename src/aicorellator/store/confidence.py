@@ -6,9 +6,13 @@ from a base of 0.3:
   1. **Family match** is a gate, not a signal. Writer and reader in
      different families produce no link at all; the resolver never
      calls this module for such a pair.
-  2. **Literal match** is a signal: two equal literals +0.6, one side
-     literal +0.2, two different literals **no link**, neither side
-     literal **no store** (§5).
+  2. **Literal match** is a signal: two equal literals +0.6, one hint
+     containing the other +0.3, one side literal +0.2, two different
+     literals **no link**, neither side literal **no store** (§5). The
+     prefix row is B.3b-fs's extension of the ADR's table — the `fs`
+     family's motivating case, where a writer names a directory and a
+     reader a file inside it — and its weight lives here, beside the
+     others, so the three stay comparable.
   3. **Code context** is a signal: the same module +0.2, a shared local
      module (a wrapper both files import) +0.3, one file importing the
      other +0.1, nothing shared 0.
@@ -23,16 +27,26 @@ One number is worth stating outright, because it is what the default
 threshold means. A pair whose literals are equal scores `1 − 0.7 × 0.4
 = 0.72`, which is just above §9's default `0.7`. **The default
 enumeration is therefore "the two call sites named the same store"**,
-and every weaker pairing — one side unresolved at 0.44, code context
-alone at 0.44, both at 0.55 — lands in the weak band. That is the
-intended shape, not an accident of the constants.
+and every weaker pairing — one hint containing the other at 0.51, one
+side unresolved at 0.44, code context alone at 0.44, the two together
+at 0.608 — lands in the weak band. That is the intended shape, not an
+accident of the constants.
 
 The bound is exact, and it is worth having: the strongest combination
-*without* equal literals is the one-side literal plus the shared
-wrapper, `1 − 0.7 × 0.8 × 0.7 = 0.608`, still under `0.7`. So no amount
-of code-context agreement can put a pair in the default enumeration —
-the literal is what names the store, and this is the arithmetic that
-says so. `test_confidence.py` pins it.
+*without* equal literals is a literal a family recognized as naming the
+same store — prefix containment — plus the shared wrapper, `1 − 0.7 ×
+0.7 × 0.7 = 0.657`, still under `0.7`. So no amount of code-context
+agreement can put a pair in the default enumeration: the literal is what
+names the store, and this is the arithmetic that says so.
+
+What the *resolver* reaches is the narrower `0.608` (the one-side
+literal plus the shared wrapper), because a site attaches to the store
+its own literal names by exact equality (`resolver._attached_keys`), so
+the prefix branch fires only for a hint that contains the store's key
+without equalling it. The branch is the family-level signal B.3b-fs
+specifies and this module computes; making it reachable is an
+attachment decision, not one this module can take.
+`test_confidence.py` pins both numbers.
 
 `literal_match` returns `None` for "no link": its signature would like a
 float, and a float cannot say "these name different stores, do not pair
@@ -52,8 +66,11 @@ from .families.base import ModuleFacts, ReadSite, WriteSite
 #: cannot take below `graph.query.WEAK_JOIN_FLOOR` (pinned by a test).
 BASE = 0.3
 
-#: §8's literal weights.
+#: §8's literal weights. The prefix row is B.3b-fs's (the ADR's table
+#: has equal / one-side / no-link only); it is the `fs` family's case —
+#: a writer naming a directory, a reader a file inside it.
 LITERAL_EQUAL = 0.6
+LITERAL_PREFIX = 0.3
 LITERAL_ONE_SIDE = 0.2
 
 #: §8's code-context weights, in the order the ADR lists them. The
@@ -93,23 +110,43 @@ def literal_match(
     """§8's literal signal for a pair of hints.
 
     `LITERAL_EQUAL` when both sides name the same literal,
-    `LITERAL_ONE_SIDE` when exactly one does, and `None` — no link —
-    when they name different stores or when neither names one. The
-    second `None` is §5: two call sites of the same family that name no
-    store are not evidence of a shared store, and pairing them would
-    link every call site of the family.
+    `LITERAL_PREFIX` when one hint *contains* the other — a writer's
+    directory and a reader's file inside it name one store — and
+    `LITERAL_ONE_SIDE` when exactly one side names a store. `None` — no
+    link — is the answer when they name different stores or when
+    neither names one. The second `None` is §5: two call sites of the
+    same family that name no store are not evidence of a shared store,
+    and pairing them would link every call site of the family.
 
-    Prefix containment (a writer's bucket, a reader's key prefix) is
-    deliberately absent: it is a family-level decision, and it lands
-    with the family that motivates it (B.3b-fs), not in the core.
+    Containment is `str.startswith` in **both** directions and nothing
+    is normalised: a trailing `/` is part of the hint, and the literals
+    are compared exactly as a family reported them. That makes the
+    trailing-slash case worth stating outright, because it is not
+    symmetric:
+
+      - `'/uploads/'` contains `'/uploads/x'` — a directory and a file
+        in it, which is the case the row exists for;
+      - `'/uploads'` contains `'/uploads/x'` as well, because
+        `'/uploads/x'.startswith('/uploads')` is true;
+      - `'/uploads/'` and `'/uploads'` **do** contain one another, in
+        one direction only: `'/uploads/'.startswith('/uploads')`. They
+        are different hints (no normalisation), and the containment
+        rule is string containment, so the pair scores `LITERAL_PREFIX`
+        rather than `None` or `LITERAL_EQUAL`.
+
+    A family that wants the two spellings to be one store normalises
+    before it reports one; this function does not do it for it.
+    `test_confidence.py` pins all three cases.
     """
     if write_hint is None and read_hint is None:
         return None
     if write_hint is None or read_hint is None:
         return LITERAL_ONE_SIDE
-    if write_hint != read_hint:
-        return None
-    return LITERAL_EQUAL
+    if write_hint == read_hint:
+        return LITERAL_EQUAL
+    if write_hint.startswith(read_hint) or read_hint.startswith(write_hint):
+        return LITERAL_PREFIX
+    return None
 
 
 def code_context(write_site: WriteSite, read_site: ReadSite) -> float:
@@ -235,6 +272,7 @@ __all__ = [
     "IDENTITY_CONFIDENCE_CAP",
     "LITERAL_EQUAL",
     "LITERAL_ONE_SIDE",
+    "LITERAL_PREFIX",
     "code_context",
     "combine_signals",
     "literal_match",

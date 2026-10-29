@@ -6,10 +6,12 @@ ADR-0021 §12: store identity is decided by **families** — one module per
 technology a store is reached through — registered in
 `aicorellator.store.registry`. This stage is the seam between that
 subsystem and the pipeline: it builds a `StoreResolver` and calls it once
-on the delta, and the resolver returns the edges. B.3b-core ships the
-seam with an **empty registry**, so the stage is a no-op on every scan
-today, and B.3b-fs (`fs`) is what makes it produce an edge — a file plus
-a registry line, with no change here.
+on the delta, and the resolver returns the edges. B.3b-core shipped the
+seam with an **empty registry**, so the stage was a no-op on every scan;
+B.3b-fs then registered `fs` — a family module plus a line in
+`families/__init__.py` — and the stage produces an edge wherever that
+family recognizes a store literal, with no change here. That is the
+shape a second family reuses.
 
 Why a stage, and not a call in `run_scan.py` after `normalize`:
 

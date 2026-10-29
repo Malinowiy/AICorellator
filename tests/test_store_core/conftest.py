@@ -4,6 +4,9 @@ The store subsystem is process-global in exactly one place — the family
 registry — so this conftest empties it for every test in the directory.
 A test that registers a fake family would otherwise leak it into the
 pipeline test next door, which asserts what an empty registry does.
+Since B.3b-fs the tree ships `fs`, so the empty registry is the fixture's
+doing and not the tree's; a test that wants the real family registers it
+explicitly.
 
 `scan` builds a context over a synthetic target: files written to
 `tmp_path` (the resolver parses them for the enclosing definitions and

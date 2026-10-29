@@ -1245,27 +1245,24 @@ def test_pipeline_chain_groups_evaluated_and_reported(
 
 
 # ============================================================
-# B.3a — the store mechanism produces no edges
+# B.3a / B.3b-fs — the store mechanism, negative then positive
 # ============================================================
 
 def test_the_pipeline_produces_no_store_and_no_reads_from(
     writer_target: Path,
     pipeline_db: Path,
 ) -> None:
-    """B.3a is a mechanism: it declares the shape and emits nothing.
+    """No store literal, no store — with the `fs` family registered.
 
-    The project has two `writes_to` edges (B.2's write side), so a
-    producer of store links would have something to work with — and it
-    must not, because the family rules and the B.2 migration are B.3b
-    and B.3c. What this pins is the negative: no `store` node, no
-    `reads_from` edge, and every `writes_to` still ending at a read
-    site rather than at a store.
+    Neither file of this project calls `open`, `Path.write_*` or
+    `aiofiles.open`, so the family has nothing to recognize and the
+    graph is B.2's: two `writes_to` edges, every one of them ending at a
+    read site rather than at a store, no `store` node and no
+    `reads_from` edge.
 
-    The enumerator is checked too: with no store in the graph the
-    store-joined path finds nothing, and the groups that come out are
-    the B.2-shaped ones (`store_id is None`). If this project ever gains
-    a store, this test fails and says so — that is B.3c's signal, not a
-    fixture to bend.
+    The positive counterpart is right below — the same pipeline over a
+    project that *does* name a store. This one is the negative: a
+    project a store producer must leave alone.
     """
     target = ingest(writer_target, kind="folder")
     manifest = discover(target)
@@ -1307,4 +1304,117 @@ def test_the_pipeline_produces_no_store_and_no_reads_from(
             assert group.store_id is None
             assert group.store_confidence is None
             assert group.weak is False
+
+
+# ============================================================
+# B.3b-fs — the `fs` family produces store edges
+# ============================================================
+
+# A project that names a store, twice: a tool writes
+# `/uploads/report.txt` and a plain function reads it back. The literal
+# is the whole point — it is what the family reports and what the
+# resolver names the store with.
+FS_FILES: dict[str, str] = {
+    "mcp/fastserver.py": '''\
+"""A FastMCP server that writes a report and reads it back."""
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("reports")
+
+
+@mcp.tool()
+def save_report(payload: str) -> str:
+    """Persist the report."""
+    with open("/uploads/report.txt", "wb") as fh:
+        fh.write(payload)
+    return "saved"
+
+
+def load_report() -> str:
+    """Read the report back."""
+    with open("/uploads/report.txt", "rb") as fh:
+        return fh.read()
+''',
+}
+
+
+@pytest.fixture
+def fs_target(tmp_path: Path) -> Path:
+    """A project whose files name a store the `fs` family sees."""
+    root = tmp_path / "fs_target"
+    for rel_path, content in FS_FILES.items():
+        full = root / rel_path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+    return root
+
+
+def test_the_pipeline_produces_store_edges_for_a_store_literal(
+    fs_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """B.3b-fs end to end: `open(..., 'wb')` writes a store.
+
+    One call site writes the file and one reads it, both naming
+    `/uploads/report.txt` in the same module. The store node is that
+    literal, keyed by the family (§1); the write side is an edge from
+    the tool the call lives in, with `identity_confidence` `1 − 0.7 ×
+    0.4 × 0.8 = 0.776` (equal literals and the same module).
+
+    The read side has no edge, and that is not a bug: `reads_from`
+    points at an `untrusted_source`, a filesystem read is not one of the
+    source types (1.3a), and giving a read its role is B.3b-user_upload.
+    The store is still the *pair's* store — the read is why the write
+    link scores 0.776 rather than 0.72.
+    """
+    target = ingest(fs_target, kind="folder")
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    detection = run_detectors(manifest)
+    delta = normalize(make_context(
+        manifest, tsa, ep, llm,
+        capabilities=capabilities, framework_detection=detection,
+    ))
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        stores = store.nodes.list(kind="store")
+        assert [n.name for n in stores] == ["fs:/uploads/report.txt"]
+        assert stores[0].attributes == {
+            "family": "fs", "identity_hint": "/uploads/report.txt",
+        }
+        # §1: an entity is in the graph or not; no probability on a node.
+        assert stores[0].confidence == 1.0
+
+        nodes = {n.id: n for n in store.nodes.list()}
+        writes = store.edges.list(kind="writes_to")
+        assert len(writes) == 1
+        write = writes[0]
+        assert nodes[write.source_id].name == "save_report"
+        assert write.target_id == stores[0].id
+
+        # §4: a declaration — structural, AST-observed, no data-flow
+        # verdict (ADR-0015 decision 5, ADR-0016 decision 3).
+        assert write.flow_kind == "structural"
+        assert write.observed_by == ["ast"]
+        assert write.data_flow_confirmed is None
+        assert round(write.identity_confidence, 4) == 0.776
+
+        assert store.edges.list(kind="reads_from") == []
+
+        # No other kind carries an identity confidence (§7).
+        assert all(
+            e.identity_confidence is None
+            for e in store.edges.list()
+            if e.kind not in ("writes_to", "reads_from")
+        )
+
 

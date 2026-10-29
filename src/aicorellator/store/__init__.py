@@ -11,7 +11,9 @@ The pieces:
 
   - `families.base` — the interface: a `Family` per store technology,
     reporting `WriteSite`s and `ReadSite`s and nothing else.
-  - `registry` — name → family, empty until a family lands (B.3b-fs).
+  - `families.fs` — the first family; importing `families` registers it
+    (`fs`), so a scan sees it without any caller naming it.
+  - `registry` — name → family, read by the resolver when it runs.
   - `confidence` — §8's signals and the combination, in one place.
   - `resolver` — `StoreResolver`: asks the families, builds the stores,
     resolves both ends against the delta, and returns the edges.
@@ -23,6 +25,7 @@ imports this package: one of the two directions has to be lazy, and the
 stage is the side that cannot be.
 """
 
+from . import families  # noqa: F401 — importing it registers the families
 from .families.base import Context, Family, ModuleFacts, ReadSite, WriteSite
 from .registry import register_family, registered_families
 from .resolver import StoreResolver

@@ -5,6 +5,10 @@ store subsystem that holds process-global state. What is pinned here is
 the empty default, the registration rules, and the two halves of the
 lookup: `resolve` (instances, in the order asked) and `all_names`
 (sorted, for config and logs).
+
+"The empty default" means the registry *as this test sees it*: the
+directory's conftest empties it, because the tree ships `fs` (B.3b-fs)
+and a test about registration rules needs a registry it controls.
 """
 
 from __future__ import annotations
@@ -44,7 +48,12 @@ class Mismatched(Family):
 # ============================================================
 
 def test_the_registry_starts_empty() -> None:
-    """B.3b-core ships no family, and that is the whole point of it."""
+    """The registry has no hidden default; the conftest makes it empty.
+
+    The tree ships `fs`, so "empty" here is the fixture's doing. What
+    this pins is that nothing else fills the registry behind a caller's
+    back: with no registration there is no family to resolve.
+    """
     assert registry.FAMILIES == {}
     assert registry.all_names() == []
     assert registry.resolve() == []
@@ -52,7 +61,14 @@ def test_the_registry_starts_empty() -> None:
 
 
 def test_resolve_of_unknown_names_is_empty() -> None:
-    assert registry.resolve(["fs", "s3"]) == []
+    """Names the registry does not hold resolve to nothing.
+
+    `fs` is deliberately not one of them: the tree ships it (B.3b-fs),
+    and a name that is real but not registered in this fixture would
+    test the fixture rather than the lookup. These are names no family
+    in the tree declares yet.
+    """
+    assert registry.resolve(["s3", "db"]) == []
 
 
 # ============================================================

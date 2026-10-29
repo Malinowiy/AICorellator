@@ -76,6 +76,19 @@ def test_the_constants_are_the_ones_in_the_adr() -> None:
     assert confidence.IDENTITY_CONFIDENCE_CAP == 0.99
 
 
+def test_the_prefix_weight_is_the_familys_row_not_the_adrs() -> None:
+    """§8's table has equal / one-side / no-link; B.3b-fs adds a fourth.
+
+    Prefix containment — a writer naming a directory, a reader a file
+    inside it — is the `fs` family's motivating case, and the brief that
+    specifies the family puts the weight here, beside the other literal
+    weights, so the three stay comparable when the ADR's table is
+    re-tuned. It is a signal, not a threshold: 0.3, the same as the
+    shared wrapper, and still under the 0.7 the default asks for.
+    """
+    assert confidence.LITERAL_PREFIX == 0.3
+
+
 def test_the_base_is_the_joins_floor() -> None:
     """§9: a link below the base is no link, and the base is 0.3.
 
@@ -101,10 +114,49 @@ def test_two_equal_literals_score_the_full_weight() -> None:
     assert confidence.literal_match("docs", "docs") == 0.6
 
 
+def test_one_hint_containing_the_other_scores_the_prefix_weight() -> None:
+    """§8's extension (B.3b-fs) — a directory and a file inside it.
+
+    Containment is checked in both directions, because either side may
+    be the one that names the directory: a writer with
+    `'/uploads/' + name` and a reader with `'/uploads/report.txt'` are
+    the same store however they are ordered.
+    """
+    assert confidence.literal_match("/uploads/", "/uploads/x") == 0.3
+    assert confidence.literal_match("/uploads/x", "/uploads/") == 0.3
+
+
+def test_a_missing_trailing_slash_still_contains() -> None:
+    """`'/uploads'` and `'/uploads/'` are two hints, and they match.
+
+    Nothing is normalised, so the two spellings are not equal — but
+    string containment is one-sided and `'/uploads/'.startswith(
+    '/uploads')` is true, so the pair scores the prefix weight rather
+    than `None`. A family that wants the two spellings to be *one
+    store* has to normalise before it reports; `literal_match` compares
+    the hints as written and says what it can.
+    """
+    assert confidence.literal_match("/uploads", "/uploads/") == 0.3
+    assert confidence.literal_match("/uploads/", "/uploads") == 0.3
+    # And the container case, which is the row's reason to exist.
+    assert confidence.literal_match("/uploads", "/uploads/x") == 0.3
+
+
 def test_one_side_with_a_literal_scores_the_partial_weight() -> None:
     """The unresolved side may point at the store; the AST does not know."""
     assert confidence.literal_match("docs", None) == 0.2
     assert confidence.literal_match(None, "docs") == 0.2
+
+
+def test_a_prefix_is_stronger_than_one_side_and_weaker_than_equality() -> (
+    None
+):
+    """The three weights are ordered, which is what makes them a scale."""
+    assert (
+        confidence.LITERAL_ONE_SIDE
+        < confidence.LITERAL_PREFIX
+        < confidence.LITERAL_EQUAL
+    )
 
 
 def test_different_literals_are_no_link() -> None:
@@ -139,15 +191,18 @@ def test_a_named_store_is_just_above_the_default_threshold() -> None:
     """What §9's 0.7 means: the default enumeration is the literal match.
 
     Equal literals score 0.72 with no code context. Everything weaker —
-    one side unresolved at 0.44, code context alone at 0.44 — is in the
-    weak band, which is what makes the default a selection.
+    a prefix at 0.51, one side unresolved at 0.44, code context alone at
+    0.44 — is in the weak band, which is what makes the default a
+    selection.
     """
     equal = confidence.combine_signals(0.3, [confidence.LITERAL_EQUAL])
+    prefix = confidence.combine_signals(0.3, [confidence.LITERAL_PREFIX])
     one_side = confidence.combine_signals(0.3, [confidence.LITERAL_ONE_SIDE])
     context = confidence.combine_signals(
         0.3, [confidence.CODE_CONTEXT_SAME_MODULE]
     )
     assert equal >= 0.7
+    assert 0.3 <= prefix < 0.7
     assert 0.3 <= one_side < 0.7
     assert 0.3 <= context < 0.7
 
@@ -157,20 +212,37 @@ def test_the_cap_short_of_certainty() -> None:
     assert confidence.combine_signals(0.3, [1.0]) == 0.99
 
 
-def test_code_context_alone_can_never_reach_the_default_threshold() -> None:
+def test_nothing_short_of_an_exact_literal_reaches_the_default() -> None:
     """The bound that makes the literal decisive (§8, §9).
 
-    One unresolved side plus the strongest code-context signal is
-    `1 − 0.7 × 0.8 × 0.7 = 0.608`: under the default 0.7, so a pair
-    that did not name the same store cannot enter the default
-    enumeration however much of the code agrees about where it lives.
+    Two numbers, and the difference between them is the point:
+
+      - a literal a family recognized as *the same store* — prefix
+        containment — plus the strongest code-context signal is
+        `1 − 0.7 × 0.7 × 0.7 = 0.657`, still under 0.7;
+      - what the *resolver* can reach without an exact literal is
+        `0.608` (`1 − 0.7 × 0.8 × 0.7`): the one-side literal plus the
+        shared wrapper. Prefix containment does not appear in this
+        combination because a site attaches to a store by exact equality
+        (`resolver._attached_keys`), so a pair either has the store's
+        own literal or has none.
+
+    Either way a pair that did not name the same store cannot enter the
+    default enumeration however much of the code agrees about where it
+    lives.
     """
-    strongest_without_the_literal = confidence.combine_signals(
+    strongest = confidence.combine_signals(
+        0.3,
+        [confidence.LITERAL_PREFIX, confidence.CODE_CONTEXT_SHARED_WRAPPER],
+    )
+    reached = confidence.combine_signals(
         0.3,
         [confidence.LITERAL_ONE_SIDE, confidence.CODE_CONTEXT_SHARED_WRAPPER],
     )
-    assert round(strongest_without_the_literal, 4) == 0.608
-    assert strongest_without_the_literal < 0.7
+    assert round(strongest, 4) == 0.657
+    assert round(reached, 4) == 0.608
+    assert strongest < 0.7
+    assert reached < strongest
 
 
 def test_a_zero_signal_is_a_no_op() -> None:

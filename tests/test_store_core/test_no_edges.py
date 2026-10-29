@@ -5,6 +5,14 @@ With no family registered the store stage still runs — it is stage 19 of
 That is what makes B.3b-core landable: the whole mechanism is in the
 tree, and the graph is byte-for-byte what B.3a produced.
 
+Since B.3b-fs the tree *does* ship a family (`fs`), so "no family" here
+means "the fixture emptied the registry" (this directory's conftest).
+That is still the right thing to test: the stage's no-op is a property
+of the registry being empty, not of the tree being empty, and a scan
+with no family must behave exactly as B.3a's did. The positive
+counterpart — the same pipeline with `fs` registered, over a project
+that names a store — is in `tests/test_pipeline.py`.
+
 The check is stronger than "no store node": the pipeline is run twice
 over one project, once with the stage and once without it, and the two
 deltas are compared node by node and edge by edge. A no-op is a claim
@@ -34,9 +42,12 @@ from aicorellator.parsing.normalizer_stages import STAGES
 from aicorellator.store import registry
 from aicorellator.store.resolver import StoreResolver
 
-# A project a store family would one day recognize: a handler writes a
-# file into `/uploads/` and a tool reads it back. No family exists yet,
-# so the write is invisible to the store side — which is the point.
+# A project the `fs` family deliberately does *not* recognize: a handler
+# writes a file into `/uploads/` and a tool reads it back, but both go
+# through `write_bytes` / `read_bytes` wrappers rather than through
+# `open`, so there is no call shape and no literal to report. The store
+# side sees nothing — which is the point: this fixture would produce a
+# store only if a family grew into it.
 PROJECT_FILES: dict[str, str] = {
     "app/upload.py": '''\
 """Upload handler."""
@@ -161,9 +172,11 @@ def test_the_stage_changes_nothing_with_an_empty_registry(
 def test_the_resolver_is_the_only_thing_missing(target: Path) -> None:
     """Registering a family is the whole difference (B.3b-fs's seam).
 
-    Nothing in the pipeline consults the registry today, so emptying it
-    and reading it are the same scan; this pins the fact that the
-    resolver, and only the resolver, is what a family would change.
+    The registry is empty for this test (the directory's conftest), so
+    the pipeline that runs is the B.3a one and the resolver resolves
+    nothing. What that pins is the *seam*: the resolver is the only
+    place a family would change the scan, so the delta it is handed is
+    the delta it hands back.
     """
     inputs = _pipeline(target)
     ctx = make_context(**inputs)
