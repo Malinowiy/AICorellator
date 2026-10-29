@@ -28,6 +28,9 @@ One file, sections per subsystem. This module owns the scan side
     logs:
       keep_archives: 5
 
+    store:
+      confidence_threshold: 0.7   # strong/weak boundary (ADR-0021)
+
 A detector of your own is not a path in this file: it is a file in
 `framework_detectors/` plus a line in `registry.py`, the same
 interface as the built-ins (ADR-0016, §"Classification layers"). So
@@ -69,6 +72,14 @@ DEFAULT_LLM_CLASSIFIER_MODE = "off"
 DEFAULT_RUNTIME_MODE = "off"
 DEFAULT_UNCLASSIFIED_ACTION = "ask"
 DEFAULT_LOG_ARCHIVES = 5
+
+# The strong/weak boundary for store-joined chain groups (ADR-0021 §9).
+# It mirrors `graph.query.DEFAULT_STORE_CONFIDENCE_THRESHOLD`, which is
+# the value `find_chain_groups` uses when a caller passes none: the
+# policy default and the mechanism's default are the same number, and a
+# test pins them together (the convention `NODE_KINDS` /
+# `VALID_NODE_KINDS` uses).
+DEFAULT_STORE_CONFIDENCE_THRESHOLD = 0.7
 
 VALID_LLM_CLASSIFIER_MODES = frozenset({"off", "auto", "required"})
 VALID_RUNTIME_MODES = frozenset({"off", "python"})
@@ -142,6 +153,27 @@ class LogsConfig:
 
 
 @dataclass
+class StoreConfig:
+    """Store-joined chain groups (ADR-0021).
+
+    `confidence_threshold` is the boundary between a **strong** group
+    (in the default enumeration) and a **weak** one (in the graph, out
+    of the default; `include_weak=True` asks for it). Below 0.3 there is
+    no link at all, and that floor is a mechanism constant rather than a
+    setting — it is the base of ADR-0021 §8's combination, not a policy
+    choice.
+
+    It is not an `evaluation:` key. The ensemble config says *which
+    models judge*, this says *what the graph is allowed to call a
+    store*, and it is read by the enumerator's caller
+    (`find_chain_groups(store_confidence_threshold=...)`), which is not
+    the ensemble.
+    """
+
+    confidence_threshold: float = DEFAULT_STORE_CONFIDENCE_THRESHOLD
+
+
+@dataclass
 class ScanConfig:
     """The scan policy — the scan-side sections of `config.yaml`.
 
@@ -159,6 +191,7 @@ class ScanConfig:
         default_factory=UnclassifiedConfig
     )
     logs: LogsConfig = field(default_factory=LogsConfig)
+    store: StoreConfig = field(default_factory=StoreConfig)
 
     def resolve_detectors(self, known: list[str]) -> list[str]:
         """Detector names to run, given the registry's `known` names.
@@ -258,6 +291,7 @@ def _parse_scan_config(data: dict) -> ScanConfig:
     runtime = _section(data, "runtime")
     unclassified = _section(data, "unclassified")
     logs = _section(data, "logs")
+    store = _section(data, "store")
 
     return ScanConfig(
         detectors=DetectorsConfig(
@@ -287,6 +321,12 @@ def _parse_scan_config(data: dict) -> ScanConfig:
         logs=LogsConfig(
             keep_archives=_integer(
                 logs, "keep_archives", "logs", DEFAULT_LOG_ARCHIVES,
+            ),
+        ),
+        store=StoreConfig(
+            confidence_threshold=_ratio(
+                store, "confidence_threshold", "store",
+                DEFAULT_STORE_CONFIDENCE_THRESHOLD,
             ),
         ),
     )
@@ -363,6 +403,28 @@ def _optional_string(section: dict, key: str, where: str) -> str | None:
     return value.strip() or None
 
 
+def _ratio(
+    section: dict, key: str, where: str, default: float
+) -> float:
+    """Read a number between 0.0 and 1.0 (booleans are not numbers here).
+
+    A confidence outside the range is a typo, not a policy: the field is
+    a probability, and a threshold of 1.5 would silently select nothing
+    while looking like it selected everything strict.
+    """
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ScanConfigError(
+            f"'{where}.{key}' must be a number between 0.0 and 1.0, "
+            f"got {value!r}"
+        )
+    if not 0.0 <= float(value) <= 1.0:
+        raise ScanConfigError(
+            f"'{where}.{key}' must be between 0.0 and 1.0, got {value!r}"
+        )
+    return float(value)
+
+
 def _integer(section: dict, key: str, where: str, default: int) -> int:
     """Read a non-negative integer (booleans are not integers here)."""
     value = section.get(key, default)
@@ -426,6 +488,14 @@ unclassified:
 
 logs:
   keep_archives: 5
+
+# Store-joined chain groups (ADR-0021). A group whose write and read
+# links name one store with a combined confidence below this is "weak":
+# it is real evidence, it stays in the graph, and it is left out of the
+# default enumeration of chain groups. Below 0.3 there is no link at all
+# and that floor is not configurable.
+store:
+  confidence_threshold: 0.7
 
 # --- Evaluation ensemble (run_eval.py) ---
 #

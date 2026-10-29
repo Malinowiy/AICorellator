@@ -382,6 +382,155 @@ def test_edge_upsert_upgrades_flow_kind(store: GraphStore) -> None:
     assert fetched.data_flow_confirmed == "local_var_match"
 
 
+def _store_link(
+    store: GraphStore,
+    confidence: float | None,
+    edge_id: str = "e:1",
+    target: str = "u:1",
+) -> Edge:
+    """Upsert one `store → untrusted_source` link, the identity kind.
+
+    `target` differs when a test needs a second row: `edges` is unique
+    on `(source_id, target_id, kind, host_id)`.
+    """
+    store.nodes.upsert(Node(
+        id="s:1", kind="store", name="fs:/uploads/", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=target, kind="untrusted_source",
+        name=f"user_upload:f.read.{target}", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id=edge_id, source_id="s:1", target_id=target,
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=confidence,
+    ))
+    return store.edges.get(edge_id)
+
+
+def test_edge_roundtrips_identity_confidence(store: GraphStore) -> None:
+    """R1 — the field survives add/get, and `None` is not `0.0`."""
+    assert _store_link(store, 0.42).identity_confidence == 0.42
+    assert _store_link(
+        store, None, edge_id="e:2", target="u:2",
+    ).identity_confidence is None
+
+
+def test_identity_confidence_combines_across_upserts(
+    store: GraphStore,
+) -> None:
+    """R2 — two signals combine as `1 − (1−a)(1−b)`, capped at 0.99.
+
+    Not `max`: a second independent signal makes the link *stronger*
+    than either one alone, which is the whole reason the field is
+    separate from `confidence` (ADR-0021 §7).
+    """
+    # 0.3 then 0.5 → 1 − 0.7 × 0.5 = 0.65.
+    assert _store_link(store, 0.3).identity_confidence == 0.3
+    assert _store_link(store, 0.5).identity_confidence == pytest.approx(0.65)
+
+    # 0.3 then 0.3 → 1 − 0.7 × 0.7 = 0.51.
+    assert _store_link(
+        store, 0.3, edge_id="e:2", target="u:2",
+    ).identity_confidence == 0.3
+    assert _store_link(
+        store, 0.3, edge_id="e:2", target="u:2",
+    ).identity_confidence == pytest.approx(0.51)
+
+
+def test_identity_confidence_caps_at_0_99(store: GraphStore) -> None:
+    """A combined value never reaches certainty (ADR-0021 §7)."""
+    for _ in range(8):
+        edge = _store_link(store, 0.9)
+    assert edge.identity_confidence == 0.99
+
+
+def test_identity_confidence_defers_to_the_present_value(
+    store: GraphStore,
+) -> None:
+    """R3 — `NULL + x` is `x` and `x + NULL` is `x`, in either order.
+
+    An absent value says "no signal here", not "confidence zero": adding
+    a signal to a link must never *lower* it, or a later stage that
+    knows nothing about identity would erase what an earlier one knew.
+    """
+    assert _store_link(store, None).identity_confidence is None
+    assert _store_link(store, 0.5).identity_confidence == 0.5
+    assert _store_link(store, None).identity_confidence == 0.5
+
+    assert _store_link(
+        store, 0.5, edge_id="e:2", target="u:2",
+    ).identity_confidence == 0.5
+    assert _store_link(
+        store, None, edge_id="e:2", target="u:2",
+    ).identity_confidence == 0.5
+
+
+def test_confidence_stays_a_max_while_identity_combines(
+    store: GraphStore,
+) -> None:
+    """R4 — the two fields merge by different rules in one upsert.
+
+    Existence takes the max (one observer is enough); identity combines
+    (two signals are better than one). If the two rules were ever
+    conflated, this is the row where it would show.
+    """
+    store.nodes.upsert(Node(
+        id="s:1", kind="store", name="fs:/uploads/", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="u:1", kind="untrusted_source",
+        name="user_upload:f.read", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="s:1", target_id="u:1", kind="reads_from",
+        host_id="localhost", flow_kind="structural",
+        confidence=0.8, identity_confidence=0.3,
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="s:1", target_id="u:1", kind="reads_from",
+        host_id="localhost", flow_kind="structural",
+        confidence=0.2, identity_confidence=0.5,
+    ))
+
+    fetched = store.edges.get("e:1")
+    assert fetched.confidence == 0.8
+    assert fetched.identity_confidence == pytest.approx(0.65)
+
+
+def test_identity_confidence_is_dropped_on_other_edge_kinds(
+    store: GraphStore,
+) -> None:
+    """The field is not applicable outside the two store links (§7).
+
+    A producer that sets it on, say, a `has_access_to` edge is wrong,
+    and the repository does not store the mistake: the column's
+    invariant — `NULL` everywhere but `writes_to` / `reads_from` — holds
+    for every row, on `add` and on `upsert` alike.
+    """
+    store.nodes.upsert(Node(
+        id="s:1", kind="store", name="fs:/uploads/", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="u:1", kind="untrusted_source",
+        name="user_upload:f.read", host_id="localhost",
+    ))
+
+    store.edges.add(Edge(
+        id="e:1", source_id="s:1", target_id="u:1", kind="has_access_to",
+        host_id="localhost", identity_confidence=0.9,
+    ))
+    assert store.edges.get("e:1").identity_confidence == 0.9
+
+    # A second write of the same row through upsert clears it: the kind
+    # is not one of the two, so the field does not belong on the row.
+    store.edges.upsert(Edge(
+        id="e:1", source_id="s:1", target_id="u:1", kind="has_access_to",
+        host_id="localhost", identity_confidence=0.9,
+    ))
+    assert store.edges.get("e:1").identity_confidence is None
+
+
 def test_node_observed_by_defaults_to_ast(store: GraphStore) -> None:
     """Every Layer 1a node says who saw it: `["ast"]` (ADR-0016)."""
     store.nodes.add(Node(

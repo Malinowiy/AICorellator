@@ -1567,3 +1567,329 @@ def test_the_two_call_written_families_stay_apart(store: GraphStore) -> None:
             [expected["entry"], expected["writer"], expected["source"]]
         ]
 
+# ============================================================
+# Store joins (ADR-0021, B.3a)
+# ============================================================
+
+def _store_group(
+    store: GraphStore,
+    tag: str,
+    write_confidence: float | None = 0.9,
+    read_confidence: float | None = 0.8,
+    write_flow_kind: str = "structural",
+) -> dict[str, str]:
+    """One write chain into a store and one read chain out of it.
+
+        entry --has_access_to--> writer --writes_to--> store
+        store --reads_from--> source
+        source --has_access_to--> reader --has_access_to--> sink
+
+    The write link and the read link each carry an
+    `identity_confidence`; the two chains meet at the store, and the
+    join is by the store's id. `tag` fills the ids so two of these can
+    live in one store without colliding.
+    """
+    ids = {
+        "entry": f"entry_point:{'e' * 15}{tag}",
+        "writer": f"tool:{'w' * 15}{tag}",
+        "store": f"store:{'d' * 15}{tag}",
+        "source": f"untrusted_source:{'u' * 15}{tag}",
+        "reader": f"tool:{'r' * 15}{tag}",
+        "sink": f"sink:{'s' * 15}{tag}",
+        "e_w": f"edge:{'1' * 15}{tag}",
+        "w_s": f"edge:{'2' * 15}{tag}",
+        "s_r": f"edge:{'3' * 15}{tag}",
+        "s_x": f"edge:{'4' * 15}{tag}",
+        "r_k": f"edge:{'5' * 15}{tag}",
+    }
+    _put(store, ids["entry"], "entry_point", "POST /documents")
+    _put(store, ids["writer"], "tool", "index_documents")
+    _put(store, ids["store"], "store", f"fs:/uploads/{tag}")
+    _put(store, ids["source"], "untrusted_source", "user_upload:f.read")
+    _put(store, ids["reader"], "tool", "read_uploads")
+    _put(store, ids["sink"], "sink", "run_shell")
+
+    _link(store, ids["e_w"], ids["entry"], ids["writer"])
+    store.edges.upsert(Edge(
+        id=ids["w_s"], source_id=ids["writer"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind=write_flow_kind,
+        identity_confidence=write_confidence,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_r"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=read_confidence,
+    ))
+    _link(store, ids["s_x"], ids["source"], ids["reader"], flow_kind="data")
+    _link(store, ids["r_k"], ids["reader"], ids["sink"])
+    return ids
+
+
+def test_find_chain_groups_joins_by_store_id(store: GraphStore) -> None:
+    """Q1 — one store, one write chain, one read chain → one group.
+
+    The pair meets at the store, not at the source: the store is the
+    node both sides share, and the group names it (ADR-0021 §6).
+    """
+    ids = _store_group(
+        store, tag="a", write_confidence=0.9, read_confidence=0.8,
+    )
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.store_id == ids["store"]
+    assert group.store_name == "fs:/uploads/a"
+    assert group.untrusted_source_id == ids["source"]
+    assert group.write_chains == [
+        [ids["entry"], ids["writer"], ids["store"]]
+    ]
+    assert group.read_chains == [
+        [ids["source"], ids["reader"], ids["sink"]]
+    ]
+
+
+def test_the_join_confidence_is_the_weaker_link(store: GraphStore) -> None:
+    """Q5 — `min(write, read)`, not the average and not the product.
+
+    A pair is as strong as the side the analysis is least sure about
+    (ADR-0021 §7): 0.9 on the write side cannot make a 0.75 read side
+    stronger than 0.75, and the pair is `0.75`, not `0.825`.
+    """
+    _store_group(
+        store, tag="a", write_confidence=0.9, read_confidence=0.75,
+    )
+
+    group = store.query.find_chain_groups()[0]
+
+    assert group.store_confidence == 0.75
+    assert group.weak is False
+
+
+def test_two_stores_produce_two_groups(store: GraphStore) -> None:
+    """Q2 — the store is the anchor, so N stores give N groups.
+
+    Neither store's chains pair with the other's: the join is by id, and
+    two ids are two places.
+    """
+    first = _store_group(store, tag="a")
+    second = _store_group(store, tag="b")
+
+    groups = store.query.find_chain_groups()
+
+    assert {g.store_id for g in groups} == {first["store"], second["store"]}
+    for group in groups:
+        assert [chain[-1] for chain in group.write_chains] == [group.store_id]
+        expected = (
+            first if group.store_id == first["store"] else second
+        )
+        assert group.untrusted_source_id == expected["source"]
+
+
+def test_include_weak_decides_the_weak_set(store: GraphStore) -> None:
+    """Q3 — a weak group is one flag away, and only one flag away.
+
+    0.5 is real evidence (the links name a store) and not strong
+    evidence (the weaker link may point elsewhere), so it is in the
+    graph and out of the default enumeration (ADR-0021 §9).
+    """
+    ids = _store_group(
+        store, tag="a", write_confidence=0.9, read_confidence=0.5,
+    )
+
+    assert store.query.find_chain_groups() == []
+
+    groups = store.query.find_chain_groups(include_weak=True)
+
+    assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_confidence == 0.5
+    assert groups[0].weak is True
+
+
+def test_a_strong_group_is_in_the_default_enumeration(
+    store: GraphStore,
+) -> None:
+    """The boundary itself is strong: `>= threshold` is not weak (§9)."""
+    _store_group(store, tag="a", write_confidence=0.7, read_confidence=0.7)
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].store_confidence == 0.7
+    assert groups[0].weak is False
+
+
+def test_the_threshold_is_the_caller_s(store: GraphStore) -> None:
+    """The `0.7` is policy, not mechanism: the caller passes the value.
+
+    The same 0.9 pair is strong at the default boundary and weak at a
+    stricter one, which is the whole of what the parameter does.
+    """
+    _store_group(store, tag="a", write_confidence=0.9, read_confidence=0.9)
+
+    assert len(store.query.find_chain_groups()) == 1
+    assert store.query.find_chain_groups(
+        store_confidence_threshold=0.95,
+    ) == []
+    raised = store.query.find_chain_groups(
+        store_confidence_threshold=0.95, include_weak=True,
+    )
+    assert [g.weak for g in raised] == [True]
+
+
+def test_a_join_below_the_floor_is_no_group_at_all(
+    store: GraphStore,
+) -> None:
+    """§9 — under 0.3 there is no link, weak set or not."""
+    _store_group(store, tag="a", write_confidence=0.8, read_confidence=0.2)
+
+    assert store.query.find_chain_groups() == []
+    assert store.query.find_chain_groups(include_weak=True) == []
+
+
+def test_a_link_without_identity_confidence_joins_nothing(
+    store: GraphStore,
+) -> None:
+    """Unresolved identity produces no group (ADR-0021 §5).
+
+    The store exists only if a literal named it; a link that carries no
+    identity confidence does not say the two ends are one place, and
+    inventing a confidence for it is the one thing the join must not do.
+    """
+    _store_group(store, tag="a", read_confidence=None)
+
+    assert store.query.find_chain_groups(include_weak=True) == []
+
+def test_the_store_path_is_empty_when_no_store_exists(
+    store: GraphStore,
+) -> None:
+    """Q4 — B.2's groups still enumerate, and they carry no store.
+
+    B.3a adds the store path without touching the old one: the pairs
+    that meet at an `untrusted_source` are enumerated as before, with
+    `store_id = None`, no join confidence and nothing to call weak.
+    """
+    ids = _call_written_group(
+        store,
+        tag="c",
+        writer_kind="tool",
+        writer_name="index_documents",
+        capability="writes_rag_corpus",
+        source_name="rag_corpus:vectorstore.similarity_search",
+    )
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].untrusted_source_id == ids["source"]
+    assert groups[0].store_id is None
+    assert groups[0].store_name is None
+    assert groups[0].store_confidence is None
+    assert groups[0].weak is False
+
+
+def test_a_structural_write_edge_still_crosses_at_the_anchor(
+    store: GraphStore,
+) -> None:
+    """B.2's groups survive `writes_to` becoming structural (ADR-0021 §4).
+
+    The write chain's last hop is a declaration, not a path hop, so the
+    enumerator crosses it at the anchor whatever its `flow_kind` says.
+    When B.3c re-emits these edges as `structural` — which is what the
+    pattern set now makes them — the pair must not disappear.
+    """
+    ids = _call_written_group(
+        store,
+        tag="s",
+        writer_kind="tool",
+        writer_name="index_documents",
+        capability="writes_rag_corpus",
+        source_name="rag_corpus:vectorstore.similarity_search",
+    )
+    store.edges.upsert(Edge(
+        id=ids["w_s"], source_id=ids["writer"], target_id=ids["source"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+    ))
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].write_chains == [
+        [ids["entry"], ids["writer"], ids["source"]]
+    ]
+
+
+def test_both_joins_report_the_same_source_twice(
+    store: GraphStore,
+) -> None:
+    """A source reachable both ways yields two groups, not one.
+
+    The two paths make different claims — "these chains share a source"
+    and "these chains share a store" — and their ids differ, so B.3a
+    does not deduplicate them. B.3c removes the first path; until then
+    both are enumerated, and this test is the record of that.
+    """
+    ids = _store_group(store, tag="a")
+    # The same source, written to directly as well: the B.2 shape.
+    _link(
+        store, "edge:" + "7" * 16, ids["writer"], ids["source"],
+        kind="writes_to",
+    )
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 2
+    assert {g.store_id for g in groups} == {ids["store"], None}
+    assert len({g.group_id for g in groups}) == 2
+
+
+def test_a_store_group_id_names_the_store_and_the_source(
+    store: GraphStore,
+) -> None:
+    """The id is content-derived and differs from the old path's id.
+
+    `chain_group:` + 16 hex, over the store, the source and the two id
+    sets: two groups that differ only in how they were joined are two
+    ids, and the same graph always yields the same one.
+    """
+    ids = _store_group(store, tag="a")
+
+    first = store.query.find_chain_groups()
+    second = store.query.find_chain_groups()
+
+    assert [g.group_id for g in first] == [g.group_id for g in second]
+    assert first[0].group_id.startswith("chain_group:")
+    assert first[0].group_id != store.query._chain_group_id(
+        ids["source"], first[0].write_chain_ids, first[0].read_chain_ids,
+    )
+
+
+def test_find_chains_does_not_traverse_the_store_edges(
+    store: GraphStore,
+) -> None:
+    """ADR-0015, decision 5 — `structural` is not a path.
+
+    `find_chains` walks entry to sink and must not pick up a chain that
+    runs through a store: a store is between two paths, not a hop on one
+    (ADR-0021 §6).
+    """
+    _store_group(store, tag="a")
+
+    assert store.query.find_chain_groups()
+    assert store.query.find_chains() == []
+
+
+def test_find_chain_groups_rejects_an_out_of_range_threshold(
+    store: GraphStore,
+) -> None:
+    """A threshold is a probability; anything else is a programming bug."""
+    import pytest
+
+    for value in (-0.1, 1.1):
+        with pytest.raises(ValueError):
+            store.query.find_chain_groups(
+                store_confidence_threshold=value,
+            )
+

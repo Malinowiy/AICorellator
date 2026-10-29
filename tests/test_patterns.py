@@ -25,10 +25,15 @@ def test_flow_kinds_match_models() -> None:
 
 
 def test_structural_edge_kinds_subset_of_edge_kinds() -> None:
-    """Structural edge kinds are real edge kinds (ADR-0015)."""
+    """Structural edge kinds are real edge kinds (ADR-0015, ADR-0021)."""
     # `provides_tool` is deliberately absent: it is control, because the
     # access path to a tool is the candidate attack path (ADR-0015).
-    assert patterns.STRUCTURAL_EDGE_KINDS == {"guards"}
+    # `writes_to` and `reads_from` are here: they are declarations about
+    # a *place*, and the AST does not see a value pass between the two
+    # call sites they connect (ADR-0021 §4).
+    assert patterns.STRUCTURAL_EDGE_KINDS == {
+        "guards", "writes_to", "reads_from",
+    }
     assert patterns.STRUCTURAL_EDGE_KINDS <= patterns.EDGE_KINDS
 
 
@@ -39,17 +44,30 @@ def test_control_edge_kinds_subset_of_edge_kinds() -> None:
     assert "uses_model" in patterns.CONTROL_EDGE_KINDS
     assert "uses_tool" in patterns.CONTROL_EDGE_KINDS
     assert "delegates_to" in patterns.CONTROL_EDGE_KINDS
-    # `writes_to` (1.3a.1) is control: a declaration that the writer
-    # produces the source, not a traced dataflow.
-    assert "writes_to" in patterns.CONTROL_EDGE_KINDS
+    # `writes_to` (1.3a.1) left this set in B.3a: it is structural now
+    # (ADR-0021 §4), and a kind is control or structural, never both.
+    assert "writes_to" not in patterns.CONTROL_EDGE_KINDS
     # No edge kind is both control and structural.
     assert not (patterns.CONTROL_EDGE_KINDS & patterns.STRUCTURAL_EDGE_KINDS)
 
 
-def test_writes_to_is_a_registered_edge_kind() -> None:
-    """The 1.3a.1 writer edge is in the registry and not structural."""
+def test_the_store_linking_edge_kinds_are_registered_and_structural() -> None:
+    """P1/P2 — `writes_to` and `reads_from` are declared, not traversed.
+
+    B.3a declares both kinds and produces neither edge (B.3c migrates
+    B.2's `writes_to` and emits `reads_from`), so what is pinned here is
+    the registry: the sets that `flow_kind` and the enumerators read.
+    """
     assert "writes_to" in patterns.EDGE_KINDS
-    assert "writes_to" not in patterns.STRUCTURAL_EDGE_KINDS
+    assert "reads_from" in patterns.EDGE_KINDS
+    assert "writes_to" in patterns.STRUCTURAL_EDGE_KINDS
+    assert "reads_from" in patterns.STRUCTURAL_EDGE_KINDS
+    assert "writes_to" not in patterns.CONTROL_EDGE_KINDS
+
+
+def test_store_is_a_registered_node_kind() -> None:
+    """The store entity is a node kind (ADR-0021 §1)."""
+    assert "store" in patterns.NODE_KINDS
 
 
 def test_class_a_name_tables_are_gone() -> None:

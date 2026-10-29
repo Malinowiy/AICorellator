@@ -1242,3 +1242,69 @@ def test_pipeline_chain_groups_evaluated_and_reported(
         assert [g["verdict"] for g in groups_json] == ["exploitable", "exploitable"]
         assert all(g["validated"] is True for g in groups_json)
         assert "## Chain groups (Phase 3)" in (bundle / "report.md").read_text()
+
+
+# ============================================================
+# B.3a — the store mechanism produces no edges
+# ============================================================
+
+def test_the_pipeline_produces_no_store_and_no_reads_from(
+    writer_target: Path,
+    pipeline_db: Path,
+) -> None:
+    """B.3a is a mechanism: it declares the shape and emits nothing.
+
+    The project has two `writes_to` edges (B.2's write side), so a
+    producer of store links would have something to work with — and it
+    must not, because the family rules and the B.2 migration are B.3b
+    and B.3c. What this pins is the negative: no `store` node, no
+    `reads_from` edge, and every `writes_to` still ending at a read
+    site rather than at a store.
+
+    The enumerator is checked too: with no store in the graph the
+    store-joined path finds nothing, and the groups that come out are
+    the B.2-shaped ones (`store_id is None`). If this project ever gains
+    a store, this test fails and says so — that is B.3c's signal, not a
+    fixture to bend.
+    """
+    target = ingest(writer_target, kind="folder")
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    detection = run_detectors(manifest)
+    delta = normalize(make_context(
+        manifest, tsa, ep, llm,
+        capabilities=capabilities, framework_detection=detection,
+    ))
+
+    with GraphStore(pipeline_db) as store:
+        write_graph(store, delta)
+
+        assert store.nodes.list(kind="store") == []
+        assert store.edges.list(kind="reads_from") == []
+
+        nodes = {n.id: n for n in store.nodes.list()}
+        writes = store.edges.list(kind="writes_to")
+        assert writes, "the B.2 write side is the point of this fixture"
+        assert {
+            nodes[e.target_id].kind for e in writes
+        } == {"untrusted_source"}
+
+        # Every `identity_confidence` in the graph is NULL: no kind but
+        # the two store links carries one (ADR-0021 §7).
+        assert all(
+            e.identity_confidence is None
+            for e in store.edges.list()
+        )
+
+        for group in store.query.find_chain_groups(include_weak=True):
+            assert group.store_id is None
+            assert group.store_confidence is None
+            assert group.weak is False
+

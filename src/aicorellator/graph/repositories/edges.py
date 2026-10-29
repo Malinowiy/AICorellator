@@ -9,6 +9,36 @@ from typing import Any
 from ..models import Edge
 
 
+# Edge kinds that carry `identity_confidence` (ADR-0021 §7). On every
+# other kind the field is not applicable and stays NULL.
+IDENTITY_EDGE_KINDS: frozenset[str] = frozenset({"writes_to", "reads_from"})
+
+# A link's identity confidence is combined from independent signals, so
+# a second signal strengthens it. The cap keeps a combined value short of
+# certainty: two independent signals are still signals (ADR-0021 §7).
+IDENTITY_CONFIDENCE_CAP = 0.99
+
+
+def combine_identity_confidence(
+    old: float | None, new: float | None
+) -> float | None:
+    """Combine two identity signals, `1 − (1−old)(1−new)`, capped.
+
+    `NULL` is not zero — it is "no signal on this side", so an absent
+    value defers to the present one instead of dragging the result down
+    to the other signal's value by accident. Both absent stays absent.
+
+    The combination is associative and commutative, which is what lets
+    `upsert` fold edges one at a time in whatever order they arrive: the
+    stored value after three upserts is the same as after one.
+    """
+    if old is None:
+        return new
+    if new is None:
+        return old
+    return min(IDENTITY_CONFIDENCE_CAP, 1.0 - (1.0 - old) * (1.0 - new))
+
+
 class EdgesRepository:
     """Thin wrapper over the `edges` table.
 
@@ -35,12 +65,12 @@ class EdgesRepository:
             """
             INSERT INTO edges (
                 id, source_id, target_id, kind, host_id, precision,
-                flow_kind, data_flow_confirmed,
+                flow_kind, data_flow_confirmed, identity_confidence,
                 attributes, capabilities, observed_by, confidence, status,
                 created_at, updated_at
             ) VALUES (
                 :id, :source_id, :target_id, :kind, :host_id, :precision,
-                :flow_kind, :data_flow_confirmed,
+                :flow_kind, :data_flow_confirmed, :identity_confidence,
                 :attributes, :capabilities, :observed_by, :confidence, :status,
                 :created_at, :updated_at
             )
@@ -62,7 +92,14 @@ class EdgesRepository:
             default 'control' (ADR-0015).
           - data_flow_confirmed is upgraded: a non-NULL value wins over
             NULL (framework detectors may enrich it).
-          - confidence takes the max.
+          - confidence takes the max — it answers "does this edge
+            exist", and one observer seeing it is enough.
+          - identity_confidence is **combined**, not maxed, for
+            `writes_to` / `reads_from` only (ADR-0021 §7): the two fields
+            answer different questions, and two independent identity
+            signals make the link stronger than either alone. NULL
+            defers to the present value; on every other kind the field
+            is not applicable and stays NULL.
           - status is overwritten.
         """
         existing = self.get(edge.id)
@@ -91,6 +128,16 @@ class EdgesRepository:
             if edge.data_flow_confirmed is not None
             else existing.data_flow_confirmed
         )
+        # Identity is a different question from existence, so it merges
+        # differently. Only the two store-linking kinds carry it; on any
+        # other kind a value would be a producer bug, and dropping it
+        # here is what keeps the column's invariant true of stored rows.
+        if edge.kind in IDENTITY_EDGE_KINDS:
+            merged_identity = combine_identity_confidence(
+                existing.identity_confidence, edge.identity_confidence
+            )
+        else:
+            merged_identity = None
 
         self._conn.execute(
             """
@@ -102,6 +149,7 @@ class EdgesRepository:
                 precision    = :precision,
                 flow_kind    = :flow_kind,
                 data_flow_confirmed = :data_flow_confirmed,
+                identity_confidence = :identity_confidence,
                 attributes   = :attributes,
                 capabilities = :capabilities,
                 observed_by  = :observed_by,
@@ -118,6 +166,7 @@ class EdgesRepository:
                 "precision": merged_precision,
                 "flow_kind": merged_flow_kind,
                 "data_flow_confirmed": merged_data_flow,
+                "identity_confidence": merged_identity,
                 "attributes": json.dumps(merged_attrs),
                 "capabilities": json.dumps(merged_caps),
                 "observed_by": json.dumps(merged_observed),

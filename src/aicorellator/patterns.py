@@ -68,6 +68,10 @@ NODE_KINDS: frozenset[str] = frozenset({
     # MCP tool catalogue, a mailbox. Chain groups hang off it, which is
     # why it is a node kind and not a node attribute.
     "untrusted_source",
+    # The place write and read call sites point at (ADR-0021 §1). An
+    # entity, not an actor: it is what the two sides of a chain group
+    # share, so it is a node the join can name by id.
+    "store",
 })
 
 # Mirrors the CHECK constraint on edges.kind in graph/schema.sql
@@ -80,8 +84,13 @@ EDGE_KINDS: frozenset[str] = frozenset({
     "delegates_to",
     "has_access_to",
     "guards",
-    # A writer produces an untrusted source (1.3a.1, ADR-0010).
+    # A writer produces an untrusted source (1.3a.1, ADR-0010). ADR-0021
+    # §2 retargets it to a `store`; B.3a declares the kind and leaves
+    # B.2's edges where they are (B.3c migrates them).
     "writes_to",
+    # A store is where a read site reads from (ADR-0021 §3):
+    # `store → untrusted_source`.
+    "reads_from",
 })
 
 # Mirrors the CHECK constraint on edges.flow_kind in graph/schema.sql
@@ -98,19 +107,26 @@ FLOW_KINDS: frozenset[str] = frozenset({"control", "data", "structural"})
 # standpoint, "the agent can call the tool" is equivalent to "the agent
 # calls the tool under attack": the access path is the candidate attack
 # path until runtime monitoring (Phase 2) can tell the two apart.
-STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({"guards"})
+#
+# `writes_to` and `reads_from` are here (ADR-0021 §4). Both are
+# *declarations about a place*: the AST sees a write call and a read
+# call and reasons that they name one store — it does not see a value
+# pass. `find_chains` therefore does not traverse them (ADR-0015,
+# decision 5); `find_chain_groups` crosses `writes_to` once, at the
+# anchor, as the write chain's last hop (ADR-0021 §6).
+STRUCTURAL_EDGE_KINDS: frozenset[str] = frozenset({
+    "guards", "writes_to", "reads_from",
+})
 
 # Edge kinds that carry flow_kind = "control" and no confirmed data flow
 # (ADR-0015; ADR-0016, decision 3).
 #
-# `writes_to` (1.3a.1) is here for the same reason `provides_tool` is:
-# "this server produces this catalogue" is a declaration, and the
-# producer never traced data into the source — it matched a server to a
-# source by file. A traced write (RAG `add_documents`, an email send)
-# would carry its own value when it lands.
+# `provides_tool` is here for the same reason it is not structural:
+# "this server provides this tool" is a declaration, but the access path
+# is the candidate attack path, and the producer never traced data into
+# the tool — it matched a server to a tool by file.
 CONTROL_EDGE_KINDS: frozenset[str] = frozenset({
     "uses_model", "uses_tool", "provides_tool", "delegates_to",
-    "writes_to",
 })
 
 # Flow kinds that find_chains traverses (ADR-0015, decision 5).

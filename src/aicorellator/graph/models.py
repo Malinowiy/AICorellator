@@ -30,6 +30,12 @@ VALID_NODE_KINDS = frozenset({
     # Not an actor and not an action: the place untrusted content is
     # read from (1.3a, ADR-0010). Chain groups hang off it in 1.3b.
     "untrusted_source",
+    # A place write and read call sites point at (ADR-0021 §1). Not an
+    # actor: it is the entity the write side and the read side share,
+    # identified by `(family, identity_hint)` in `attributes`. It
+    # carries no confidence of its own — confidence belongs to the
+    # links that point at it.
+    "store",
 })
 
 # Valid edge kinds. Mirrors the CHECK constraint in schema.sql.
@@ -42,8 +48,15 @@ VALID_EDGE_KINDS = frozenset({
     "guards",
     # A writer produces an untrusted source (1.3a.1, ADR-0010). Control,
     # not data: the edge records that the writer *declares* the source's
-    # content, which is not a traced dataflow (ADR-0015).
+    # content, which is not a traced dataflow (ADR-0015). ADR-0021
+    # retargets it to a `store`; B.3a declares the kind and does not
+    # move the edges (B.3c does).
     "writes_to",
+    # A store is where a read site reads from (ADR-0021 §3):
+    # `store → untrusted_source`. Structural like `writes_to`: the AST
+    # sees the read call, and the link to the store is a reasoned
+    # claim about identity, not a traced path.
+    "reads_from",
 })
 
 # Valid flow kinds (ADR-0015). Mirrors the CHECK constraint in schema.sql.
@@ -151,6 +164,13 @@ class Edge:
     precision: str = "syntactic"
     flow_kind: str = "control"
     data_flow_confirmed: str | None = None
+    # How sure the analysis is that the store on this edge is the same
+    # store the other edge points at (ADR-0021 §7). Orthogonal to
+    # `confidence`, which says the edge exists: this one says the two
+    # ends name one place. `None` on every kind except `writes_to` and
+    # `reads_from` — not applicable elsewhere, so absent rather than
+    # zero.
+    identity_confidence: float | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
     capabilities: list[str] = field(default_factory=list)
     observed_by: list[str] = field(default_factory=lambda: ["ast"])
@@ -177,6 +197,7 @@ class Edge:
             precision=row["precision"],
             flow_kind=row["flow_kind"],
             data_flow_confirmed=row["data_flow_confirmed"],
+            identity_confidence=row["identity_confidence"],
             attributes=json.loads(row["attributes"]),
             capabilities=json.loads(row["capabilities"] or "[]"),
             observed_by=json.loads(row["observed_by"] or '["ast"]'),

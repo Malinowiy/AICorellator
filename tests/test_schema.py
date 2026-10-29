@@ -106,6 +106,93 @@ def test_edge_kind_check(store: GraphStore) -> None:
         ))
 
 
+def test_store_node_kind_is_accepted(store: GraphStore) -> None:
+    """S1 — `store` is in the CHECK constraint (ADR-0021 §1).
+
+    The node is identified by `(family, identity_hint)` in `attributes`
+    and named `<family>:<identity_hint>`; it carries no confidence of
+    its own, which is why the row's `confidence` stays at its default.
+    """
+    store.nodes.add(Node(
+        id="store:1",
+        kind="store",
+        name="fs:/uploads/",
+        host_id="localhost",
+        attributes={"family": "fs", "identity_hint": "/uploads/"},
+    ))
+
+    fetched = store.nodes.get("store:1")
+    assert fetched is not None
+    assert fetched.kind == "store"
+    assert fetched.attributes["family"] == "fs"
+    assert fetched.attributes["identity_hint"] == "/uploads/"
+
+
+def test_reads_from_edge_kind_is_accepted(store: GraphStore) -> None:
+    """S2 — `reads_from` is in the CHECK constraint (ADR-0021 §3).
+
+    Direction is the store's: `store → untrusted_source`.
+    """
+    store.nodes.upsert(Node(
+        id="s:1", kind="store", name="fs:/uploads/", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="u:1", kind="untrusted_source",
+        name="user_upload:f.read", host_id="localhost",
+    ))
+
+    store.edges.add(Edge(
+        id="e:1", source_id="s:1", target_id="u:1",
+        kind="reads_from", host_id="localhost",
+        flow_kind="structural", identity_confidence=0.5,
+    ))
+
+    fetched = store.edges.get("e:1")
+    assert fetched.kind == "reads_from"
+    assert fetched.flow_kind == "structural"
+    assert fetched.identity_confidence == 0.5
+
+
+def test_identity_confidence_check(store: GraphStore) -> None:
+    """S3 — the column is nullable and bounded to `[0.0, 1.0]`.
+
+    One read site per case: `edges` is unique on
+    `(source_id, target_id, kind, host_id)`, so the cases differ in
+    *which* source reads from the store rather than in the row's id.
+    """
+    store.nodes.upsert(Node(
+        id="s:1", kind="store", name="fs:/uploads/", host_id="localhost",
+    ))
+    for i in range(1, 6):
+        store.nodes.upsert(Node(
+            id=f"u:{i}", kind="untrusted_source",
+            name=f"user_upload:f.read{i}", host_id="localhost",
+        ))
+
+    def _link(edge_id: str, target: str, value: float | None) -> None:
+        store.edges.add(Edge(
+            id=edge_id, source_id="s:1", target_id=target,
+            kind="reads_from", host_id="localhost",
+            identity_confidence=value,
+        ))
+
+    # NULL is the value every kind but the two store links carries.
+    _link("e:null", "u:1", None)
+    assert store.edges.get("e:null").identity_confidence is None
+
+    # The bounds themselves are accepted.
+    _link("e:low", "u:2", 0.0)
+    _link("e:high", "u:3", 1.0)
+    assert store.edges.get("e:low").identity_confidence == 0.0
+    assert store.edges.get("e:high").identity_confidence == 1.0
+
+    # Outside them the CHECK refuses the row.
+    with pytest.raises(sqlite3.IntegrityError):
+        _link("e:under", "u:4", -0.1)
+    with pytest.raises(sqlite3.IntegrityError):
+        _link("e:over", "u:5", 1.1)
+
+
 def test_edge_self_loop_rejected(store: GraphStore) -> None:
     """source_id == target_id is rejected by CHECK."""
     store.nodes.upsert(Node(

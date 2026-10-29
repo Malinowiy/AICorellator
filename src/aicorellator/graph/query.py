@@ -17,10 +17,12 @@ Key methods:
   get_subgraph      — slice by kind
 
 find_chains traverses control and data flow only. Structural edges
-(`guards`) are declarations, not paths, and are skipped (ADR-0015,
-decision 5). `provides_tool` is control: the access path is the
-candidate attack path. `find_chain_groups` traverses the same kinds,
-for the same reason.
+(`guards`, `writes_to`, `reads_from`) are declarations, not paths, and
+are skipped (ADR-0015, decision 5). `provides_tool` is control: the
+access path is the candidate attack path. `find_chain_groups`
+traverses the same kinds, for the same reason — except that it crosses
+`writes_to` once, as a write chain's last hop, because there the edge
+names the chain's end rather than extending it (ADR-0021 §6).
 """
 
 from __future__ import annotations
@@ -169,6 +171,54 @@ def priority_for(
 
 
 # ============================================================
+# Store joins (ADR-0021)
+# ============================================================
+
+# The boundary between a strong and a weak group (ADR-0021 §9). A group
+# whose join confidence is below it is still real evidence, so it stays
+# in the graph and out of the default enumeration; `include_weak=True`
+# is how a caller asks for it. The value is `config.yaml`'s
+# (`store.confidence_threshold`, read by the caller) and the default
+# here is the policy default — the same 0.7, pinned by a test.
+DEFAULT_STORE_CONFIDENCE_THRESHOLD = 0.7
+
+# Below this there is no link at all (ADR-0021 §9): the base of §8's
+# combination, and the floor under the two thresholds. A producer is
+# not supposed to emit a `writes_to` / `reads_from` pair below it; the
+# join drops one anyway rather than reporting a "store" the analysis
+# does not believe in.
+WEAK_JOIN_FLOOR = 0.3
+
+# The one edge kind a write chain may cross as its *last* hop, at the
+# anchor. It is structural (ADR-0021 §4), so the ordinary traversal rule
+# would skip it; the anchor hop is not a hop along a path, it is the
+# declaration that names the chain's end (ADR-0021 §6). Deeper hops
+# still require a traversable flow kind.
+ANCHOR_EDGE_KINDS: frozenset[str] = frozenset({"writes_to"})
+
+
+def join_confidence(
+    write: float | None, read: float | None
+) -> float | None:
+    """A pair's confidence: the weaker of its two links (ADR-0021 §7).
+
+    A pair is as strong as the side the analysis is least sure about, so
+    the join takes `min`. `None` means one side carries no identity
+    confidence at all — the analysis cannot say the two ends name one
+    store — and the join then declines to state a confidence rather than
+    inventing one.
+    """
+    if write is None or read is None:
+        return None
+    return min(write, read)
+
+
+def is_weak(confidence: float, threshold: float) -> bool:
+    """Is a join confidence below the strong/weak boundary?"""
+    return confidence < threshold
+
+
+# ============================================================
 # Result types
 # ============================================================
 
@@ -207,6 +257,17 @@ class ChainGroup:
     today — pairs only, `max_chain_group_size = 2` hard-coded until
     1.3c.1 makes it configurable.
 
+    ADR-0021 adds a second shape: a group joined through a **store**.
+    Then `store_id` names the shared node the two chains meet at, and
+    `store_confidence` is the join's confidence — `min` of the write
+    link's and the read link's `identity_confidence` (§7). A
+    store-joined group whose confidence is below the threshold carries
+    `weak = True`; it is in the graph but not in the default
+    enumeration (§9). A group from the B.2-shaped path has
+    `store_id = None`, `store_confidence = None` and `weak = False`:
+    it pairs by `untrusted_source`, so there is no identity question to
+    answer and nothing to call weak.
+
     `write_chain_ids[i]` is the id of `write_chains[i]`, and the same
     for reads: the ids are recomputable from the node sequence with the
     same function that names `find_chains` results
@@ -229,6 +290,14 @@ class ChainGroup:
     read_chain_ids: list[str]
     write_chains: list[list[str]] = field(default_factory=list)
     read_chains: list[list[str]] = field(default_factory=list)
+    # The store the pair was joined through, when it was joined through
+    # one (ADR-0021 §6). `None` on a B.2-shaped group.
+    store_id: str | None = None
+    store_name: str | None = None
+    # The join's confidence (`min` of the two links) and whether it is
+    # below the strong/weak boundary (ADR-0021 §7, §9).
+    store_confidence: float | None = None
+    weak: bool = False
     score: float = 0.0
     score_components: dict[str, Any] = field(default_factory=dict)
     priority: str | None = None
@@ -257,6 +326,10 @@ class ChainGroup:
             "read_chain_ids": self.read_chain_ids,
             "write_chains": self.write_chains,
             "read_chains": self.read_chains,
+            "store_id": self.store_id,
+            "store_name": self.store_name,
+            "store_confidence": self.store_confidence,
+            "weak": self.weak,
             "score": self.score,
             "score_components": self.score_components,
             "priority": self.priority,
@@ -277,6 +350,12 @@ class ChainGroup:
         differ exactly in their chain lengths, so the name identifies
         the row without an LLM (ADR-0001: no generated prose in stored
         data) and without a counter that would drift between runs.
+
+        A store-joined group maps here too, anchored on its read site's
+        source. The store itself is not a column yet: `chain_groups` has
+        no store reference and ADR-0021 §12 leaves the report's view of
+        stores open, so what a stored row says today is which source the
+        pair reads, not which store joined it.
         """
         return ChainGroupRecord(
             id=self.group_id,
@@ -616,8 +695,12 @@ class QueryLayer:
         max_write_chains_per_source: int = 100,
         max_read_chains_per_source: int = 100,
         max_groups: int = 1000,
+        include_weak: bool = False,
+        store_confidence_threshold: float = (
+            DEFAULT_STORE_CONFIDENCE_THRESHOLD
+        ),
     ) -> list[ChainGroup]:
-        """Enumerate write/read chain pairs around each untrusted source.
+        """Enumerate write/read chain pairs around each anchor.
 
         Direct attacks are linear (`find_chains`). Indirect prompt
         injection is not: one path **writes** attacker content into an
@@ -652,6 +735,21 @@ class QueryLayer:
         1.3a.1, and it is a *detection* question — which source node
         does a writer write into? — not an enumeration one.
 
+        **The store path (ADR-0021 §6).** A second enumeration joins the
+        same two sides through a `store`: write chains end at the store,
+        and the store's `reads_from` edges name the sources that read
+        from it, so each (store, source, write, read) tuple is a group
+        whose confidence is `min` of the two links'
+        `identity_confidence`. The join is by node id — the store is a
+        node the two sides share — not a traversal, because a store is
+        *between* two paths, not a hop along one. A store-joined group
+        below `store_confidence_threshold` is **weak**: reported with
+        `weak = True` only when `include_weak` asks for it, and never
+        below `WEAK_JOIN_FLOOR`, which is where §9 says there is no link
+        at all. B.3a declares this shape and produces none of its edges,
+        so on today's graphs it is a no-op; the B.2-shaped path below
+        still enumerates, and B.3c replaces it.
+
         Deterministic and bounded: no LLM, ids derived from content,
         groups ordered by source id, then write chain id, then read
         chain id; each side bounded by its cap, the total by
@@ -667,6 +765,10 @@ class QueryLayer:
         ):
             if value < 0:
                 raise ValueError(f"{name} must be >= 0")
+        if not 0.0 <= store_confidence_threshold <= 1.0:
+            raise ValueError(
+                "store_confidence_threshold must be between 0.0 and 1.0"
+            )
 
         sources = self._conn.execute(
             """
@@ -711,7 +813,7 @@ class QueryLayer:
                 source_id, sink_ids, max_hops, max_read_chains_per_source
             )
 
-            for write_id, write_nodes in write_chains:
+            for write_id, write_nodes, _ in write_chains:
                 for read_id, read_nodes in read_chains:
                     if len(groups) >= max_groups:
                         break
@@ -729,7 +831,159 @@ class QueryLayer:
                         )
                     )
 
+        # The store path (ADR-0021 §6). Enumerated after the pairs above
+        # and appended to them: the two joins are different claims (one
+        # shares a source, the other shares a store) and their ids differ,
+        # so a source reachable both ways yields two groups rather than
+        # one deduplicated group — B.3c removes the first path and leaves
+        # only this one. Appending keeps today's output stable while the
+        # store graph is empty.
+        groups.extend(
+            self._store_chain_groups(
+                entry_ids=entry_ids,
+                sink_ids=sink_ids,
+                max_hops=max_hops,
+                max_write_chains=max_write_chains_per_source,
+                max_read_chains=max_read_chains_per_source,
+                max_groups=max_groups - len(groups),
+                include_weak=include_weak,
+                threshold=store_confidence_threshold,
+            )
+        )
+
         return groups
+
+    def _store_chain_groups(
+        self,
+        entry_ids: set[str],
+        sink_ids: set[str],
+        max_hops: int,
+        max_write_chains: int,
+        max_read_chains: int,
+        max_groups: int,
+        include_weak: bool,
+        threshold: float,
+    ) -> list[ChainGroup]:
+        """Groups joined **by store id** (ADR-0021 §6).
+
+        For each active `store`: the write chains that end at it, the
+        `reads_from` links from it to the sources that read from it, and
+        the read chains out of those sources. Every (store, source,
+        write, read) tuple is a group; the store is the anchor both
+        sides share, and the join is by id — no edge is traversed to
+        reach the other side.
+
+        A chain's write link must carry an `identity_confidence`: the
+        `reads_from` link carries the other one, and the pair's
+        confidence is the weaker of the two. A link with no confidence
+        states no identity, and §5's rule is that unresolved identity
+        produces no group, so such a pair is skipped rather than joined
+        at some invented confidence. A pair below `WEAK_JOIN_FLOOR` is
+        skipped for the same reason — §9 says there is no link there.
+
+        Read chains are enumerated once per source and reused: the
+        `store → source` cardinality is N:1, but a source's read chains
+        do not depend on which store named it.
+
+        Order is by store id, then source id, then chain id, so the
+        result is a property of the graph and not of the walk.
+        """
+        if max_groups <= 0:
+            return []
+
+        stores = self._conn.execute(
+            """
+            SELECT id, name FROM nodes
+            WHERE kind = 'store' AND status = 'active'
+            ORDER BY id
+            """
+        ).fetchall()
+        if not stores:
+            return []
+
+        groups: list[ChainGroup] = []
+        by_source: dict[str, list[tuple[str, list[str]]]] = {}
+
+        for store in stores:
+            if len(groups) >= max_groups:
+                break
+
+            write_chains = self._write_chains_to(
+                store["id"], entry_ids, max_hops, max_write_chains
+            )
+            if not write_chains:
+                continue
+
+            for source_id, source_name, read_link in self._store_read_links(
+                store["id"]
+            ):
+                if source_id not in by_source:
+                    by_source[source_id] = self._read_chains_from(
+                        source_id, sink_ids, max_hops, max_read_chains
+                    )
+
+                for write_id, write_nodes, write_link in write_chains:
+                    confidence = join_confidence(write_link, read_link)
+                    if confidence is None or confidence < WEAK_JOIN_FLOOR:
+                        continue
+                    weak = is_weak(confidence, threshold)
+                    if weak and not include_weak:
+                        continue
+
+                    for read_id, read_nodes in by_source[source_id]:
+                        if len(groups) >= max_groups:
+                            break
+                        groups.append(
+                            ChainGroup(
+                                group_id=self._chain_group_id(
+                                    source_id,
+                                    [write_id],
+                                    [read_id],
+                                    store_id=store["id"],
+                                ),
+                                untrusted_source_id=source_id,
+                                untrusted_source_name=source_name,
+                                write_chain_ids=[write_id],
+                                read_chain_ids=[read_id],
+                                write_chains=[write_nodes],
+                                read_chains=[read_nodes],
+                                store_id=store["id"],
+                                store_name=store["name"],
+                                store_confidence=confidence,
+                                weak=weak,
+                            )
+                        )
+
+        return groups
+
+    def _store_read_links(
+        self, store_id: str
+    ) -> list[tuple[str, str, float | None]]:
+        """`(source_id, source_name, identity_confidence)` per `reads_from`.
+
+        One row per read site that reads from this store, ordered by
+        source id. Only active links between active nodes: a stale link
+        is not evidence about the graph as it stands.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT e.target_id AS source_id, n.name AS source_name,
+                   e.identity_confidence AS identity_confidence
+            FROM edges e
+            JOIN nodes n ON n.id = e.target_id
+            WHERE e.source_id = ?
+              AND e.kind = 'reads_from'
+              AND e.status = 'active'
+              AND n.kind = 'untrusted_source'
+              AND n.status = 'active'
+            ORDER BY e.target_id
+            """,
+            (store_id,),
+        ).fetchall()
+        return [
+            (r["source_id"], r["source_name"], r["identity_confidence"])
+            for r in rows
+        ]
 
     def _write_chains_to(
         self,
@@ -737,8 +991,13 @@ class QueryLayer:
         entry_ids: set[str],
         max_hops: int,
         max_chains: int,
-    ) -> list[tuple[str, list[str]]]:
-        """Paths `entry_point → ... → source_id`, as (chain_id, nodes).
+    ) -> list[tuple[str, list[str], float | None]]:
+        """Paths `entry_point → ... → source_id`, as (chain_id, nodes, link).
+
+        The third element is the anchor hop's `identity_confidence` — the
+        link that names the anchor, not a hop along the path. It is what
+        a store join reads (ADR-0021 §7); the B.2-shaped caller ignores
+        it. `None` when the anchor edge carries none.
 
         Walked **in reverse** — from the anchor along the edges that
         point at it — because that is the direction the graph stores: a
@@ -762,26 +1021,26 @@ class QueryLayer:
         if max_chains == 0 or not entry_ids:
             return []
 
-        found: list[tuple[str, list[str]]] = []
+        found: list[tuple[str, list[str], float | None]] = []
         seen: set[str] = set()
 
-        # stack entries: (current_node, path_nodes, path_edges)
-        stack: list[tuple[str, list[str], list[str]]] = [
-            (source_id, [source_id], [])
+        # stack entries: (current, path_nodes, path_edges, anchor_link)
+        stack: list[tuple[str, list[str], list[str], float | None]] = [
+            (source_id, [source_id], [], None)
         ]
 
         while stack:
             if len(found) >= max_chains:
                 break
 
-            current, path_nodes, path_edges = stack.pop()
+            current, path_nodes, path_edges, anchor_link = stack.pop()
 
             if path_edges and current in entry_ids:
                 nodes = list(reversed(path_nodes))
                 chain_id = self._chain_id(nodes, list(reversed(path_edges)))
                 if chain_id not in seen:
                     seen.add(chain_id)
-                    found.append((chain_id, nodes))
+                    found.append((chain_id, nodes, anchor_link))
                 continue
 
             if len(path_edges) >= max_hops:
@@ -796,12 +1055,27 @@ class QueryLayer:
                 (current,),
             ).fetchall()
 
+            # The hop that lands on the anchor is the anchor's own link —
+            # `writes_to`, a declaration that names the chain's end
+            # (ADR-0021 §6) — so a structural one is crossed here, which
+            # the rule below would otherwise refuse. Every deeper hop is
+            # an ordinary path hop and must carry a traversable flow
+            # kind.
+            at_anchor = not path_edges
+
             # Push in reverse so the first edge is explored first.
             for row in reversed(rows):
                 edge = Edge.from_row(row)
-                # Structural edges are declarations, not paths.
-                if edge.flow_kind not in TRAVERSABLE_FLOW_KINDS:
-                    continue
+                if (
+                    at_anchor
+                    and edge.kind in ANCHOR_EDGE_KINDS
+                ):
+                    link = edge.identity_confidence
+                else:
+                    # Structural edges are declarations, not paths.
+                    if edge.flow_kind not in TRAVERSABLE_FLOW_KINDS:
+                        continue
+                    link = anchor_link
                 previous = edge.source_id
                 # Cycle guard: do not revisit a node in the same path.
                 if previous in path_nodes:
@@ -811,6 +1085,7 @@ class QueryLayer:
                         previous,
                         path_nodes + [previous],
                         path_edges + [edge.id],
+                        link,
                     )
                 )
 
@@ -897,23 +1172,33 @@ class QueryLayer:
         source_id: str,
         write_chain_ids: list[str],
         read_chain_ids: list[str],
+        store_id: str | None = None,
     ) -> str:
         """Deterministic group ID: `chain_group:` + first 16 hex of sha256.
 
-        Over the anchor and the two id sets, sorted, so an id depends on
-        the group's membership and not on the order pairs were
+        Over the anchor(s) and the two id sets, sorted, so an id depends
+        on the group's membership and not on the order pairs were
         enumerated in: the same graph always yields the same ids. The
         payload is canonical JSON — the convention `_chain_id` uses —
         rather than the parts concatenated with a separator, because
         JSON delimits and types the fields, and no two distinct groups
         can then collide by running together.
+
+        A store-joined group carries `store` as well as `source`: the two
+        joins are different claims about the same pair of chains, and the
+        id says which one named the group. The key is **absent** — not
+        null — on a B.2-shaped group, so ids written before B.3a keep
+        their value; B.3c re-ids the groups it migrates.
         """
+        payload: dict[str, Any] = {
+            "source": source_id,
+            "write": sorted(write_chain_ids),
+            "read": sorted(read_chain_ids),
+        }
+        if store_id is not None:
+            payload["store"] = store_id
         payload = json.dumps(
-            {
-                "source": source_id,
-                "write": sorted(write_chain_ids),
-                "read": sorted(read_chain_ids),
-            },
+            payload,
             sort_keys=True,
             separators=(",", ":"),
         )

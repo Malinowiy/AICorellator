@@ -27,6 +27,7 @@ from aicorellator.analysis.evaluator import (
     evaluate_chains,
 )
 from aicorellator.graph.query import MAX_GROUPS_SCORED
+from aicorellator.scan_config import ScanConfigError, load_scan_config
 from aicorellator.workspace import open_workspace
 
 
@@ -76,7 +77,18 @@ parser.add_argument(
 args = parser.parse_args()
 
 ws = open_workspace(root=args.workdir)
-config = load_config(args.config or ws.config_path)
+config_path = args.config or ws.config_path
+config = load_config(config_path)
+
+# The store threshold is graph policy, not ensemble policy: it is the
+# `store:` section of the same file (ADR-0021 §9), read with the scan
+# loader and passed to the enumerator, which does not read config itself.
+try:
+    scan = load_scan_config(config_path)
+except (FileNotFoundError, ScanConfigError) as e:
+    print(f"Error: {e}")
+    raise SystemExit(2)
+store_threshold = scan.store.confidence_threshold
 
 print(f"Mode: {config.mode}")
 print(f"Voters: {len(config.voters)}")
@@ -90,8 +102,12 @@ with GraphStore(ws.db_path) as store:
     if args.groups:
         # The enumerator cap is raised on purpose: scoring only sees the
         # groups enumeration hands it.
-        groups = store.query.find_chain_groups(max_groups=args.max_groups)
+        groups = store.query.find_chain_groups(
+            max_groups=args.max_groups,
+            store_confidence_threshold=store_threshold,
+        )
         print(f"Groups enumerated: {len(groups)}")
+        print(f"Store threshold: {store_threshold}")
 
         selected = store.query.prioritize_chain_groups(groups)
         print(f"Groups selected for evaluation: {len(selected)}")

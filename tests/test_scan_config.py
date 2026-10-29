@@ -46,6 +46,9 @@ unclassified:
 
 logs:
   keep_archives: 0
+
+store:
+  confidence_threshold: 0.35
 """
 
 
@@ -60,6 +63,7 @@ def test_defaults_match_the_documented_template() -> None:
     assert cfg.runtime.test_command is None
     assert cfg.unclassified.action == "ask"
     assert cfg.logs.keep_archives == 5
+    assert cfg.store.confidence_threshold == 0.7
 
 
 def test_empty_file_is_defaults(tmp_path: Path) -> None:
@@ -82,6 +86,7 @@ def test_valid_load(tmp_path: Path) -> None:
     assert cfg.runtime.test_command == "pytest -q tests/"
     assert cfg.unclassified.action == "error"
     assert cfg.logs.keep_archives == 0
+    assert cfg.store.confidence_threshold == 0.35
 
 
 def test_unknown_keys_are_ignored(tmp_path: Path) -> None:
@@ -192,6 +197,7 @@ def test_template_holds_every_subsystem_section(tmp_path: Path) -> None:
         "llm_classifier_model:",
         "unclassified:",
         "logs:",
+        "store:",
     ):
         assert f"\n{section}" in text, section
 
@@ -331,6 +337,39 @@ def test_keep_archives_must_be_a_non_negative_int(
         load_scan_config(path)
 
 
+@pytest.mark.parametrize("value", ["-0.1", "1.5", "high", "true"])
+def test_store_threshold_must_be_a_probability(
+    tmp_path: Path, value: str
+) -> None:
+    """ADR-0021 §9 — the threshold is a confidence, and a typo is an error.
+
+    A threshold of 1.5 would select nothing while looking like the
+    strictest possible policy, and `true` would silently mean `1.0` in
+    Python. Neither is a policy this loader understands.
+    """
+    path = _write_config(
+        tmp_path, f"store:\n  confidence_threshold: {value}\n",
+    )
+    with pytest.raises(ScanConfigError, match="store.confidence_threshold"):
+        load_scan_config(path)
+
+
+def test_the_store_default_matches_the_query_layer_default() -> None:
+    """The policy default and the mechanism's default are one number.
+
+    `find_chain_groups` falls back to its own constant when a caller
+    passes none; a caller that passes the config's must get the same
+    behaviour. Two constants, one value, pinned here (the convention
+    `NODE_KINDS` / `VALID_NODE_KINDS` uses).
+    """
+    from aicorellator.graph.query import DEFAULT_STORE_CONFIDENCE_THRESHOLD
+
+    assert (
+        DEFAULT_STORE_CONFIDENCE_THRESHOLD
+        == default_scan_config().store.confidence_threshold
+    )
+
+
 @pytest.mark.parametrize(
     ("where", "content"),
     [
@@ -339,6 +378,7 @@ def test_keep_archives_must_be_a_non_negative_int(
         ("runtime", "runtime: python\n"),
         ("unclassified", "unclassified: ask\n"),
         ("logs", "logs: 5\n"),
+        ("store", "store: 0.7\n"),
     ],
 )
 def test_section_not_mapping(tmp_path: Path, where: str, content: str) -> None:

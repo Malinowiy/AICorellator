@@ -64,6 +64,13 @@ VALUES ('localhost', 'localhost', 'standalone', 'active');
 --   credential:   sha256(source_file + var_name)
 --   sink:         sha256(call_target + file_path)
 --   entry_point:  sha256(file_path + route_path)
+--   store:        sha256(family + identity_hint)
+--     (B.3a, ADR-0021) — one node per place a write side and a read side
+--     point at, not one per call site: `('fs', '/uploads/')`,
+--     `('db', 'documents')`, `('mcp_catalogue', 'finmail')`. The family
+--     and the identity hint are the node's `attributes`; the name is
+--     `<family>:<identity_hint>`. A store carries no confidence — the
+--     links that point at it carry `identity_confidence`.
 --   untrusted_source: sha256(source_type + call_target + source_file)
 --     (1.3a, ADR-0010) — one node per read site. The source_type is the
 --     family (rag_corpus, mcp_tool_description, email_inbox), the
@@ -102,7 +109,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     CHECK (kind IN (
         'agent', 'llm_endpoint', 'mcp_server', 'tool',
         'credential', 'sink', 'entry_point', 'guardrail',
-        'untrusted_source'
+        'untrusted_source', 'store'
     )),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (status IN ('active', 'stale')),
@@ -120,7 +127,8 @@ CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
 -- ------------------------------------------------------------
 -- edges — graph relations (stored kinds only)
 -- ------------------------------------------------------------
--- Stored:  uses_model, uses_tool, provides_tool, delegates_to, has_access_to, guards
+-- Stored:  uses_model, uses_tool, provides_tool, delegates_to, has_access_to,
+--          guards, writes_to, reads_from
 -- Derived: reaches_sink, called_by — computed by Query Layer.
 --
 -- capabilities (ADR-0009): JSON array of edge-level capabilities:
@@ -137,6 +145,15 @@ CREATE INDEX IF NOT EXISTS idx_nodes_content_hash ON nodes(content_hash);
 --   parameter_match, local_var_match, call_result_match,
 --   literal_only, no_args, unknown.
 --
+-- identity_confidence (ADR-0021 §7): how sure the analysis is that the
+-- store at one end of this edge is the same store the other edge names.
+-- Independent of `confidence`, which says the edge exists. NULL on every
+-- kind except `writes_to` and `reads_from` — the field is not applicable
+-- elsewhere, so it is absent rather than zero. Two independent signals
+-- combine as `1 - (1 - old)(1 - new)`, capped at 0.99 (see
+-- repositories/edges.py); `min` of the two links is a pair's join
+-- confidence.
+--
 -- observed_by (ADR-0016): JSON array of strings identifying who
 -- confirmed the edge. Default ["ast"]; Layer 2 adds "runtime".
 -- `find_chains(data_edges_only=True)` filters on "runtime" in it.
@@ -151,6 +168,7 @@ CREATE TABLE IF NOT EXISTS edges (
     precision    TEXT NOT NULL DEFAULT 'syntactic',
     flow_kind    TEXT NOT NULL DEFAULT 'control',
     data_flow_confirmed TEXT,
+    identity_confidence REAL,
     observed_by  JSON NOT NULL DEFAULT '["ast"]',
     attributes   JSON NOT NULL DEFAULT '{}',
     capabilities JSON NOT NULL DEFAULT '[]',
@@ -165,7 +183,7 @@ CREATE TABLE IF NOT EXISTS edges (
 
     CHECK (kind IN (
         'uses_model', 'uses_tool', 'provides_tool', 'delegates_to', 'has_access_to', 'guards',
-        'writes_to'
+        'writes_to', 'reads_from'
     )),
     CHECK (precision IN ('syntactic', 'compiler-verified')),
     CHECK (flow_kind IN ('control', 'data', 'structural')),
@@ -174,6 +192,8 @@ CREATE TABLE IF NOT EXISTS edges (
         'literal_only', 'no_args', 'unknown'
     )),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    CHECK (identity_confidence IS NULL
+           OR (identity_confidence >= 0.0 AND identity_confidence <= 1.0)),
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(attributes)),
     CHECK (json_valid(capabilities)),
@@ -499,6 +519,13 @@ VALUES (1, 'Phase 0: initial schema');
 
 INSERT OR IGNORE INTO schema_version (version, description)
 VALUES (2, 'Phase 2: capabilities + chain_groups');
+
+-- Version 3 adds a value to each CHECK and one nullable column. SQLite
+-- cannot alter a CHECK, so a database created before B.3a keeps the old
+-- constraints until it is rebuilt: `run_scan.py --clean` (the graph is
+-- derived state, ADR-0006) is how an existing workspace picks this up.
+INSERT OR IGNORE INTO schema_version (version, description)
+VALUES (3, 'B.3a: store node, reads_from edge, identity_confidence');
 
 -- ============================================================
 -- End of schema
