@@ -7,13 +7,14 @@ One entry point:
 `ctx` is a `NormalizeContext` (`make_context` builds one): the manifest,
 TSA symbols, entry points, LLM configs, capabilities and detector output,
 plus the per-scan caches and the indexes the stages share. The pipeline
-itself is `normalizer_stages.STAGES` — fifteen stages, one per step of
+itself is `normalizer_stages.STAGES` — nineteen stages, one per step of
 the C4 L3 Phase 1 pipeline, each with an `apply(delta, ctx) -> delta`
 (`normalizer_stages.base.NormalizerStage`).
 
 What the stages produce, in one place for orientation:
 
-Edges (all `flow_kind=control`, no data-flow verdict — ADR-0016):
+Edges (all `flow_kind=control` unless noted, no data-flow verdict —
+ADR-0016; `guards` is `structural`, ADR-0015 decision 5):
   - provides_tool  (mcp_server → tool)
   - has_access_to  (tool → sink)
   - has_access_to  (untrusted_source → reader)      (1.3a)

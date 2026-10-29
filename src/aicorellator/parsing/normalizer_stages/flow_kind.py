@@ -48,9 +48,10 @@ class FlowKindStage:
     ) -> "GraphDelta":
         for edge in delta.edges:
             if edge.kind in STRUCTURAL_EDGE_KINDS:
-                # A declaration, not a path (ADR-0015, decision 5). No
-                # resolver emits one today; a guardrail edge that
-                # arrives here must not be downgraded to control.
+                # A declaration, not a path (ADR-0015, decision 5).
+                # `guardrail_edges` (stage 19) emits one, already
+                # `structural`; skipping it here is what keeps it from
+                # being downgraded to control.
                 continue
             edge.flow_kind = "control"
         return delta

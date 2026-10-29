@@ -359,6 +359,68 @@ The same measurement shows a pre-existing overload: `mcp_entry_synthesis` writes
 
 **References:** ADR-0007; ADR-0015 (structural edges excluded from `find_chains`).
 
+#### B.4-gap — No producer of `guardrail` nodes after ADR-0016
+
+**Priority:** **High** (blocks B.4 end-to-end)
+**Status:** Not started
+**Found in:** B.4a implementation (2026-10-29)
+**Rationale:** B.4a emits `guards` edges from `guardrail` nodes. It is
+correct and tested, but on all four corpora `guards = 0` — there are no
+`guardrail` nodes for it to link. ADR-0016 decision 7 removed the
+class-A name heuristics, which included the path rule
+(`PATH_SEGMENT_KINDS`' `("guardrails", "guardrail")`, read by nobody)
+and the `GuardrailHookService`-style class suffix. `classify_class` and
+`classify_method` return `sink` / `agent` / `llm_endpoint` / `tool` and
+nothing else; no deterministic layer produces a `guardrail` node. The
+LLM classifier (D.2) can, via its `DetectionResult` merged at stage 10 —
+which is why `guardrail_edges` runs after the merge — but on the four
+corpora no source produces them.
+
+**Consequence:** B.4a and B.4b are correct and ready; end-to-end
+guardrail influence does not fire until a producer exists. B.4b's
+payload section will be empty on every corpus that has no guardrail
+nodes; the code path is exercised only by unit tests.
+
+**What does not close this gap, and why:**
+
+- **Re-adding a path rule** (`guardrails/` → `guardrail`). This is a
+  class-A heuristic in another shape — ADR-0016 decision 7 rejects it.
+  `PATH_SEGMENT_KINDS` still has the entry; it is dead data and should
+  not be resurrected.
+- **Re-adding a class-name suffix** (`*Guardrail`). Same reason.
+- **LLM classifier only.** D.2 is opt-in and off by default, and it is
+  the fallback, not the primary. B.4 must not depend on it being on.
+
+**What could close it, and is a decision for a later planning session:**
+
+- **Capability-based detection.** A class or function whose body calls a
+  known filter / validator API (`validate_input`, `filter_output`,
+  policy hooks with a recognized signature) exercises a capability the
+  AST can see. This requires new `CapabilityRule`s in `patterns.py` —
+  and every new rule needs corpus evidence, which the four corpora do
+  not provide. Not B.4.
+- **Framework detector.** A `FrameworkDetector` that recognizes a
+  guardrail SDK (LangChain callbacks, FastMCP middleware, Guardrails AI,
+  NeMo Guardrails) and emits `guardrail` nodes from that SDK's own
+  conventions. This is the ADR-0011 route, and it is a **new detector**
+  (D.1 territory), not B.4. No source in the four corpora uses such an
+  SDK.
+- **`guardrail` as a node kind that no layer produces today, and a
+  separate phase that gives it one.** The honest answer. B.4 ships the
+  edges, the edges wait for the nodes.
+
+**Not to be confused with:**
+
+- `@guardrail(...)` decorator recognition in B.4a is literal and
+  intentional (ADR-0019 §1): a custom decorator named `@pii_guard` is
+  not recognized. That is a known false negative, not a gap.
+- The absent `bypassed_by` edge is a separate decision (ADR-0019 §4).
+
+**Decision needed before any implementation:** which producer
+(capability rule / framework detector / LLM classifier as the only
+source), with which corpus evidence. A new ADR would record it, in the
+same way ADR-0019 records the emission and the weighting.
+
 ### B.5 — Judge determinism
 
 **Priority:** **Medium**
