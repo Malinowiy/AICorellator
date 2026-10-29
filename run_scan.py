@@ -21,6 +21,7 @@ from aicorellator.parsing import (
     write_graph,
 )
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
+from aicorellator.parsing.capability_inheritance import apply_inheritance
 from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.framework_detectors.registry import all_names
@@ -112,6 +113,13 @@ def main() -> int:
             continue
         fc = extract_capabilities(entry.abs_path, entry.path)
         capabilities[entry.path] = fc
+    # One level of base-class inheritance on top of the per-file
+    # extraction (B.10b, ADR-0020): a subclass whose own body has no
+    # call site still carries what its base's body shows, which is what
+    # keeps it in the graph after ADR-0016 removed the name rules. Before
+    # the classifier and `normalize()`, so every consumer of
+    # `capabilities` reads the same set.
+    capabilities = apply_inheritance(capabilities, manifest)
     print(f"Capabilities: {len(capabilities)} files")
 
     # --- TSA (AST symbols) ---

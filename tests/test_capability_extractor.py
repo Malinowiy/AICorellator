@@ -1186,3 +1186,29 @@ def test_credit_accepts_every_declared_capability() -> None:
 
         assert caps == {rule.capability}
 
+
+def test_extract_does_not_inherit_from_a_base(tmp_path: Path) -> None:
+    """`extract` is per file and per body; inheritance is a second pass.
+
+    B.10b's rule (`caps(cls) = caps(own body) ∪ caps(base)`,
+    ADR-0020) lives in `capability_inheritance.apply_inheritance`,
+    which runs over the manifest after this function has produced one
+    file's own-body capabilities. The subclass below stays empty here,
+    and that is the contract: resolving a base means reading the
+    manifest's other files, which a per-file extractor cannot do.
+    """
+    path = _write(tmp_path, "agents/base.py", """
+class BaseAgent:
+    def _run_agent_loop(self, messages):
+        return self.llm_client.chat(messages)
+
+
+class InvoiceAgent(BaseAgent):
+    def process(self, task):
+        return self._run_agent_loop(task)
+""")
+    result = extract(path, "agents/base.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+    assert caps["BaseAgent"] == {"calls_llm"}
+    assert caps["InvoiceAgent"] == set()
+

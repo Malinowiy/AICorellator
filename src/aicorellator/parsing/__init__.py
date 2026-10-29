@@ -15,6 +15,8 @@ Exports:
   classify_method   — classify a method symbol
   classify_file     — classify a whole file (mcp_server)
   run_classifier    — run the optional LLM classifier (Layer 1b)
+  apply_inheritance — add a scanned base class's capabilities to its
+                      subclasses (B.10b, ADR-0020)
 """
 
 from .models import TSASymbol, TSAOutput
@@ -36,6 +38,7 @@ from .capability_extractor import (
     SymbolCapabilities,
     extract as extract_capabilities,
 )
+from .capability_inheritance import apply_inheritance
 
 __all__ = [
     "TSASymbol",
@@ -57,4 +60,5 @@ __all__ = [
     "FileCapabilities",
     "SymbolCapabilities",
     "extract_capabilities",
+    "apply_inheritance",
 ]
