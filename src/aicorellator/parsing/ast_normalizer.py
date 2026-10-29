@@ -20,6 +20,7 @@ Edges (all `flow_kind=control`, no data-flow verdict — ADR-0016):
   - delegates_to   (entry_point → agent)
   - delegates_to   (agent → agent, orchestrator)
   - has_access_to  (agent → mcp_server)
+  - guards         (guardrail → component)         (B.4a, structural)
 
 Nodes:
   - agent, llm_endpoint (from classification)

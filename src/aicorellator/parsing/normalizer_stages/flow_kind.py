@@ -16,12 +16,15 @@ implementation of the value → kind mapping, and on Layer 1a nothing
 calls it: the kind is `control` unconditionally.
 
 A structural edge (`guards`) is a declaration, not a path, and is left
-alone (ADR-0015, decision 5). No resolver emits one today; a guardrail
-edge that arrives here must not be downgraded to control.
+alone (ADR-0015, decision 5). `guardrail_edges` (stage 19) emits one,
+already `structural`, and this stage skips it because `guards` is in
+`STRUCTURAL_EDGE_KINDS`. A guardrail edge that arrives here must not be
+downgraded to control.
 
-Every resolver that runs after this stage also constructs control edges,
-and none of them writes `data_flow_confirmed`, so the whole AST graph is
-`control` with a `NULL` flow confirmation, except for structural edges.
+Every other resolver that runs after this stage also constructs control
+edges, and none of them writes `data_flow_confirmed`, so the whole AST
+graph is `control` with a `NULL` flow confirmation, except for structural
+edges.
 """
 
 from __future__ import annotations
