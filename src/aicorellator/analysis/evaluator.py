@@ -12,7 +12,7 @@ Pipeline per chain *group* (1.3e, ADR-0010 — indirect prompt injection):
 
     1. Enumerate and select (already done by find_chain_groups +
        prioritize_chain_groups)
-    2. Voters evaluate the write/read pair with the v1.5.0 group prompt
+    2. Voters evaluate the write/read pair with the v1.6.0 group prompt
     3. Judge issues the final verdict (only when configured)
     4. Layer 3 validation against the group's own edge set
     5. Persist to chain_groups table
@@ -27,8 +27,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from typing import Iterable
 
-from ..graph.models import Chain, ChainGroupRecord
+from ..graph.models import Chain, ChainGroupRecord, Node
 from ..graph.store import GraphStore
 from ..graph.query import CandidateChain, ChainGroup
 from ..patterns import TRAVERSABLE_FLOW_KINDS
@@ -114,7 +115,7 @@ def evaluate_chain_groups(
 
     ADR-0006's Layer 2 applied to a group (ADR-0010): the candidate is a
     *pair* of chains that meet through an untrusted source, the prompt is
-    v1.5.0's group prompt, and the verdict is stored in `chain_groups`
+    v1.6.0's group prompt, and the verdict is stored in `chain_groups`
     instead of `chains`. Everything else is the linear path's: the same
     voters, the same judge, the same aggregation, the same Layer 3
     discipline.
@@ -199,6 +200,10 @@ def _evaluate_one(
     """Evaluate one candidate chain, return a Chain ready to persist."""
     node_dicts = [_node_to_dict(store, nid) for nid in candidate.nodes]
     edge_dicts = [_edge_to_dict(store, eid) for eid in candidate.edges]
+    # B.4b (ADR-0019 §2): the guardrails near this chain, read from the
+    # graph rather than from the chain — a `guards` edge is `structural`
+    # and never appears in an enumerated chain. Empty is the normal case.
+    guardrails = _guardrails_for_chain(store, candidate.nodes)
 
     # 1. Voters (prompt depends on config.mode).
     voter_responses = voters_mod.evaluate(
@@ -210,6 +215,7 @@ def _evaluate_one(
         max_tokens=config.max_tokens,
         parallel=parallel,
         mode=config.mode,
+        guardrails=guardrails,
     )
 
     # 2. Judge (only if configured — never in fast or solo).
@@ -223,6 +229,7 @@ def _evaluate_one(
             judge=config.judge,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
+            guardrails=guardrails,
         )
 
     # 3. Final verdict + confidence.
@@ -292,9 +299,25 @@ def _evaluate_one_group(
         group-aware reasoning. A group-specific judge prompt is not part
         of this item; the group framing reaches the judge through the
         voter reasoning it weighs.
+
+    Guardrails arrive per side (B.4b, ADR-0019 §3): the payload carries
+    `{"write": [...], "read": [...], "anchor": [...]}`, and the judge —
+    which is the linear one — gets the three lists flattened back into
+    the single `guardrails` list its prompt defines.
     """
     payload, node_dicts, edge_dicts = _group_payload(store, group)
     user_prompt = build_group_prompt(group.group_id, payload)
+
+    # The judge is the linear judge, so it takes the same flat
+    # `guardrails` list the linear path passes (B.4b, ADR-0019 §3). The
+    # pair's three sides are flattened for it — nothing is lost, because
+    # the judge's rule is to weigh the voters' guardrail reasoning rather
+    # than to split the sides itself.
+    guardrails = _dedupe_by_id(
+        guardrail
+        for side in ("write", "read", "anchor")
+        for guardrail in payload["guardrails"][side]
+    )
 
     runner = (
         voters_mod._evaluate_parallel
@@ -320,6 +343,7 @@ def _evaluate_one_group(
             judge=config.judge,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
+            guardrails=guardrails,
         )
 
     if judge_response is not None:
@@ -427,6 +451,74 @@ def _edge_to_dict(store: GraphStore, edge_id: str) -> dict:
     return d
 
 
+def _guardrails_for_chain(
+    store: GraphStore,
+    node_ids: Iterable[str],
+) -> list[dict]:
+    """The guardrail nodes connected to any of `node_ids` by a `guards` edge.
+
+    This is the graph's answer to "is there a guardrail on this path", and
+    the one place the evaluator reads `guards` edges. `guards` is
+    `structural` (ADR-0015, decision 5), so the edge is never part of an
+    enumerated chain and is not in the candidate's `edges`; it is read
+    back from the store and filtered by the chain's own node ids — the
+    same read the brief for B.4b names, and the same shape the rest of
+    this module uses to go from ids to dicts.
+
+    The direction is `guardrail → component` (ADR-0019 §1), so the
+    chain's node is the edge's *target* and the guardrail is its
+    *source*. One dict per guardrail, in edge-id order (the repository
+    orders by id), so the payload is deterministic across runs.
+
+    Empty when the chain has no guardrail near it — the default state of
+    every path, and not a weakness. `[]`, never `None`: the prompt's
+    `guardrails` key is always present (ADR-0019 §2).
+    """
+    wanted = set(node_ids)
+    if not wanted:
+        return []
+    found: list[dict] = []
+    seen: set[str] = set()
+    for edge in store.edges.list(kind="guards", status="active"):
+        if edge.target_id not in wanted or edge.source_id in seen:
+            continue
+        node = store.nodes.get(edge.source_id)
+        if node is None or node.kind != "guardrail":
+            # B.4a emits `guardrail → component` and nothing else, so this
+            # is a construction bug (or an edge left behind by a deleted
+            # node). Skipping it keeps the prompt from claiming a guardrail
+            # the graph does not have — the same reason ADR-0019 refuses to
+            # emit `guards` on co-location.
+            log.warning(
+                "guards edge %s has a non-guardrail source %s; skipped",
+                edge.id, edge.source_id,
+            )
+            continue
+        seen.add(edge.source_id)
+        found.append(_guardrail_to_dict(node))
+    return found
+
+
+def _guardrail_to_dict(node: Node) -> dict:
+    """One guardrail, as the prompt's `guardrails` section shows it.
+
+    Deliberately not `_node_to_dict`: `observed_by` and `confidence`
+    describe how a *chain* node was observed, and a guardrail is never a
+    chain node — it is a reference beside the chain, not a step of it.
+    What the model gets is what the graph knows about the guardrail: its
+    name, its kind, its capabilities and its attributes. No `policy` and
+    no `enforcement_point` is synthesized (ADR-0019 §4); D.6 adds those
+    to the node, and then they arrive inside `attributes`.
+    """
+    return {
+        "id": node.id,
+        "kind": node.kind,
+        "name": node.name,
+        "capabilities": list(node.capabilities),
+        "attributes": node.attributes,
+    }
+
+
 def _voter_response_dict(r, candidate_edge_ids: set[str]) -> dict:
     """Convert a VoterResponse to a JSON-safe dict for chains.voter_outputs.
 
@@ -469,8 +561,8 @@ def _group_payload(store: GraphStore, group: ChainGroup) -> tuple[dict, list[dic
 
       - `payload` is what `build_group_prompt` serializes: the anchor,
         the write chains, the read chains (each with the per-node
-        `lethal_trifecta` flag) and 1.3c's score, outside the marker
-        block.
+        `lethal_trifecta` flag), the guardrails split by side, and 1.3c's
+        score, outside the marker block.
       - `node_dicts` / `edge_dicts` are the same nodes and edges in one
         flat list, write side first. They go to the judge, which is the
         linear judge and expects a path: the pair concatenated at the
@@ -493,6 +585,10 @@ def _group_payload(store: GraphStore, group: ChainGroup) -> tuple[dict, list[dic
             _chain_payload(store, chain_id, nodes, with_flag=True)
             for chain_id, nodes in zip(group.read_chain_ids, group.read_chains)
         ],
+        # Per side (B.4b, ADR-0019 §3). Read from the graph, not from the
+        # chains: `guards` edges are `structural` and are never part of an
+        # enumerated chain.
+        "guardrails": _guardrails_for_group(store, group),
         "score": group.score,
         "score_components": group.score_components,
         "priority": group.priority,
@@ -502,6 +598,31 @@ def _group_payload(store: GraphStore, group: ChainGroup) -> tuple[dict, list[dic
     node_dicts = _dedupe_by_id(node for chain in chains for node in chain["nodes"])
     edge_dicts = _dedupe_by_id(edge for chain in chains for edge in chain["edges"])
     return payload, node_dicts, edge_dicts
+
+
+def _guardrails_for_group(store: GraphStore, group: ChainGroup) -> dict:
+    """The guardrails near a group, split by side (ADR-0019 §3).
+
+    `{"write": [...], "read": [...], "anchor": [...]}`, the three lists
+    the group prompt documents. The split is a *partition*, not three
+    views of one set: the anchor is a node of both chains, so a guardrail
+    on the channel would otherwise land on both sides and the model could
+    not tell "on the channel" from "on both sides". The ADR's three-way
+    split only says something if each guardrail lands in exactly one
+    list, so the anchor is excluded from `write` and `read`.
+
+    Each list is empty when nothing guards that side — the common case,
+    and `[]` rather than a missing key, so the shape the prompt documents
+    is the shape the payload always has.
+    """
+    anchor = group.untrusted_source_id
+    write_nodes = {node for chain in group.write_chains for node in chain}
+    read_nodes = {node for chain in group.read_chains for node in chain}
+    return {
+        "write": _guardrails_for_chain(store, write_nodes - {anchor}),
+        "read": _guardrails_for_chain(store, read_nodes - {anchor}),
+        "anchor": _guardrails_for_chain(store, [anchor]),
+    }
 
 
 def _chain_payload(

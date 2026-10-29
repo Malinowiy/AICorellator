@@ -9,6 +9,7 @@ and the row that lands keeps the columns 1.3c paid for.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -373,3 +374,139 @@ def test_an_unscored_group_is_still_evaluated(store) -> None:
     assert row.verdict == "exploitable"
     assert row.score == 0.0
     assert row.priority is None
+
+
+# ------------------------------------------------------------
+# Guardrails reach the pair's payload (B.4b, ADR-0019)
+# ------------------------------------------------------------
+
+GUARDRAIL_W = "guardrail:" + "1" * 16
+GUARDRAIL_R = "guardrail:" + "2" * 16
+GUARDRAIL_A = "guardrail:" + "3" * 16
+
+
+def _guard(
+    store: GraphStore, guardrail_id: str, target_id: str, name: str,
+) -> None:
+    """A guardrail node and its `guards` edge onto one component.
+
+    `guardrail → component` (ADR-0019 §1) and `structural` (ADR-0015,
+    decision 5), so the edge is in the graph and in neither chain — the
+    section can only come from a graph lookup.
+    """
+    store.nodes.upsert(Node(
+        id=guardrail_id, kind="guardrail", name=name, host_id="localhost",
+        attributes={"source_file": "app/guardrails.py"},
+    ))
+    store.edges.upsert(Edge(
+        id="edge:" + guardrail_id[-16:], source_id=guardrail_id,
+        target_id=target_id, kind="guards", host_id="localhost",
+        flow_kind="structural",
+    ))
+
+
+def _target_payload(prompt: str) -> dict:
+    """The group prompt's [UNTRUSTED_DATA] block, parsed back."""
+    block = prompt.split("[UNTRUSTED_DATA]", 1)[1]
+    return json.loads(block.split("[/UNTRUSTED_DATA]", 1)[0])
+
+
+def test_guardrails_are_split_by_side(store) -> None:
+    """A guardrail on one side stays on that side (ADR-0019 §3).
+
+    The sides are weighed independently, so a guardrail on the write
+    chain must not lower confidence in the read side's sink. The write
+    chain is `entry → source`, so the guardrail goes on the entry point;
+    the read chain's guardrail goes on the reader.
+    """
+    group = _build(store)
+    _guard(store, GUARDRAIL_W, ENTRY, "InputSanitizer")
+    fake, captured = _voter([E_WRITE])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    guardrails = _target_payload(captured["user_prompt"])["guardrails"]
+    assert list(guardrails) == ["write", "read", "anchor"]
+    assert [g["name"] for g in guardrails["write"]] == ["InputSanitizer"]
+    assert guardrails["read"] == []
+    assert guardrails["anchor"] == []
+
+    # Both sides populated: each guardrail stays on its own side.
+    _guard(store, GUARDRAIL_R, READER, "OutputFilter")
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    guardrails = _target_payload(captured["user_prompt"])["guardrails"]
+    assert [g["name"] for g in guardrails["write"]] == ["InputSanitizer"]
+    assert [g["name"] for g in guardrails["read"]] == ["OutputFilter"]
+    assert guardrails["anchor"] == []
+
+
+def test_a_guardrail_on_the_anchor_is_its_own_side(store) -> None:
+    """The channel's guardrail is neither the write nor the read side.
+
+    The anchor is a node of both chains, so the three lists are a
+    *partition*: without that, a guardrail on the channel would appear on
+    both sides and the model could not tell "on the channel" from "on
+    both sides".
+    """
+    group = _build(store)
+    _guard(store, GUARDRAIL_A, SOURCE, "ChannelFilter")
+    fake, captured = _voter([E_WRITE])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    guardrails = _target_payload(captured["user_prompt"])["guardrails"]
+    assert [g["name"] for g in guardrails["anchor"]] == ["ChannelFilter"]
+    assert guardrails["write"] == []
+    assert guardrails["read"] == []
+
+
+def test_a_group_without_guardrails_carries_three_empty_lists(store) -> None:
+    """No guardrail is the default state, and the shape is still there.
+
+    `[]`, not a missing key: the model must not have to tell "nothing
+    guards either side" from "the prompt did not ask" (ADR-0019 §2).
+    """
+    group = _build(store)
+    fake, captured = _voter([E_WRITE])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    assert _target_payload(captured["user_prompt"])["guardrails"] == {
+        "write": [], "read": [], "anchor": [],
+    }
+
+
+def test_the_group_judge_receives_the_flat_guardrail_list(store) -> None:
+    """The judge is the linear one, so it gets the flat list (ADR-0019 §3).
+
+    It weighs the voters' guardrail reasoning against the same evidence
+    they reasoned from; the per-side split belongs to the group prompt,
+    not to the judge.
+    """
+    group = _build(store)
+    _guard(store, GUARDRAIL_W, ENTRY, "InputSanitizer")
+    _guard(store, GUARDRAIL_R, READER, "OutputFilter")
+    fake, _ = _voter([E_WRITE])
+    judge_seen: dict = {}
+
+    def fake_judge(chain_id, chain_nodes, chain_edges, voter_responses, **kwargs):
+        judge_seen.update(kwargs)
+        return JudgeResponse(
+            chain_id=chain_id, model="j", prompt_version="v1.6.0",
+            verdict="uncertain", confidence=0.3, reasoning="insufficient",
+        )
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake), \
+         patch("aicorellator.analysis.judge.evaluate", side_effect=fake_judge):
+        evaluate_chain_groups(
+            store, [group], _config(voters=1, with_judge=True), progress=False,
+        )
+
+    assert [g["name"] for g in judge_seen["guardrails"]] == [
+        "InputSanitizer", "OutputFilter",
+    ]

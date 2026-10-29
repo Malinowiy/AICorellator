@@ -15,6 +15,12 @@ v1.5.0 adds the chain-group prompt (1.3e, ADR-0010): a *pair* of chains
 through an untrusted source, with our deterministic score kept outside
 the untrusted-data block so it is passed as a hint rather than as
 evidence. The tests below pin the framing as well as the fields.
+
+v1.6.0 adds the guardrails section (B.4b, ADR-0019): every payload carries
+the guardrail nodes the graph connects to the chain by `guards` edges, and
+every system prompt carries the rule that a guardrail is evidence of an
+attempt to block, not evidence of a block. The tests below pin the
+section, the rule and the version.
 """
 
 from __future__ import annotations
@@ -88,15 +94,14 @@ def _has_sentence_with(text: str, *words: str) -> bool:
     return False
 
 
-def test_prompt_version_is_v1_5_0() -> None:
-    """v1.5.0 adds the chain-group prompt — stored per chain row (1.3e).
+def test_prompt_version_is_v1_6_0() -> None:
+    """v1.6.0 adds the guardrails section — stored per chain row (B.4b).
 
-    A minor bump, not a patch: the group prompt is a new payload shape, a
-    new system prompt and a new answer schema. The linear prompts are
-    untouched, so a chain row written before this version still names the
-    prompt that produced it.
+    A minor bump, not a patch: the payload gains a section. Nothing that
+    was already in the payload changes meaning, so a chain row written
+    under v1.5.0 still names the prompt that produced it.
     """
-    assert PROMPT_VERSION == "v1.5.0"
+    assert PROMPT_VERSION == "v1.6.0"
 
 
 def test_system_prompts_define_node_flow_attributes() -> None:
@@ -312,12 +317,15 @@ def test_group_system_prompt_explains_the_trifecta_flag() -> None:
 
     The flag is a hint to weigh, and the bullet says so in both
     directions: `false` does not clear the pair and `true` does not
-    convict it.
+    convict it. The bullet is picked out by what it is about (the
+    per-read-chain-node flag), not by the word alone: the guardrail rule
+    (B.4b) also names `lethal_trifecta`, to say the two facts are
+    independent.
     """
     bullets = [
         bullet
         for bullet in _bullets(GROUP_SYSTEM_PROMPT)
-        if "lethal_trifecta" in bullet
+        if "lethal_trifecta" in bullet and "per read-chain node" in bullet
     ]
     assert len(bullets) == 1, "expected one bullet about the flag"
     assert "per read-chain node" in bullets[0]
@@ -376,4 +384,123 @@ def test_group_prompt_answers_carry_both_ids() -> None:
     assert f'"group_id": "{GROUP_ID}"' in prompt
     assert "same identifier" in prompt
     assert "Do not invent edge IDs" in prompt
+
+
+# ------------------------------------------------------------
+# Guardrails reach the model (B.4b, ADR-0019)
+# ------------------------------------------------------------
+
+GUARDRAIL = {
+    "id": "guardrail:" + "9" * 16,
+    "kind": "guardrail",
+    "name": "PIIDetector",
+    "capabilities": [],
+    "attributes": {"source_file": "app/guardrails.py"},
+}
+
+
+def test_system_prompts_carry_the_guardrail_rule() -> None:
+    """Every system prompt says what a guardrail's presence means.
+
+    The rule is the ADR's (ADR-0019 §2): the payload shows that a
+    guardrail exists, not that it works. One sentence per prompt carries
+    all three halves — the section's name, "evidence of an attempt", and
+    the missing rules — so the model cannot take the first half without
+    the second.
+    """
+    for prompt in (
+        SYSTEM_PROMPT, SOLO_SYSTEM_PROMPT, GROUP_SYSTEM_PROMPT,
+        JUDGE_SYSTEM_PROMPT,
+    ):
+        assert _has_sentence_with(
+            prompt, "guardrails", "evidence of an attempt",
+            "rules are not in the payload",
+        ), "no guardrail rule found"
+
+
+def test_system_prompts_tie_guardrails_to_structural_edges() -> None:
+    """The rule says where the section came from: structural edges.
+
+    ADR-0015, decision 5 / ADR-0019 §1: `guards` is `structural` and never
+    on the path. Without that, the model reads the section as "this
+    guardrail filtered this path" — the claim the ADR refuses to make.
+    """
+    for prompt in (SYSTEM_PROMPT, SOLO_SYSTEM_PROMPT, GROUP_SYSTEM_PROMPT):
+        assert _has_sentence_with(prompt, "guardrails", "structural")
+
+
+def test_group_system_prompt_weighs_the_sides_apart() -> None:
+    """The group rule splits the section by side (ADR-0019 §3)."""
+    for side in ('"write"', '"read"', '"anchor"'):
+        assert side in GROUP_SYSTEM_PROMPT
+    assert _has_sentence_with(
+        GROUP_SYSTEM_PROMPT, "guardrail", "does not lower confidence",
+    )
+
+
+def test_voter_prompt_serializes_guardrails() -> None:
+    """The guardrail section rides inside the untrusted-data block."""
+    prompt = build_voter_prompt("chain:test", NODES, EDGES, [GUARDRAIL])
+    untrusted = prompt.partition("[/UNTRUSTED_DATA]")[0]
+
+    assert '"guardrails"' in untrusted
+    assert GUARDRAIL["id"] in untrusted
+    assert '"name": "PIIDetector"' in untrusted
+    assert '"source_file": "app/guardrails.py"' in untrusted
+    # After nodes and edges, the order the payload is built in.
+    assert untrusted.index('"guardrails"') > untrusted.index('"edges"')
+
+
+def test_solo_and_judge_prompts_serialize_guardrails() -> None:
+    """Solo and judge carry the same section as the voter path."""
+    solo = build_solo_prompt("chain:test", NODES, EDGES, [GUARDRAIL])
+    assert '"guardrails"' in solo.partition("[/UNTRUSTED_DATA]")[0]
+    assert GUARDRAIL["id"] in solo
+
+    judge = build_judge_prompt(
+        "chain:test", NODES, EDGES, [{"model": "v0"}], [GUARDRAIL],
+    )
+    assert '"guardrails"' in judge.partition("[/UNTRUSTED_DATA]")[0]
+    assert GUARDRAIL["id"] in judge
+
+
+def test_prompts_always_emit_the_guardrails_key() -> None:
+    """No guardrails is `[]`, not a missing key (ADR-0019 §2).
+
+    The model must not have to tell "nothing guards this path" from "the
+    prompt did not ask": the default state of every path is no guardrail.
+    """
+    prompts = (
+        build_voter_prompt("chain:test", NODES, EDGES),
+        build_solo_prompt("chain:test", NODES, EDGES),
+        build_judge_prompt("chain:test", NODES, EDGES, []),
+    )
+    for prompt in prompts:
+        assert '"guardrails": []' in prompt
+
+
+def test_group_prompt_serializes_guardrails_per_side() -> None:
+    """The pair's guardrails reach the prompt split by side."""
+    group = dict(
+        GROUP, guardrails={"write": [GUARDRAIL], "read": [], "anchor": []},
+    )
+    prompt = build_group_prompt(GROUP_ID, group)
+    untrusted = prompt.partition("[/UNTRUSTED_DATA]")[0]
+    scoring = prompt.partition("[/UNTRUSTED_DATA]")[2]
+
+    assert '"guardrails"' in untrusted
+    assert GUARDRAIL["id"] in untrusted
+    assert '"write"' in untrusted
+    assert '"anchor": []' in untrusted
+    # Target-derived, so it stays out of our scoring half.
+    assert '"guardrails"' not in scoring
+
+
+def test_group_prompt_emits_the_sides_without_a_payload_key() -> None:
+    """A payload that predates B.4b still gets the documented shape."""
+    prompt = build_group_prompt(GROUP_ID, GROUP)
+    untrusted = prompt.partition("[/UNTRUSTED_DATA]")[0]
+    assert '"write": []' in untrusted
+    assert '"read": []' in untrusted
+    assert '"anchor": []' in untrusted
 

@@ -51,6 +51,7 @@ def evaluate(
     max_tokens: int = 2000,
     parallel: bool = False,
     mode: str = "custom",
+    guardrails: list[dict] | None = None,
 ) -> list[VoterResponse]:
     """Evaluate one chain with all voters.
 
@@ -64,6 +65,10 @@ def evaluate(
         parallel: if True, run in parallel; else sequential.
         mode: execution mode ("fast", "solo", "full", "custom").
               Determines which prompt template is used.
+        guardrails: guardrail nodes near the chain, from the evaluator
+              (B.4b, ADR-0019). Passed straight through to the prompt
+              builder — the voter layer does not read it, and an empty
+              list is the normal case.
 
     Returns:
         list of VoterResponse, one per voter, in input order.
@@ -74,10 +79,14 @@ def evaluate(
     # Choose prompt template based on mode.
     if mode == "solo":
         system_prompt = SOLO_SYSTEM_PROMPT
-        user_prompt = build_solo_prompt(chain_id, chain_nodes, chain_edges)
+        user_prompt = build_solo_prompt(
+            chain_id, chain_nodes, chain_edges, guardrails=guardrails,
+        )
     else:
         system_prompt = SYSTEM_PROMPT
-        user_prompt = build_voter_prompt(chain_id, chain_nodes, chain_edges)
+        user_prompt = build_voter_prompt(
+            chain_id, chain_nodes, chain_edges, guardrails=guardrails,
+        )
 
     if parallel:
         return _evaluate_parallel(

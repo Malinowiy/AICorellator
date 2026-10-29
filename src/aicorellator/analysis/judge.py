@@ -40,13 +40,21 @@ def evaluate(
     judge: VoterConfig,
     temperature: float = 0.0,
     max_tokens: int = 2000,
+    guardrails: list[dict] | None = None,
 ) -> JudgeResponse | None:
-    """Run the judge on one chain. Returns None on timeout / parse failure."""
+    """Run the judge on one chain. Returns None on timeout / parse failure.
+
+    `guardrails` (B.4b, ADR-0019) is the same section the voters were
+    given, passed straight to the prompt builder: the judge weighs the
+    voters' guardrail reasoning against the evidence they reasoned from,
+    not against a section only they saw.
+    """
     user_prompt = build_judge_prompt(
         chain_id,
         chain_nodes,
         chain_edges,
         [_voter_to_dict(r) for r in voter_responses],
+        guardrails=guardrails,
     )
 
     # Per-judge overrides take precedence over the config defaults,

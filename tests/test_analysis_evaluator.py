@@ -11,6 +11,7 @@ from aicorellator.analysis.client import LLMResponse
 from aicorellator.analysis.config_loader import EnsembleConfig
 from aicorellator.analysis.evaluator import (
     _edge_to_dict,
+    _guardrails_for_chain,
     _node_to_dict,
     evaluate_chains,
 )
@@ -19,6 +20,7 @@ from aicorellator.analysis.models import (
     VoterConfig,
     VoterResponse,
 )
+from aicorellator.analysis.prompts import build_voter_prompt
 from aicorellator.graph import Edge, Node
 from aicorellator.graph.query import CandidateChain
 
@@ -386,3 +388,217 @@ def test_voter_payload_carries_flow_kind(store) -> None:
     # Control edges still expose capabilities and precision (P0/P2).
     assert by_kind["uses_model"]["capabilities"] == ["control_flows_forward"]
     assert by_kind["uses_model"]["precision"] == "syntactic"
+
+
+# ------------------------------------------------------------
+# Guardrails reach the payload (B.4b, ADR-0019)
+# ------------------------------------------------------------
+
+GUARDRAIL_ID = "guardrail:" + "9" * 16
+GUARDS_EDGE = "edge:" + "9" * 16
+
+
+def _build_unguarded_chain(store) -> None:
+    """`n:1 → n:2`, the chain the guardrail tests start from."""
+    store.nodes.upsert(Node(
+        id="n:1", kind="entry_point", name="POST /chat", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="sink", name="filesystem", host_id="localhost",
+        capabilities=["writes_filesystem"],
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2", kind="has_access_to",
+        host_id="localhost", flow_kind="data",
+        data_flow_confirmed="parameter_match",
+    ))
+
+
+def _add_guardrail(store) -> None:
+    """A `guardrail` node and its `guards` edge onto `n:2`.
+
+    `guardrail → component` (ADR-0019 §1) and `structural` (ADR-0015,
+    decision 5), so the edge is in the graph and in no chain.
+    """
+    store.nodes.upsert(Node(
+        id=GUARDRAIL_ID, kind="guardrail", name="PIIDetector",
+        host_id="localhost", attributes={"source_file": "app/guardrails.py"},
+    ))
+    store.edges.upsert(Edge(
+        id=GUARDS_EDGE, source_id=GUARDRAIL_ID, target_id="n:2",
+        kind="guards", host_id="localhost", flow_kind="structural",
+    ))
+
+
+def _build_chain_with_guardrail(store) -> None:
+    """`n:1 → n:2`, plus a guardrail guarding `n:2`.
+
+    The `guards` edge is `structural` (ADR-0015, decision 5), so it is in
+    the graph and in no chain — which is exactly the case the evaluator
+    has to read back for B.4b: the guardrail cannot arrive as a chain
+    edge, only as a graph lookup.
+    """
+    _build_unguarded_chain(store)
+    _add_guardrail(store)
+
+
+def test_voter_payload_carries_the_guardrails_section(store) -> None:
+    """A guarded chain reaches the voters with the guardrail named.
+
+    The section is the ADR's "what the graph knows, no more" (ADR-0019
+    §2): the node's id, kind, name, capabilities and attributes — no
+    synthesized `policy` or `enforcement_point`, which is D.6.
+    """
+    _build_chain_with_guardrail(store)
+    captured: dict = {}
+
+    def _fake_evaluate(**kwargs):
+        captured.update(kwargs)
+        return [_voter_response("fake-voter")]
+
+    with patch(
+        "aicorellator.analysis.voters.evaluate", side_effect=_fake_evaluate,
+    ):
+        stats = evaluate_chains(
+            store, [_candidate()], _config(), progress=False,
+        )
+
+    assert stats["evaluated"] == 1
+    guardrails = captured["guardrails"]
+    assert [g["id"] for g in guardrails] == [GUARDRAIL_ID]
+    assert guardrails[0]["kind"] == "guardrail"
+    assert guardrails[0]["name"] == "PIIDetector"
+    assert guardrails[0]["capabilities"] == []
+    assert guardrails[0]["attributes"] == {"source_file": "app/guardrails.py"}
+    # The chain itself is unchanged: the `guards` edge is not a chain edge.
+    assert [e["id"] for e in captured["chain_edges"]] == ["e:1"]
+
+
+def test_the_prompt_carries_guardrails_in_the_payload(store) -> None:
+    """The section travels the whole path: evaluator → voters → prompt."""
+    _build_chain_with_guardrail(store)
+    seen: dict = {}
+
+    def _fake_complete(base_url, request, api_key=None):
+        seen["user"] = request.user
+        return LLMResponse(
+            text=json.dumps({
+                "chain_id": "chain:test", "exploitable": False,
+                "confidence": 0.1, "reasoning": "a guardrail is present",
+                "evidence": [],
+            }),
+            model="test",
+        )
+
+    with patch(
+        "aicorellator.analysis.voters.complete", side_effect=_fake_complete,
+    ):
+        evaluate_chains(store, [_candidate()], _config(), progress=False)
+
+    untrusted = seen["user"].partition("[/UNTRUSTED_DATA]")[0]
+    assert '"guardrails"' in untrusted
+    assert GUARDRAIL_ID in untrusted
+    assert '"PIIDetector"' in untrusted
+
+
+def test_a_chain_without_guardrails_sends_an_empty_list(store) -> None:
+    """No guardrail near the chain is `[]`, never a missing key.
+
+    The absence of a guardrail is the default state of every path
+    (ADR-0019 §2), and the prompt says so rather than leaving the model
+    to wonder whether the question was asked.
+    """
+    store.nodes.upsert(Node(
+        id="n:1", kind="entry_point", name="POST /chat", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="sink", name="filesystem", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2", kind="has_access_to",
+        host_id="localhost", flow_kind="control",
+    ))
+    captured: dict = {}
+
+    def _fake_evaluate(**kwargs):
+        captured.update(kwargs)
+        return [_voter_response("fake-voter")]
+
+    with patch(
+        "aicorellator.analysis.voters.evaluate", side_effect=_fake_evaluate,
+    ):
+        evaluate_chains(store, [_candidate()], _config(), progress=False)
+
+    assert captured["guardrails"] == []
+    prompt = build_voter_prompt(
+        "chain:test", captured["chain_nodes"], captured["chain_edges"],
+        captured["guardrails"],
+    )
+    assert '"guardrails": []' in prompt
+
+
+def test_guardrails_come_from_the_guards_edge_direction(store) -> None:
+    """Only `guardrail → component` counts, and only from a guardrail.
+
+    The direction is the ADR's (ADR-0019 §1): the guardrail is the actor,
+    the component the object. A `guards` edge whose source is not a
+    guardrail node is a construction bug, and it is left out rather than
+    reported to the model as a guardrail the graph does not have.
+    """
+    store.nodes.upsert(Node(
+        id="tool:1", kind="tool", name="delete_file", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id=GUARDRAIL_ID, kind="guardrail", name="PIIDetector",
+        host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id=GUARDS_EDGE, source_id=GUARDRAIL_ID, target_id="tool:1",
+        kind="guards", host_id="localhost", flow_kind="structural",
+    ))
+
+    assert [g["id"] for g in _guardrails_for_chain(store, ["tool:1"])] == [
+        GUARDRAIL_ID,
+    ]
+    # The reverse reading — "this component is guarded by" — is not the
+    # claim the edge makes, so a guardrail is not found by its own id.
+    assert _guardrails_for_chain(store, [GUARDRAIL_ID]) == []
+
+    # ... and a `guards` edge out of a tool is not a guardrail either.
+    store.edges.upsert(Edge(
+        id="edge:" + "8" * 16, source_id="tool:1", target_id=GUARDRAIL_ID,
+        kind="guards", host_id="localhost", flow_kind="structural",
+    ))
+    assert _guardrails_for_chain(store, [GUARDRAIL_ID]) == []
+
+
+def test_the_guardrails_helper_is_total(store) -> None:
+    """No nodes, or an unknown node id, is simply no guardrail."""
+    assert _guardrails_for_chain(store, []) == []
+    assert _guardrails_for_chain(store, ["n:missing"]) == []
+
+
+def test_a_guards_edge_does_not_change_enumeration(store) -> None:
+    """B.4b moves the payload, not the graph (ADR-0019, §2).
+
+    The corpus expectation, on a fixture: a guardrail node and its
+    `guards` edge leave the chain set exactly where it was — `structural`
+    edges are not traversed (ADR-0015, decision 5) — and the guardrail is
+    neither a chain node nor a chain edge. Only the payload changes.
+    """
+    _build_unguarded_chain(store)
+    before = [c.chain_id for c in store.query.find_chains()]
+    assert before, "the fixture must enumerate at least one chain"
+    assert _guardrails_for_chain(store, ["n:1", "n:2"]) == []
+
+    _add_guardrail(store)
+
+    after = store.query.find_chains()
+    assert [c.chain_id for c in after] == before
+    assert len(after) == len(before)
+    assert GUARDRAIL_ID not in after[0].nodes
+    assert GUARDS_EDGE not in after[0].edges
+    # The payload is the only thing that moved.
+    assert [g["id"] for g in _guardrails_for_chain(store, ["n:1", "n:2"])] == [
+        GUARDRAIL_ID,
+    ]

@@ -34,7 +34,15 @@ import json
 #   system prompt, and a new answer schema. The linear prompts are
 #   untouched, so every chain row written before this version still
 #   describes the prompt that produced it.
-PROMPT_VERSION = "v1.5.0"
+# v1.6.0: guardrails reach the model (B.4b, ADR-0019). Every payload
+#   gains a "guardrails" section — the guardrail nodes the graph connects
+#   to the chain by `guards` edges — and every system prompt gains a rule
+#   about it: a guardrail's presence is evidence of an attempt to block,
+#   not evidence of a block. Minor bump, not patch: a payload section is
+#   added, not just an instruction about fields that were already there.
+#   Additive in both directions — no existing field changes meaning, so a
+#   chain stored under v1.5.0 still describes the payload it was given.
+PROMPT_VERSION = "v1.6.0"
 
 
 SYSTEM_PROMPT = """You are a security analyst evaluating the exploitability of attack chains in AI infrastructure.
@@ -92,6 +100,28 @@ Flow semantics (ADR-0015):
   `source_file`: use it to tell test code from production code.
 - The confidence you assign is your judgement; these definitions constrain
   what an edge means, not how exploitable you must find the chain.
+
+Guardrails (ADR-0019):
+- The "guardrails" section lists the guardrail nodes connected to this chain's
+  nodes by structural "guards" edges (ADR-0015): a "guards" edge is the AST
+  saying "this component calls this guardrail, or is decorated by it", not
+  evidence that the guardrail filtered any step and not a claim about what the
+  guardrail covers.
+- In the "guardrails" section, a guardrail's presence is evidence of an attempt
+  to block, not evidence of a block: its rules are not in the payload, so lower
+  confidence proportionally rather than clearing the chain, and say in your
+  reasoning that the rules are unknown.
+- Excluding an attack requires specific rules of specific properties: a
+  prompt-injection guardrail that only matches known attack strings does not
+  stop an indirect injection through a document, and a PII filter does not stop
+  a shell command. Name the class of rule the chain would need, and note that
+  the payload does not show it.
+- The absence of a guardrail is not evidence of exploitability: a path with no
+  "guards" edges is not stronger than one with them, and it does not raise
+  confidence.
+- "lethal_trifecta" and the other node attributes do not interact with
+  "guardrails": a node can be a lethal trifecta and a guardrail can protect
+  it — the two facts are independent.
 """
 
 
@@ -127,6 +157,11 @@ Flow semantics:
   what came from the target's test suite. Weigh that signal: a chain that
   is test-only should not receive a high final verdict unless the voters
   give a concrete production path that a real attacker could also reach.
+- Voters may weigh a chain's "guardrails" section (B.4b, ADR-0019): weigh
+  their guardrail reasoning at face value — a guardrail is evidence of an
+  attempt to block, not evidence of a block, and its rules are not in the
+  payload — but do not add your own guardrail assessment beyond what the
+  payload shows.
 """
 
 
@@ -134,6 +169,7 @@ def build_voter_prompt(
     chain_id: str,
     chain_nodes: list[dict],
     chain_edges: list[dict],
+    guardrails: list[dict] | None = None,
 ) -> str:
     """Build the user prompt for a voter.
 
@@ -145,11 +181,20 @@ def build_voter_prompt(
             {id, kind, source_id, target_id, flow_kind, capabilities,
              precision, attributes} — plus data_flow_confirmed when the edge
             kind is has_access_to
+        guardrails: the guardrail nodes the graph connects to this chain's
+            nodes by `guards` edges, as the evaluator found them (B.4b,
+            ADR-0019). Empty is the normal case — most paths have no
+            guardrail near them — and the key is emitted either way, so
+            the model never has to tell "none" from "not asked".
+
+    `guardrails` is target-derived, so it rides inside the
+    [UNTRUSTED_DATA] block with the nodes and edges, after both.
     """
     payload = {
         "chain_id": chain_id,
         "nodes": chain_nodes,
         "edges": chain_edges,
+        "guardrails": guardrails or [],
     }
     payload_json = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
 
@@ -292,6 +337,38 @@ Capabilities and node attributes (ADR-0009, 1.2a.1, 1.2a.3d):
   live in the test suite, treat the pair as low-confidence unless the test
   exercises a production code path a real attacker could also reach.
 - The confidence you assign is your judgement; these definitions constrain what a field means, not how exploitable you must find the pair.
+
+Guardrails (ADR-0019):
+- The "guardrails" section lists the guardrail nodes connected to the pair's
+  nodes by structural "guards" edges (ADR-0015), split by side: a "guards" edge
+  is the AST saying "this component calls this guardrail, or is decorated by
+  it", not evidence that the guardrail filtered any step and not a claim about
+  what the guardrail covers.
+- In the "guardrails" section, a guardrail's presence is evidence of an attempt
+  to block, not evidence of a block: its rules are not in the payload, so lower
+  confidence proportionally rather than clearing the pair, and say in your
+  reasoning that the rules are unknown.
+- The sides are weighed independently; a guardrail on one side says nothing
+  about the other:
+  - "write" — guardrails on the write chain's nodes (the anchor excluded): an
+    attempt to filter what the attacker plants into the source.
+  - "read" — guardrails on the read chain's nodes (the anchor excluded): an
+    attempt to filter what the source hands to the reader.
+  - "anchor" — guardrails on the untrusted source itself: an attempt to
+    filter the channel (rare — no source type emits one today).
+  A guardrail on the write side does not lower confidence in the read side's
+  sink, and vice versa.
+- Excluding an attack requires specific rules of specific properties: a
+  prompt-injection guardrail that only matches known attack strings does not
+  stop an indirect injection through a document, and a PII filter does not stop
+  a shell command. Name the class of rule the pair would need, and note that
+  the payload does not show it.
+- The absence of a guardrail is not evidence of exploitability: a channel with
+  no "guards" edges is the default state, not a weakness, and it does not raise
+  confidence.
+- "lethal_trifecta" and the other node attributes do not interact with
+  "guardrails": a read-side node can be a lethal trifecta and a guardrail can
+  protect it — the two facts are independent.
 """
 
 
@@ -305,6 +382,7 @@ def build_group_prompt(chain_id: str, group: dict) -> str:
               "source": {id, name, kind, source_type, attributes},
               "write_chains": [{chain_id, nodes, edges}],
               "read_chains":  [{chain_id, nodes, edges, lethal_trifecta}],
+              "guardrails": {write: [...], read: [...], anchor: [...]},
               "score": float,
               "score_components": {...},
               "priority": str | None,
@@ -313,10 +391,15 @@ def build_group_prompt(chain_id: str, group: dict) -> str:
             `_node_to_dict` / `_edge_to_dict` — the same shapes the
             linear voter prompt uses. `lethal_trifecta` maps a read-chain
             node id to the 1.3d flag for that node (false when the node
-            carries no such attribute).
+            carries no such attribute). `guardrails` is the per-side
+            split of the guardrail nodes near the pair (B.4b,
+            ADR-0019 §3); it is read from the payload rather than taken
+            as a second argument, because the evaluator assembles the
+            whole payload before calling here.
 
-    The target-derived half of the payload — the source, both chains and
-    the per-node flags — is wrapped in [UNTRUSTED_DATA] markers. The
+    The target-derived half of the payload — the source, both chains,
+    the per-node flags and the guardrails — is wrapped in
+    [UNTRUSTED_DATA] markers. The
     scoring half (`score`, `score_components`, `priority`) is our own
     deterministic output, not target content, so it stays outside the
     markers and is labelled: the model may weigh it as a hint without
@@ -327,6 +410,12 @@ def build_group_prompt(chain_id: str, group: dict) -> str:
         "source": group["source"],
         "write_chains": group["write_chains"],
         "read_chains": group["read_chains"],
+        # Per side (B.4b, ADR-0019 §3). The evaluator always assembles
+        # this key; the fallback keeps a hand-built payload's shape the
+        # same instead of dropping the section.
+        "guardrails": group.get(
+            "guardrails", {"write": [], "read": [], "anchor": []}
+        ),
     }
     scoring_payload = {
         "score": group["score"],
@@ -400,6 +489,7 @@ def build_judge_prompt(
     chain_nodes: list[dict],
     chain_edges: list[dict],
     voter_responses: list[dict],
+    guardrails: list[dict] | None = None,
 ) -> str:
     """Build the user prompt for the judge.
 
@@ -409,11 +499,16 @@ def build_judge_prompt(
         chain_edges: ordered list of edge dicts
         voter_responses: list of voter outputs (each a dict matching
                          the VoterResponse schema)
+        guardrails: the guardrail nodes near this chain (B.4b, ADR-0019).
+            The judge gets the same section the voters got: it weighs the
+            voters' guardrail reasoning against the same evidence they
+            reasoned from, rather than against a section only they saw.
     """
     chain_payload = {
         "chain_id": chain_id,
         "nodes": chain_nodes,
         "edges": chain_edges,
+        "guardrails": guardrails or [],
     }
     chain_json = json.dumps(chain_payload, indent=2, ensure_ascii=False, default=str)
     voters_json = json.dumps(voter_responses, indent=2, ensure_ascii=False, default=str)
@@ -500,6 +595,28 @@ Flow semantics (ADR-0015):
   the code is expected to do, but they are not the attack surface.
 - The confidence you assign is your judgement; these definitions constrain what
   an edge means, not how exploitable you must find the chain.
+
+Guardrails (ADR-0019):
+- The "guardrails" section lists the guardrail nodes connected to this chain's
+  nodes by structural "guards" edges (ADR-0015): a "guards" edge is the AST
+  saying "this component calls this guardrail, or is decorated by it", not
+  evidence that the guardrail filtered any step and not a claim about what the
+  guardrail covers.
+- In the "guardrails" section, a guardrail's presence is evidence of an attempt
+  to block, not evidence of a block: its rules are not in the payload, so lower
+  confidence proportionally rather than clearing the chain, and say in your
+  reasoning that the rules are unknown.
+- Excluding an attack requires specific rules of specific properties: a
+  prompt-injection guardrail that only matches known attack strings does not
+  stop an indirect injection through a document, and a PII filter does not stop
+  a shell command. Name the class of rule the chain would need, and note that
+  the payload does not show it.
+- The absence of a guardrail is not evidence of exploitability: a path with no
+  "guards" edges is not stronger than one with them, and it does not raise
+  confidence.
+- "lethal_trifecta" and the other node attributes do not interact with
+  "guardrails": a node can be a lethal trifecta and a guardrail can protect
+  it — the two facts are independent.
 """
 
 
@@ -507,12 +624,18 @@ def build_solo_prompt(
     chain_id: str,
     chain_nodes: list[dict],
     chain_edges: list[dict],
+    guardrails: list[dict] | None = None,
 ) -> str:
-    """Build the user prompt for solo mode (combined voter + judge)."""
+    """Build the user prompt for solo mode (combined voter + judge).
+
+    Same payload contract as `build_voter_prompt`, `guardrails` included
+    (B.4b, ADR-0019): solo mode replaces the ensemble, not the payload.
+    """
     payload = {
         "chain_id": chain_id,
         "nodes": chain_nodes,
         "edges": chain_edges,
+        "guardrails": guardrails or [],
     }
     payload_json = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
 
