@@ -17,6 +17,11 @@ The pieces:
   - `confidence` — §8's signals and the combination, in one place.
   - `resolver` — `StoreResolver`: asks the families, builds the stores,
     resolves both ends against the delta, and returns the edges.
+  - `context.upload` — the `user_upload` context (B.3b-user_upload-core):
+    an `UploadDetector` per framework, a `UserUploadContext` that runs
+    them, and the writer logic that links an upload handler to the `fs`
+    stores it writes into. Its registry is empty until the first detector
+    lands, so importing this package changes no scan.
 
 The package depends on `graph.models` and the standard library, and on
 `parsing` only through a deferred import inside the resolver (see
@@ -26,6 +31,12 @@ stage is the side that cannot be.
 """
 
 from . import families  # noqa: F401 — importing it registers the families
+from .context.upload import (
+    UploadDetector,
+    UploadSite,
+    UserUploadContext,
+    register_upload_detector,
+)
 from .families.base import Context, Family, ModuleFacts, ReadSite, WriteSite
 from .registry import register_family, registered_families
 from .resolver import StoreResolver
@@ -36,7 +47,11 @@ __all__ = [
     "ModuleFacts",
     "ReadSite",
     "StoreResolver",
+    "UploadDetector",
+    "UploadSite",
+    "UserUploadContext",
     "WriteSite",
     "register_family",
+    "register_upload_detector",
     "registered_families",
 ]

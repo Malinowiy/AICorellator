@@ -20,6 +20,11 @@ below), because the tree now ships `fs` and these tests are about what
 the *stage* does with whatever it finds. That the real import registers
 `fs` is pinned in `tests/test_store_families/test_fs.py`, and the
 pipeline-level negative and positive are in `tests/test_pipeline.py`.
+
+B.3b-user_upload-core adds a second step to the same stage, and the last
+two tests here pin what it does at this seam: with no detector
+registered it is a no-op on the `fs` fixture, and with one registered for
+the test it emits the upload writer's edge and stamps the read site.
 """
 
 from __future__ import annotations
@@ -29,9 +34,15 @@ import ast
 import pytest
 
 from aicorellator.graph.models import Node
+from aicorellator.parsing.entry_points import EntryPointOutput
 from aicorellator.parsing.normalizer_stages import STAGES, StoreResolverStage
 from aicorellator.parsing.normalizer_stages.base import NormalizerStage
 from aicorellator.store import register_family, registry
+from aicorellator.store.context.upload import registry as upload_registry
+from aicorellator.store.context.upload.base import (
+    UploadDetector,
+    UploadSite,
+)
 from aicorellator.store.families.base import Family, ReadSite, WriteSite
 from aicorellator.store.families.fs import FsFamily
 from aicorellator.store.resolver import StoreResolver
@@ -63,6 +74,18 @@ def empty_registry(monkeypatch: pytest.MonkeyPatch):
     empty one. A test that wants a family registers it explicitly.
     """
     monkeypatch.setattr(registry, "FAMILIES", {})
+
+
+@pytest.fixture(autouse=True)
+def empty_detector_registry(monkeypatch: pytest.MonkeyPatch):
+    """The *upload* registry, on the same rule (B.3b-user_upload-core).
+
+    The upload step's detectors are process-global too, and the tests
+    below say what the stage does with none registered — which is the
+    state the core step is accepted on, and the state the tree is in
+    until B.3b-user_upload-fastapi lands.
+    """
+    monkeypatch.setattr(upload_registry, "UPLOAD_DETECTORS", {})
 
 
 class FakeFamily(Family):
@@ -275,4 +298,111 @@ def test_a_target_that_names_no_store_gets_no_store(project) -> None:
 
     assert [n for n in built.delta.nodes if n.kind == "store"] == []
     assert built.delta.edges == []
+
+
+# ============================================================
+# The upload step (B.3b-user_upload-core)
+# ============================================================
+
+#: The handler's call graph, as `entry_points` would have built it.
+UPLOAD_CALL_GRAPH = {"handle": set(), "save": set()}
+
+
+class FakeDetector(UploadDetector):
+    """One upload per entry point it is handed."""
+
+    name = "fake"
+
+    def detect(self, tree, file_path, entry_points):
+        return [
+            UploadSite(
+                entry_point=node, file_path=file_path, line=1,
+                framework=self.name,
+            )
+            for node in entry_points
+        ]
+
+
+def _upload_delta(project):
+    """The `fs` fixture, plus the entry point an upload site names.
+
+    The read site has **no** `source_type` here, unlike `_fs_delta`'s:
+    what the upload step is being asked is whether it stamps one. The
+    `tool` node comes first so the resolver's own `writes_to` edge is the
+    tool's, which is a different link from the upload writer's.
+    """
+    built = project(
+        files={FS_HANDLER: FS_SOURCE},
+        entry_points=EntryPointOutput(call_graph=dict(UPLOAD_CALL_GRAPH)),
+    )
+    built.delta.nodes.extend([
+        Node(
+            id="tool:handle", kind="tool", name="handle", host_id="localhost",
+            attributes={"source_file": FS_HANDLER, "line_start": 1},
+        ),
+        Node(
+            id="entry_point:1", kind="entry_point", name="POST /upload",
+            host_id="localhost",
+            attributes={
+                "source_file": FS_HANDLER, "line_start": 1,
+                "handler": "handle", "method": "POST", "path": "/upload",
+            },
+        ),
+        Node(
+            id="untrusted_source:1", kind="untrusted_source",
+            name="open:/uploads/report.txt", host_id="localhost",
+            attributes={
+                "source_file": FS_HANDLER, "line_start": FS_READ_LINE,
+            },
+        ),
+    ])
+    return built
+
+
+def test_the_upload_step_is_a_no_op_with_no_detector(project) -> None:
+    """B.3b-user_upload-core: the `fs` fixture earns nothing extra."""
+    register_family("fs", FsFamily)
+    built = _upload_delta(project)
+
+    StoreResolverStage().apply(built.delta, built.ctx)
+
+    assert [e.kind for e in built.delta.edges] == [
+        "writes_to", "reads_from",
+    ]
+    assert built.delta.edges[0].source_id == "tool:handle"
+    assert not [
+        node for node in built.delta.nodes
+        if node.attributes.get("source_type") == "user_upload"
+    ]
+
+
+def test_a_detector_makes_the_stage_emit_the_upload_writer_edge(
+    project,
+) -> None:
+    """A test-local registration, cleaned up by the fixture.
+
+    The handler writes the store itself, so the writer's claim is the
+    strongest one it has: base 0.5, an equal literal and the write in the
+    handler's own body, `1 − 0.5 × 0.4 × 0.8 × 0.8 = 0.872`.
+    """
+    register_family("fs", FsFamily)
+    upload_registry.register_upload_detector("fake", FakeDetector)
+    built = _upload_delta(project)
+
+    StoreResolverStage().apply(built.delta, built.ctx)
+
+    store = [n for n in built.delta.nodes if n.kind == "store"][0]
+    writes_to = [e for e in built.delta.edges if e.kind == "writes_to"]
+    assert [edge.source_id for edge in writes_to] == [
+        "tool:handle", "entry_point:1",
+    ]
+
+    upload_edge = writes_to[1]
+    assert upload_edge.target_id == store.id
+    assert upload_edge.flow_kind == "structural"
+    assert upload_edge.observed_by == ["ast"]
+    assert round(upload_edge.identity_confidence, 4) == 0.872
+
+    source = [n for n in built.delta.nodes if n.kind == "untrusted_source"][0]
+    assert source.attributes["source_type"] == "user_upload"
 
