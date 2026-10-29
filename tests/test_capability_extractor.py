@@ -12,6 +12,11 @@ from aicorellator.parsing.capability_extractor import (
     _matches_any,
     extract,
 )
+# The one end-to-end fixture (B.10a) reads the extractor's capabilities
+# and hands them to `classify_class`, because "the class got no kind" is
+# the consequence the capability gap had. Everything else about
+# classification stays in `test_classification.py`.
+from aicorellator.parsing.classification import classify_class
 from aicorellator.patterns import (
     CAPABILITY_DB_STATEMENT_CALLS,
     CAPABILITY_ORM_READS_DB,
@@ -770,6 +775,209 @@ def ask(self, prompt):
 """)
     caps = extract(path, "a.py").symbols[0].capabilities
     assert caps == {"calls_llm"}
+
+
+# --- Qualifier families (B.10a) ---
+# A wrapped LLM client is reached through a self-held handle, and the
+# handle is named after the thing it is. `self.llm_client.chat(...)` is
+# the shape that used to match nothing — the qualifier had to be exactly
+# `llm` or `model` — so the class carrying it was credited with no
+# `calls_llm`, and, with the class-name rules gone (ADR-0016, decision
+# 7), ended up with no kind at all. The family is the fix; the
+# underscore is its boundary. The patterns live in
+# `CAPABILITY_CALLS_LLM`.
+
+def test_llm_client_chat_is_calls_llm(tmp_path: Path) -> None:
+    """`self.llm_client.chat(prompt)` — the wrapped-client shape."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self.llm_client.chat(prompt)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"calls_llm"}
+
+
+def test_llm_handle_invoke_is_calls_llm(tmp_path: Path) -> None:
+    """`self.llm_handle.invoke(prompt)` — any `llm_*` spelling."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self.llm_handle.invoke(prompt)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"calls_llm"}
+
+
+def test_model_client_complete_is_calls_llm(tmp_path: Path) -> None:
+    """`self.model_client.complete(prompt)` — the same, on a model."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self.model_client.complete(prompt)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"calls_llm"}
+
+
+def test_model_client_generate_is_calls_llm(tmp_path: Path) -> None:
+    """`generate` is a handle verb for `model` too (B.10a)."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self.model_client.generate(prompt)
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"calls_llm"}
+
+
+def test_private_llm_handles_are_calls_llm(tmp_path: Path) -> None:
+    """The 1.2a.3e underscore rule runs before the prefix check."""
+    path = _write(tmp_path, "a.py", """
+def ask(self, prompt):
+    self._llm.chat(prompt)
+
+
+def ask_again(self, prompt):
+    self._llm_client.invoke(prompt)
+""")
+    result = extract(path, "a.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+    assert caps["ask"] == {"calls_llm"}
+    assert caps["ask_again"] == {"calls_llm"}
+
+
+def test_modelviewer_is_not_calls_llm(tmp_path: Path) -> None:
+    """The prefix is matched at an underscore boundary, not anywhere."""
+    path = _write(tmp_path, "a.py", """
+def show(self, prompt):
+    self.modelviewer.invoke(prompt)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_llmviewer_is_not_calls_llm(tmp_path: Path) -> None:
+    """`llmviewer` is not a handle: `llm` plus a word is not `llm_*`."""
+    path = _write(tmp_path, "a.py", """
+def show(self, prompt):
+    self.llmviewer.chat(prompt)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_client_chat_is_not_calls_llm(tmp_path: Path) -> None:
+    """`client` is not in the family — an HTTP client is not a model."""
+    path = _write(tmp_path, "a.py", """
+def notify(self, prompt):
+    self.client.chat(prompt)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_llm_client_get_is_not_calls_llm(tmp_path: Path) -> None:
+    """The family widens the receiver, never the verb."""
+    path = _write(tmp_path, "a.py", """
+def fetch(self, prompt):
+    self.llm_client.get(prompt)
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_other_receivers_are_not_calls_llm(tmp_path: Path) -> None:
+    """`client.get` and `notllm.invoke` are not handles either."""
+    path = _write(tmp_path, "a.py", """
+def fetch(self):
+    self.client.get("/x")
+    self.notllm.invoke("prompt")
+    open("/tmp/x")
+""")
+    caps = extract(path, "a.py").symbols[0].capabilities
+    assert caps == {"reads_filesystem"}
+
+
+def test_llm_handle_patterns_are_registered() -> None:
+    """Every handle spelling matches, at any receiver depth."""
+    for pattern in (
+        "{llm,model}.invoke",
+        "{llm,model}.chat",
+        "{llm,model}.complete",
+        "{llm,model}.generate",
+    ):
+        assert pattern in patterns.CAPABILITY_CALLS_LLM, pattern
+    for name in (
+        "self.llm.invoke",
+        "self.llm_client.chat",
+        "self.llm_handle.complete",
+        "self.model.invoke",
+        "self.model_client.generate",
+    ):
+        assert _matches_any(name, patterns.CAPABILITY_CALLS_LLM), name
+    for name in (
+        "self.client.chat",
+        "self.modelviewer.invoke",
+        "self.llm_client.get",
+    ):
+        assert not _matches_any(name, patterns.CAPABILITY_CALLS_LLM), name
+
+
+def test_a_wrapped_llm_client_class_is_classified(tmp_path: Path) -> None:
+    """The FinBot shape, end to end: AST → capabilities → kind.
+
+    `InvoiceAgent` is a name from that corpus, and it decides nothing
+    here: the `self.llm_client.chat(...)` in the body is what makes the
+    class a node (ADR-0009; ADR-0016, decision 7). Before B.10a the body
+    credited nothing, so the class disappeared from the graph.
+
+    The kind is `agent`. `classify_class` intersects the capabilities
+    with `AGENT_CAPABILITIES`, which contains `calls_llm`, so a class
+    that only calls an LLM is already an agent — behaviour pinned in
+    `test_classification.py::test_llm_capability_alone_is_an_agent` and
+    outside B.10a's scope, which is the capability credit alone.
+    """
+    path = _write(tmp_path, "agents/invoice.py", """
+class InvoiceAgent:
+    def __init__(self, llm_client):
+        self.llm_client = llm_client
+
+    def ask(self, prompt):
+        return self.llm_client.chat(prompt)
+""")
+    result = extract(path, "agents/invoice.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+    assert caps["InvoiceAgent"] == {"calls_llm"}
+
+    classified = classify_class(
+        "InvoiceAgent", "agents/invoice.py", sorted(caps["InvoiceAgent"])
+    )
+    assert classified is not None
+    assert classified.kind == "agent"
+
+
+def test_a_wrapped_llm_client_class_with_mcp_is_an_agent(
+    tmp_path: Path,
+) -> None:
+    """`calls_llm` + `invokes_mcp_tool` — the agent trigger, no name."""
+    path = _write(tmp_path, "agents/invoice.py", """
+class InvoiceAgent:
+    def ask(self, prompt):
+        return self.llm_client.chat(prompt)
+
+    def tools(self):
+        return self.session.call_tool("list_invoices")
+""")
+    result = extract(path, "agents/invoice.py")
+    caps = {s.symbol_name: s.capabilities for s in result.symbols}
+    assert caps["InvoiceAgent"] == {"calls_llm", "invokes_mcp_tool"}
+
+    classified = classify_class(
+        "InvoiceAgent", "agents/invoice.py", sorted(caps["InvoiceAgent"])
+    )
+    assert classified is not None
+    assert classified.kind == "agent"
 
 
 def test_bare_run_is_not_executes_code(tmp_path: Path) -> None:

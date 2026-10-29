@@ -748,6 +748,17 @@ READS_ENV_RULE = CapabilityRule(
     ),
 )
 
+# The handle prefixes `CALLS_LLM_RULE` accepts (B.10a). A wrapped LLM
+# client is reached through a self-held attribute, and the attribute is
+# named after the thing it is: `llm`, `llm_client`, `llm_handle`,
+# `model`, `model_client`. The set is *closed*, and deliberately short:
+# these are handle-naming conventions, not provider names. `ai`, `gpt`
+# and `claude` would be a class-A name table (ADR-0016, decision 7) and
+# are not here; `client` is not either — `self.client.post(...)` is an
+# HTTP client, and `self.client.chat(...)` names nothing a call shape
+# can claim.
+LLM_HANDLE_PREFIXES: frozenset[str] = frozenset({"llm", "model"})
+
 CALLS_LLM_RULE = CapabilityRule(
     capability="calls_llm",
     patterns=(
@@ -762,19 +773,38 @@ CALLS_LLM_RULE = CapabilityRule(
         CallPattern("langchain.llms", "Ollama"),
         CallPattern("llama_cpp", "Llama"),
         CallPattern("vllm", "LLM"),
-        # Adapter / handle wrappers (1.2a.3i). See the adapter note above.
-        # `chat` and `generate` are already in the list under `ollama.*`;
-        # these are the same verbs on a self-held handle, plus the
-        # framework-neutral `invoke` / `complete`.
-        CallPattern("llm", "invoke"),
-        CallPattern("llm", "chat"),
-        CallPattern("llm", "complete"),
-        CallPattern("llm", "generate"),
-        CallPattern("model", "invoke"),
-        CallPattern("model", "chat"),
-        CallPattern("model", "complete"),
+        # Qualifier families (B.10a). A wrapped client is a self-held
+        # handle, and the handle is spelled in more than one way:
+        # `self.llm_client.chat(...)` is the shape that used to match
+        # nothing, because the qualifier had to be exactly `llm` or
+        # `model`. The family covers both spellings and their
+        # `_`-suffixed relatives (`llm_client`, `llm_handle`, ...) at the
+        # underscore boundary, so `llmviewer` is still not a handle. The
+        # capability still comes from the call shape — receiver, verb,
+        # arity — and never from the class name (ADR-0009; ADR-0016,
+        # decision 7 removed the name rules): with those gone, the
+        # wrapped client is the only evidence the body has.
+        #
+        # The verb set is the one the literal qualifiers carried:
+        # `invoke`, `chat`, `complete`, `generate`. `stream` and
+        # `create` are not here — adding them widens the verb, which is
+        # a different decision from widening the qualifier.
+        CallPattern(None, "invoke", qualifier_prefixes=LLM_HANDLE_PREFIXES),
+        CallPattern(None, "chat", qualifier_prefixes=LLM_HANDLE_PREFIXES),
+        CallPattern(
+            None, "complete", qualifier_prefixes=LLM_HANDLE_PREFIXES,
+        ),
+        CallPattern(
+            None, "generate", qualifier_prefixes=LLM_HANDLE_PREFIXES,
+        ),
     ),
-    reason="the call invokes an LLM provider or a model handle",
+    reason=(
+        "the call invokes an LLM provider or a model handle; the "
+        "receiver is a self-held handle — `llm`, `llm_client`, "
+        "`model`, or a `<prefix>_*` spelling of either — because "
+        "ADR-0016 removed the class-name rules and the wrapped client "
+        "is the only evidence the body has"
+    ),
 )
 
 INVOKES_MCP_TOOL_RULE = CapabilityRule(

@@ -121,6 +121,185 @@ def test_parse_rejects_a_bare_family() -> None:
 
 
 # ------------------------------------------------------------
+# CallPattern: qualifier families (B.10a)
+# ------------------------------------------------------------
+
+LLM_FAMILY = frozenset({"llm", "model"})
+
+
+def _llm_family(verb: str = "invoke") -> CallPattern:
+    """The shape `CALLS_LLM_RULE` uses for a self-held handle."""
+    return CallPattern(None, verb, qualifier_prefixes=LLM_FAMILY)
+
+
+def test_qualifier_family_matches_the_handle_spellings() -> None:
+    """One pattern for `llm`, `llm_client`, `model`, `model_client`."""
+    pattern = _llm_family()
+    assert pattern.matches("llm.invoke")
+    assert pattern.matches("self.llm.invoke")
+    assert pattern.matches("self.llm_client.invoke")
+    assert pattern.matches("self.llm_handle.invoke")
+    assert pattern.matches("self.model.invoke")
+    assert pattern.matches("self.model_client.invoke")
+    assert pattern.matches("vendor.llm_client.invoke")
+
+
+def test_qualifier_family_needs_the_underscore_boundary() -> None:
+    """`llmviewer` is not a handle: the underscore is the boundary."""
+    pattern = _llm_family()
+    assert not pattern.matches("self.llmviewer.invoke")
+    assert not pattern.matches("self.modelviewer.invoke")
+    assert not pattern.matches("self.llmclient.invoke")
+
+
+def test_qualifier_family_rejects_other_qualifiers() -> None:
+    pattern = _llm_family()
+    assert not pattern.matches("self.client.invoke")
+    assert not pattern.matches("self.notllm.invoke")
+    assert not pattern.matches("self.retriever.invoke")
+    assert not pattern.matches("invoke")
+
+
+def test_qualifier_family_strips_leading_underscores() -> None:
+    """The 1.2a.3e rule runs before the prefix check."""
+    pattern = _llm_family()
+    assert pattern.matches("self._llm.invoke")
+    assert pattern.matches("self.__llm_client.invoke")
+    assert not pattern.matches("self.not_llm.invoke")
+
+
+def test_qualifier_family_still_requires_the_verb() -> None:
+    """The family widens the qualifier, not the verb."""
+    assert not _llm_family().matches("self.llm_client.chat")
+    assert _llm_family("chat").matches("self.llm_client.chat")
+    assert not _llm_family().matches("self.llm_client.invoked")
+
+
+def test_qualifier_family_is_a_closed_set() -> None:
+    """The set is written down, and it is not a provider-name table."""
+    assert patterns.LLM_HANDLE_PREFIXES == frozenset({"llm", "model"})
+    for absent in ("ai", "gpt", "claude", "client", "chat"):
+        assert absent not in patterns.LLM_HANDLE_PREFIXES
+
+
+def test_a_family_and_a_literal_qualifier_cannot_be_combined() -> None:
+    """A family replaces the literal qualifier; it does not widen it."""
+    with pytest.raises(ValueError, match="replaces the literal"):
+        CallPattern("llm", "invoke", qualifier_prefixes=LLM_FAMILY)
+
+
+def test_an_empty_family_is_rejected() -> None:
+    with pytest.raises(ValueError, match="at least one prefix"):
+        CallPattern(None, "invoke", qualifier_prefixes=frozenset())
+    with pytest.raises(ValueError, match="not an empty string"):
+        CallPattern(None, "invoke", qualifier_prefixes=frozenset({""}))
+
+
+def test_a_family_with_a_verb_family_is_allowed() -> None:
+    """They answer different questions: which receiver, which verb."""
+    pattern = CallPattern(
+        None,
+        "get",
+        verb_family=True,
+        qualifier_prefixes=frozenset({"repo"}),
+    )
+    assert pattern.matches("repo.get_file")
+    assert pattern.matches("self.repo.get_all")
+    assert not pattern.matches("repo.create_file")
+    assert not pattern.matches("get_file")
+
+
+def test_the_literal_qualifier_is_still_literal() -> None:
+    """The family form is the one that widens, never the literal."""
+    literal = CallPattern("llm", "invoke")
+    assert literal.matches("self.llm.invoke")
+    assert not literal.matches("self.llm_client.invoke")
+
+
+def test_family_text_and_parse_round_trip() -> None:
+    """`{llm,model}.invoke` renders the family, and parses back."""
+    pattern = _llm_family()
+    assert pattern.text == "{llm,model}.invoke"
+    assert CallPattern.parse(pattern.text) == pattern
+    assert CallPattern.parse("{llm,model}.get*") == CallPattern(
+        None, "get", verb_family=True, qualifier_prefixes=LLM_FAMILY
+    )
+
+
+def test_the_family_rendering_is_sorted_and_has_no_wildcard() -> None:
+    """`*` still means *verb* family; a qualifier family is not one."""
+    first = CallPattern(
+        None, "invoke", qualifier_prefixes=frozenset({"model", "llm"})
+    )
+    second = CallPattern(
+        None, "invoke", qualifier_prefixes=frozenset({"llm", "model"})
+    )
+    assert first.text == second.text == "{llm,model}.invoke"
+    assert "*" not in first.text
+
+
+def test_parse_rejects_a_family_without_a_verb() -> None:
+    with pytest.raises(ValueError, match="needs a verb"):
+        CallPattern.parse("{llm,model}")
+
+
+def test_parse_rejects_an_unterminated_family() -> None:
+    with pytest.raises(ValueError, match="unterminated"):
+        CallPattern.parse("{llm,model.invoke")
+
+
+def test_llm_rule_credits_the_wrapped_client_shape() -> None:
+    """B.10a: the FinBot shape is a `calls_llm` call shape now.
+
+    `self.llm_client.chat(...)` is what a wrapped client looks like, and
+    it used to match nothing — the qualifier had to be exactly `llm` or
+    `model` — so the class carrying it was not an agent (ADR-0016,
+    decision 7 removed the name rules that used to cover for it).
+    """
+    rule = patterns.CALLS_LLM_RULE
+    assert rule.matches("self.llm_client.chat")
+    assert rule.matches("self.llm_handle.invoke")
+    assert rule.matches("self.model_client.complete")
+    assert rule.matches("self.model_client.generate")
+    assert not rule.matches("self.client.chat")
+    assert not rule.matches("self.llm_client.get")
+    assert not rule.matches("self.modelviewer.invoke")
+
+
+def test_llm_rule_uses_the_family_and_keeps_the_provider_patterns() -> None:
+    """The widening is the qualifier; the provider patterns are data."""
+    handles = [
+        pattern
+        for pattern in patterns.CALLS_LLM_RULE.patterns
+        if pattern.qualifier_prefixes is not None
+    ]
+    assert {pattern.verb for pattern in handles} == {
+        "invoke", "chat", "complete", "generate",
+    }
+    assert {pattern.qualifier for pattern in handles} == {None}
+    assert all(
+        pattern.qualifier_prefixes == patterns.LLM_HANDLE_PREFIXES
+        for pattern in handles
+    )
+
+    for kept in (
+        "openai.chat.completions.create",
+        "anthropic.messages.create",
+        "ollama.chat",
+        "ollama.generate",
+        "litellm.completion",
+        "langchain.chat_models.ChatOpenAI",
+        "llama_cpp.Llama",
+        "vllm.LLM",
+        "{llm,model}.invoke",
+    ):
+        assert kept in patterns.CAPABILITY_CALLS_LLM, kept
+
+    for replaced in ("llm.invoke", "llm.chat", "model.invoke"):
+        assert replaced not in patterns.CAPABILITY_CALLS_LLM, replaced
+
+
+# ------------------------------------------------------------
 # CallPattern: underscore normalization (1.2a.3e)
 # ------------------------------------------------------------
 
@@ -242,11 +421,19 @@ def test_every_rule_has_a_reason_and_a_capability() -> None:
 
 
 def test_every_family_has_a_qualifier() -> None:
-    """1.2a.3b: a verb family without a qualifier is not allowed."""
+    """1.2a.3b: a verb family without a qualifier is not allowed.
+
+    A qualifier family counts (B.10a): it *is* the qualifier, so a
+    `<family>.get*` pattern has a receiver to check like any other, and
+    building one without a receiver is still the mistake this pins.
+    """
     for rule in patterns.CALL_RULES:
         for pattern in rule.patterns:
             if pattern.verb_family:
-                assert pattern.qualifier is not None
+                assert (
+                    pattern.qualifier is not None
+                    or pattern.qualifier_prefixes is not None
+                )
                 assert pattern.qualifier != ""
 
 
@@ -269,16 +456,29 @@ def test_no_rule_is_missing_from_the_registry() -> None:
 
 
 def _example_calls() -> dict[str, list[CapabilityRule]]:
-    """Every rule's own patterns, rendered as example call names."""
+    """Every rule's own patterns, rendered as example call names.
+
+    A qualifier family stands for every spelling it covers (B.10a), and
+    the checks below are worth as much as the names they run on, so a
+    family contributes one example per prefix — its shortest spelling
+    (`llm`, `model`).
+    """
     out: dict[str, list[CapabilityRule]] = {}
     for rule in patterns.CALL_RULES:
         for pattern in rule.patterns:
             verb = f"{pattern.verb}_x" if pattern.verb_family else pattern.verb
-            if pattern.qualifier is None:
-                name = verb
+            if pattern.qualifier_prefixes is not None:
+                qualifiers: list[str | None] = sorted(
+                    pattern.qualifier_prefixes
+                )
             else:
-                name = f"self.{pattern.qualifier}.{verb}"
-            out.setdefault(name, []).append(rule)
+                qualifiers = [pattern.qualifier]
+            for qualifier in qualifiers:
+                if qualifier is None:
+                    name = verb
+                else:
+                    name = f"self.{qualifier}.{verb}"
+                out.setdefault(name, []).append(rule)
     return out
 
 
