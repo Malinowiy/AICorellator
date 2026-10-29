@@ -68,7 +68,9 @@ def test_importing_the_detectors_package_registers_fastapi(
 
     importlib.reload(detectors_package)
 
-    assert registry.all_names() == ["fastapi"]
+    # Both detectors are registered by that one import, in file order:
+    # `fastapi` first, `streamlit` second (B.3b-user_upload-streamlit).
+    assert registry.all_names() == ["fastapi", "streamlit"]
     assert registry.UPLOAD_DETECTORS["fastapi"] is FastAPIUploadDetector
 
 
