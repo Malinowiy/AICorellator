@@ -1389,6 +1389,13 @@ def test_prioritize_chain_groups_does_not_write(
 # write that is a call site, so the ADR-0010 scenario enumerates on this
 # family too. The graph is built by hand, like `_group_graph`: the
 # enumerator reads edges, it does not produce them.
+#
+# B.3c moves that target to a `store` for the two call-written families
+# (ADR-0021 §2–§3), so the corpus and mailbox groups below are built with
+# `_migrated_group` and join by store id. `_call_written_group` is the
+# **declaration-written** shape — `mcp_tool_description`, whose writer is
+# a server and whose store is the catalogue (B.3b-mcp-catalogue) — and
+# `find_chain_groups` still pairs it by source, unchanged.
 
 
 def _call_written_group(
@@ -1397,13 +1404,23 @@ def _call_written_group(
     tag: str,
     writer_kind: str,
     writer_name: str,
-    capability: str,
     source_name: str,
+    capability: str | None = None,
 ) -> dict[str, str]:
-    """One write chain and one read chain around a call-written source.
+    """One write chain and one read chain around a declared source.
 
         entry --has_access_to--> writer --writes_to--> source
         source --has_access_to(data)--> reader --has_access_to--> sink
+
+    The shape `untrusted_source_writers` emits for
+    `mcp_tool_description` (1.3a.1, B.2): the write edge ends at the
+    source, so `find_chain_groups` pairs by source and the group carries
+    no `store_id`. Not migrated by B.3c, which is why this helper stays.
+
+    `capability` is optional because this family has no writer capability:
+    `WRITER_RULES` has no `mcp_tool_description` entry (the writer is a
+    declaration, not a call), so the writer node carries none by default
+    and a test that wants one says so.
 
     `tag` fills the ids so two groups can live in one store without
     colliding. The write edge carries what the writer stage emits:
@@ -1423,7 +1440,7 @@ def _call_written_group(
     _put(store, ids["entry"], "entry_point", "POST /documents")
     _put(
         store, ids["writer"], writer_kind, writer_name,
-        capabilities=[capability],
+        capabilities=[capability] if capability else [],
     )
     _put(store, ids["source"], "untrusted_source", source_name)
     _put(store, ids["reader"], "tool", "read_documents")
@@ -1438,31 +1455,105 @@ def _call_written_group(
     return ids
 
 
-def test_find_chain_groups_through_a_corpus_write(store: GraphStore) -> None:
-    """G1 — a component's `writes_to` edge pairs with a corpus read.
+def _migrated_group(
+    store: GraphStore,
+    *,
+    tag: str,
+    writer_kind: str,
+    writer_name: str,
+    source_type: str,
+    call_target: str,
+    confidence: float | None = 0.776,
+) -> dict[str, str]:
+    """One write chain into a store and one read chain out of it (B.3c).
 
-    The writer is a component (`index_documents`, a tool) rather than a
-    server, which is the whole difference B.2 makes: the write is a
-    call site, so the same-file or shared-import anchor names it.
+        entry --has_access_to--> writer --writes_to--> store
+        store --reads_from--> source
+        source --has_access_to(data)--> reader --has_access_to--> sink
+
+    The shape `untrusted_source_writers` emits for `rag_corpus` and
+    `email_inbox` since B.3c (ADR-0021 §2–§3): the two chains meet at the
+    store, both store links carry the pair's `identity_confidence`, and
+    the join is by the store's id. The store is named
+    `<family>:<identity_hint>` (§1) — the same string its source renders,
+    since the two halves of the identity are the source type and the call
+    target — and the two ids differ, which is what keeps them two nodes.
+
+    `confidence` defaults to the number the stage computes for a
+    same-module writer (`0.776`), so a group built here is the strong
+    shape; a caller testing the weak band passes its own. `tag` fills the
+    ids so two groups can live in one store without colliding.
     """
-    ids = _call_written_group(
+    ids = {
+        "entry": f"entry_point:{'e' * 15}{tag}",
+        "writer": f"{writer_kind}:{'w' * 15}{tag}",
+        "store": f"store:{'d' * 15}{tag}",
+        "source": f"untrusted_source:{'u' * 15}{tag}",
+        "reader": f"tool:{'r' * 15}{tag}",
+        "sink": f"sink:{'s' * 15}{tag}",
+        "e_w": f"edge:{'1' * 15}{tag}",
+        "w_s": f"edge:{'2' * 15}{tag}",
+        "s_r": f"edge:{'3' * 15}{tag}",
+        "s_x": f"edge:{'4' * 15}{tag}",
+        "r_k": f"edge:{'5' * 15}{tag}",
+    }
+    identity = f"{source_type}:{call_target}"
+    _put(store, ids["entry"], "entry_point", "POST /documents")
+    _put(
+        store, ids["writer"], writer_kind, writer_name,
+        capabilities=[f"writes_{source_type}"],
+    )
+    _put(store, ids["store"], "store", identity)
+    _put(store, ids["source"], "untrusted_source", identity)
+    _put(store, ids["reader"], "tool", "read_documents")
+    _put(store, ids["sink"], "sink", "run_shell")
+
+    _link(store, ids["e_w"], ids["entry"], ids["writer"])
+    store.edges.upsert(Edge(
+        id=ids["w_s"], source_id=ids["writer"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=confidence,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_x"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=confidence,
+    ))
+    _link(store, ids["s_r"], ids["source"], ids["reader"], flow_kind="data")
+    _link(store, ids["r_k"], ids["reader"], ids["sink"])
+    return ids
+
+
+def test_find_chain_groups_through_a_corpus_write(store: GraphStore) -> None:
+    """G1 — a component's `writes_to` pairs with a corpus read by store.
+
+    The writer is a component (`index_documents`, a tool) and the write
+    ends at the store the read site names (B.3c), so the two chains meet
+    at the store: the write chain is `entry → writer → store`, the read
+    chain is `source → reader → sink`, and the group names the store.
+    """
+    ids = _migrated_group(
         store,
         tag="c",
         writer_kind="tool",
         writer_name="index_documents",
-        capability="writes_rag_corpus",
-        source_name="rag_corpus:vectorstore.similarity_search",
+        source_type="rag_corpus",
+        call_target="vectorstore.similarity_search",
     )
 
     groups = store.query.find_chain_groups()
 
     assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_name == (
+        "rag_corpus:vectorstore.similarity_search"
+    )
     assert groups[0].untrusted_source_id == ids["source"]
     assert groups[0].untrusted_source_name == (
         "rag_corpus:vectorstore.similarity_search"
     )
     assert groups[0].write_chains == [
-        [ids["entry"], ids["writer"], ids["source"]]
+        [ids["entry"], ids["writer"], ids["store"]]
     ]
     assert groups[0].read_chains == [
         [ids["source"], ids["reader"], ids["sink"]]
@@ -1472,23 +1563,57 @@ def test_find_chain_groups_through_a_corpus_write(store: GraphStore) -> None:
 def test_find_chain_groups_through_a_mailbox_write(store: GraphStore) -> None:
     """G2 — the same shape through a mailbox.
 
-    `send_reply` credits `writes_email_inbox` and writes the mailbox a
-    reader later pulls from; nothing about the enumeration is
-    family-specific, which is the point of one edge kind and one anchor
-    rule for both families.
+    `send_reply` credits `writes_email_inbox` and writes the mailbox
+    store a reader later pulls from; nothing about the enumeration is
+    family-specific, which is the point of one edge kind and one store
+    join for both families.
     """
-    ids = _call_written_group(
+    ids = _migrated_group(
         store,
         tag="m",
         writer_kind="tool",
         writer_name="send_reply",
-        capability="writes_email_inbox",
-        source_name="email_inbox:imap.search",
+        source_type="email_inbox",
+        call_target="imap.search",
     )
 
     groups = store.query.find_chain_groups()
 
     assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_name == "email_inbox:imap.search"
+    assert groups[0].untrusted_source_id == ids["source"]
+    assert groups[0].write_chains == [
+        [ids["entry"], ids["writer"], ids["store"]]
+    ]
+    assert groups[0].read_chains == [
+        [ids["source"], ids["reader"], ids["sink"]]
+    ]
+
+
+def test_find_chain_groups_through_a_declared_catalogue(
+    store: GraphStore,
+) -> None:
+    """G3 — the declaration-written family still pairs by source (B.3c).
+
+    `mcp_tool_description` is not migrated: the server's `writes_to`
+    ends at the source, so the pair is by source and the group carries
+    no store. Pinned next to the two above because the difference is the
+    whole of B.3c's scope.
+    """
+    ids = _call_written_group(
+        store,
+        tag="k",
+        writer_kind="mcp_server",
+        writer_name="knowledge",
+        source_name="mcp_tool_description:client.list_tools",
+    )
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    assert groups[0].store_id is None
+    assert groups[0].store_confidence is None
     assert groups[0].untrusted_source_id == ids["source"]
     assert groups[0].write_chains == [
         [ids["entry"], ids["writer"], ids["source"]]
@@ -1498,74 +1623,76 @@ def test_find_chain_groups_through_a_mailbox_write(store: GraphStore) -> None:
     ]
 
 
-def test_a_call_written_group_write_edge_keeps_the_flow_discipline(
+def test_a_migrated_group_write_edge_keeps_the_flow_discipline(
     store: GraphStore,
 ) -> None:
-    """F1 — the edge the group traverses is control, `["ast"]`, no data.
+    """F1 — the edge the group traverses is structural, `["ast"]`, no data.
 
-    B.2 produces the edge, so the discipline is asserted on the graph
-    the enumerator walks, not only on the stage's delta: a traced write
-    would carry its own value when it lands (ADR-0015, decision 5;
-    ADR-0016, decision 3).
+    B.3c produces the edge, so the discipline is asserted on the graph
+    the enumerator walks, not only on the stage's delta: the store links
+    are declarations about a place (ADR-0021 §4), so `structural` — not
+    `control`, which is what the un-migrated declaration edge carries —
+    and no traced data flow (ADR-0016, decision 3).
     """
-    ids = _call_written_group(
+    ids = _migrated_group(
         store,
         tag="f",
         writer_kind="tool",
         writer_name="index_documents",
-        capability="writes_rag_corpus",
-        source_name="rag_corpus:vectorstore.similarity_search",
+        source_type="rag_corpus",
+        call_target="vectorstore.similarity_search",
     )
 
     edge = store.edges.get(ids["w_s"])
+    read_edge = store.edges.get(ids["s_x"])
 
     assert edge.kind == "writes_to"
-    assert edge.flow_kind == "control"
+    assert edge.flow_kind == "structural"
     assert edge.observed_by == ["ast"]
     assert edge.data_flow_confirmed is None
+    assert read_edge.kind == "reads_from"
+    assert read_edge.flow_kind == "structural"
     assert store.query.find_chain_groups()[0].write_chains == [
-        [ids["entry"], ids["writer"], ids["source"]]
+        [ids["entry"], ids["writer"], ids["store"]]
     ]
 
 
 def test_the_two_call_written_families_stay_apart(store: GraphStore) -> None:
-    """Two sources, two writers, two groups — no cross-family pairing.
+    """Two stores, two writers, two groups — no cross-family pairing.
 
-    A corpus group and a mailbox group in one graph enumerate as two
-    groups, one per source. Each capability names its family, so neither
-    writer can be the write chain of the other's source.
+    A corpus store and a mailbox store in one graph enumerate as two
+    groups, one per store. The write that credits each capability reaches
+    its own family's store only, so neither group's write chain ends at
+    the other family's store.
     """
-    corpus = _call_written_group(
+    corpus = _migrated_group(
         store,
         tag="c",
         writer_kind="tool",
         writer_name="index_documents",
-        capability="writes_rag_corpus",
-        source_name="rag_corpus:vectorstore.similarity_search",
+        source_type="rag_corpus",
+        call_target="vectorstore.similarity_search",
     )
-    mail = _call_written_group(
+    mail = _migrated_group(
         store,
         tag="m",
         writer_kind="tool",
         writer_name="send_reply",
-        capability="writes_email_inbox",
-        source_name="email_inbox:imap.search",
+        source_type="email_inbox",
+        call_target="imap.search",
     )
 
     groups = store.query.find_chain_groups()
 
-    assert [g.untrusted_source_id for g in groups] == sorted(
-        [corpus["source"], mail["source"]]
+    assert [g.store_id for g in groups] == sorted(
+        [corpus["store"], mail["store"]]
     )
     for group in groups:
-        expected = (
-            corpus
-            if group.untrusted_source_id == corpus["source"]
-            else mail
-        )
+        expected = corpus if group.store_id == corpus["store"] else mail
         assert group.write_chains == [
-            [expected["entry"], expected["writer"], expected["source"]]
+            [expected["entry"], expected["writer"], expected["store"]]
         ]
+        assert group.untrusted_source_id == expected["source"]
 
 # ============================================================
 # Store joins (ADR-0021, B.3a)

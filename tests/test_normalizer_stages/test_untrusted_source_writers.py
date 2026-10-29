@@ -1,4 +1,4 @@
-"""UntrustedSourceWriterStage: `writes_to` into a source (1.3a.1).
+"""UntrustedSourceWriterStage: `writes_to` into a store, or a source.
 
 The stage is the write half of ADR-0010's channel: 1.3a's
 `untrusted_sources` emits `source → reader`, and this one emits
@@ -9,6 +9,13 @@ visible from a source — `parent_server`, the same file, the
 (1.3a.1.2 in the source's own file, project-wide in 1.3a.1.3) — plus the
 source-family gate, the flow attributes, the emission cap, and the
 absences.
+
+B.3c (ADR-0021 §2–§3, §5, §8): a **call-written** family's `writes_to`
+targets a `store` the stage creates, with one `reads_from` from that
+store back to the read site, and both edges carry §8's
+`identity_confidence`. The declaration-written family is **not**
+migrated: its tests still pin `writes_to → untrusted_source`, no store
+and no identity confidence.
 """
 
 from __future__ import annotations
@@ -30,6 +37,14 @@ from aicorellator.parsing.normalizer_stages.untrusted_source_writers import (
     WRITER_SOURCE_TYPES,
     declared_server_names,
 )
+from aicorellator.store.confidence import (
+    BASE,
+    CODE_CONTEXT_SHARED_IMPORT,
+    CODE_CONTEXT_SAME_MODULE,
+    LITERAL_EQUAL,
+    combine_signals,
+)
+from aicorellator.store.resolver import store_node_id
 
 
 def _server(
@@ -681,12 +696,36 @@ def _mail_source(file_path: str, **kwargs) -> Node:
     )
 
 
-def test_a_corpus_write_in_the_reads_file_writes_the_source(project) -> None:
+def _named_store(
+    p,
+    source_type: str = "rag_corpus",
+    call_target: str = CORPUS_READ,
+) -> Node:
+    """The `store` node the stage built for one migrated source.
+
+    Looked up by the name a store carries (`<family>:<identity_hint>`,
+    ADR-0021 §1) rather than by position, so the assertions below are
+    about the identity the graph holds. The kind is part of the lookup
+    because the two names collide: a source is named
+    `<source_type>:<call_target>` (1.3a) and the store's two halves *are*
+    the source type and the call target, so the two nodes render the same
+    string while their ids differ. `p.named` alone would find the source.
+    """
+    name = f"{source_type}:{call_target}"
+    return next(
+        node for node in p.delta.nodes
+        if node.kind == "store" and node.name == name
+    )
+
+
+def test_a_corpus_write_in_the_reads_file_writes_the_store(project) -> None:
     """R1 — `vectorstore.add_documents` in the file the read is in.
 
     The component that writes and the read are in one module, which is
     the shape an ingest route and its retriever have: the writer is the
-    node the delta holds for the symbol that credited the capability.
+    node the delta holds for the symbol that credited the capability,
+    and B.3c makes it write into the store the read site names rather
+    than into the read site itself.
     """
     p = project(
         files={"app.py": ""},
@@ -701,12 +740,16 @@ def test_a_corpus_write_in_the_reads_file_writes_the_source(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
+    store = _named_store(p)
     assert [
         (e.kind, e.source_id, e.target_id) for e in delta.edges
-    ] == [("writes_to", "tool:index_documents", "untrusted_source:1")]
+    ] == [
+        ("writes_to", "tool:index_documents", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
-def test_a_corpus_write_in_an_imported_file_writes_the_source(
+def test_a_corpus_write_in_an_imported_file_writes_the_store(
     project,
 ) -> None:
     """R2 — the writer imports the reader's module.
@@ -732,10 +775,16 @@ def test_a_corpus_write_in_an_imported_file_writes_the_source(
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["tool:index_documents"]
+    store = _named_store(p)
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:index_documents", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
-def test_a_corpus_write_the_reader_imports_writes_the_source(
+def test_a_corpus_write_the_reader_imports_writes_the_store(
     project,
 ) -> None:
     """R2, the other direction: the reader imports the writer's module.
@@ -760,7 +809,13 @@ def test_a_corpus_write_the_reader_imports_writes_the_source(
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["tool:index_documents"]
+    store = _named_store(p)
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:index_documents", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
 def test_a_corpus_write_in_an_unrelated_file_writes_nothing(project) -> None:
@@ -769,7 +824,9 @@ def test_a_corpus_write_in_an_unrelated_file_writes_nothing(project) -> None:
     The write is in one file and the corpus read in another, and neither
     imports the other: the writer cannot name the read site, so there is
     no edge — the same honest absence `_writers_for`'s third anchor
-    produces for a server.
+    produces for a server. No store either: the store is created after
+    the writers are found (ADR-0021 §5), and a store nothing writes into
+    is not evidence of a channel.
     """
     p = project(
         files={"app.py": "", "other.py": ""},
@@ -785,6 +842,7 @@ def test_a_corpus_write_in_an_unrelated_file_writes_nothing(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+    assert p.nodes("store") == []
 
 
 def test_a_corpus_reader_with_no_write_site_writes_nothing(project) -> None:
@@ -801,6 +859,7 @@ def test_a_corpus_reader_with_no_write_site_writes_nothing(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+    assert p.nodes("store") == []
 
 
 def test_a_write_of_the_other_family_does_not_write_this_source(
@@ -827,7 +886,7 @@ def test_a_write_of_the_other_family_does_not_write_this_source(
     assert delta.edges == []
 
 
-def test_a_mailbox_write_in_the_reads_file_writes_the_source(project) -> None:
+def test_a_mailbox_write_in_the_reads_file_writes_the_store(project) -> None:
     """E1 — `smtp.sendmail` in the file the mailbox read is in."""
     p = project(
         files={"mail.py": ""},
@@ -842,12 +901,16 @@ def test_a_mailbox_write_in_the_reads_file_writes_the_source(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
+    store = _named_store(p, "email_inbox", MAIL_READ)
     assert [
         (e.kind, e.source_id, e.target_id) for e in delta.edges
-    ] == [("writes_to", "tool:send_reply", "untrusted_source:1")]
+    ] == [
+        ("writes_to", "tool:send_reply", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
-def test_a_mailbox_write_in_an_imported_file_writes_the_source(
+def test_a_mailbox_write_in_an_imported_file_writes_the_store(
     project,
 ) -> None:
     """E2 — the send is in a module the mailbox read's file imports.
@@ -870,7 +933,13 @@ def test_a_mailbox_write_in_an_imported_file_writes_the_source(
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["tool:send"]
+    store = _named_store(p, "email_inbox", MAIL_READ)
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:send", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
 def test_a_mailbox_write_in_an_unrelated_file_writes_nothing(
@@ -891,6 +960,7 @@ def test_a_mailbox_write_in_an_unrelated_file_writes_nothing(
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+    assert p.nodes("store") == []
 
 
 def test_a_write_in_a_route_handler_is_the_entry_point(project) -> None:
@@ -918,7 +988,13 @@ def test_a_write_in_a_route_handler_is_the_entry_point(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["entry_point:upload"]
+    store = _named_store(p)
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "entry_point:upload", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
 def test_a_write_in_an_unclassified_method_is_its_class(project) -> None:
@@ -943,7 +1019,13 @@ def test_a_write_in_an_unclassified_method_is_its_class(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["tool:Corpus"]
+    store = _named_store(p)
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:Corpus", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
 
 
 def test_a_write_site_with_no_node_writes_nothing(project) -> None:
@@ -967,15 +1049,20 @@ def test_a_write_site_with_no_node_writes_nothing(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+    assert p.nodes("store") == []
 
 
-def test_the_call_written_edges_carry_the_flow_discipline(project) -> None:
-    """F1 — every B.2 edge: control, `["ast"]`, no confirmed data flow.
+def test_the_migrated_edges_carry_the_flow_discipline(project) -> None:
+    """F1 — every B.3c edge: structural, `["ast"]`, no confirmed data flow.
 
-    The edge is evidence of a call site, not a traced value (ADR-0015,
-    decision 5; ADR-0016, decision 3), so `FlowKindStage` pins
-    `control`, `observed_by` is the `Edge` default and
-    `data_flow_confirmed` stays `NULL`.
+    The edge is a declaration about a place, not a traced value
+    (ADR-0015, decision 5; ADR-0016, decision 3), so `FlowKindStage`
+    must leave it alone: `writes_to` and `reads_from` are in
+    `STRUCTURAL_EDGE_KINDS`, the stage that emits them states the kind,
+    and stage 12 skips a structural edge rather than pinning `control`
+    on it. `observed_by` is the `Edge` default and `data_flow_confirmed`
+    stays `NULL`. The `control` half of the discipline is the
+    declaration-written family's, one test above.
     """
     p = project(
         files={"app.py": ""},
@@ -993,10 +1080,14 @@ def test_the_call_written_edges_carry_the_flow_discipline(project) -> None:
     UntrustedSourceWriterStage().apply(p.delta, p.ctx)
     FlowKindStage().apply(p.delta, p.ctx)
 
-    assert len(p.delta.edges) == 2
-    assert {e.flow_kind for e in p.delta.edges} == {"control"}
+    assert [e.kind for e in p.delta.edges] == [
+        "writes_to", "reads_from", "writes_to", "reads_from",
+    ]
+    assert {e.flow_kind for e in p.delta.edges} == {"structural"}
     assert {tuple(e.observed_by) for e in p.delta.edges} == {("ast",)}
     assert {e.data_flow_confirmed for e in p.delta.edges} == {None}
+    # §7: the two store links carry the field, and only they do.
+    assert None not in {e.identity_confidence for e in p.delta.edges}
 
 
 def test_the_source_family_gate_is_the_writer_table(project) -> None:
@@ -1009,21 +1100,6 @@ def test_the_source_family_gate_is_the_writer_table(project) -> None:
     assert WRITER_SOURCE_TYPES == {
         "mcp_tool_description", "rag_corpus", "email_inbox",
     }
-    """E3 — a writer, but no read of the same source it can see."""
-    p = project(
-        files={"app.py": "", "other.py": ""},
-        capabilities={
-            "other.py": _caps("other.py", **{"send": {
-                "writes_email_inbox",
-            }}),
-        },
-    )
-    p.delta.nodes.append(_component("send", "other.py"))
-    p.delta.nodes.append(_mail_source("app.py"))
-
-    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
-
-    assert delta.edges == []
 
 
 def test_a_mailbox_reader_with_no_write_site_writes_nothing(project) -> None:
@@ -1035,3 +1111,345 @@ def test_a_mailbox_reader_with_no_write_site_writes_nothing(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+    assert p.nodes("store") == []
+
+
+# ============================================================
+# B.3c — the store a call-written source reads from (ADR-0021)
+# ============================================================
+
+def test_the_store_identity_is_the_source_type_and_the_call_target(
+    project,
+) -> None:
+    """S1 — `family` is the source type, `identity_hint` the call target.
+
+    ADR-0021 §1: a family is the technology, and for these two the read
+    site is what names the place — the corpus is a Chroma or a FAISS
+    collection and neither call site says which — so the source type is
+    the family here. The hint is the dotted call the read spells, the
+    only literal either half of the channel has, and the id is
+    `store.resolver.store_node_id`'s, so a store this stage builds and a
+    store the resolver would build for one identity are one node.
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert len(p.nodes("store")) == 1
+    store = p.nodes("store")[0]
+    assert store.attributes == {
+        "family": "rag_corpus", "identity_hint": CORPUS_READ,
+    }
+    assert store.name == f"rag_corpus:{CORPUS_READ}"
+    assert store.id == store_node_id("rag_corpus", CORPUS_READ)
+
+
+def test_two_reads_of_one_target_share_one_store(project) -> None:
+    """S2 — one node per `(family, identity_hint)` (§1).
+
+    Two read sites of one family that spell one target are one place, so
+    they share the store the first one created. The sources stay two
+    nodes — a source is a read site (1.3a) — which is what makes
+    `reads_from` N:1: one store, two read sites, one edge each.
+    """
+    p = project(
+        files={"app.py": "", "other.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+            "other.py": _caps("other.py", **{"index_more": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(_component("index_more", "other.py"))
+    p.delta.nodes.append(
+        _corpus_source("app.py", node_id="untrusted_source:1")
+    )
+    p.delta.nodes.append(
+        _corpus_source("other.py", node_id="untrusted_source:2")
+    )
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    store = _named_store(p)
+    assert len(p.nodes("store")) == 1
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:index_documents", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+        ("writes_to", "tool:index_more", store.id),
+        ("reads_from", store.id, "untrusted_source:2"),
+    ]
+
+
+def test_two_targets_are_two_stores(project) -> None:
+    """S3 — a different call target is a different place, not a wider one.
+
+    `vectorstore.similarity_search` and `retriever.invoke` are two ways
+    of reading a corpus, and the AST cannot say they are one collection:
+    the identity is the literal, and the literals differ. So two stores,
+    one read site each, and nothing pairs one store's write with the
+    other's read.
+    """
+    p = project(
+        files={"app.py": "", "other.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+            "other.py": _caps("other.py", **{"index_more": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(_component("index_more", "other.py"))
+    p.delta.nodes.append(_corpus_source(
+        "app.py",
+        node_id="untrusted_source:1",
+    ))
+    p.delta.nodes.append(_source(
+        source_type="rag_corpus",
+        file_path="other.py",
+        node_id="untrusted_source:2",
+        call_target="retriever.invoke",
+    ))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert len(p.nodes("store")) == 2
+    search = _named_store(p)
+    invoke = _named_store(p, "rag_corpus", "retriever.invoke")
+    assert search.id != invoke.id
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:index_documents", search.id),
+        ("reads_from", search.id, "untrusted_source:1"),
+        ("writes_to", "tool:index_more", invoke.id),
+        ("reads_from", invoke.id, "untrusted_source:2"),
+    ]
+
+
+def test_the_same_module_confidence_is_on_both_edges(project) -> None:
+    """C1/C3 — §8's same-module number, and it is the *pair's* number.
+
+    `combine_signals(BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE])` is
+    `1 − 0.7 × 0.4 × 0.8 = 0.776`: the family matched, the two ends name
+    one literal (the store's hint *is* the call target), and the write
+    and the read are in one file. Both edges carry it — the link's
+    confidence is the pair's, not one edge's (ADR-0021 §7) — and the
+    expected value is computed from `confidence`'s constants rather than
+    restated.
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    expected = combine_signals(
+        BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]
+    )
+    assert round(expected, 4) == 0.776
+    assert [e.identity_confidence for e in delta.edges] == [
+        expected, expected,
+    ]
+
+
+def test_a_shared_import_confidence_is_the_shorter_pair(project) -> None:
+    """C2 — §8's shared-import number, on both edges.
+
+    The writer is in a module the read's file imports, which is §8's
+    weakest code-context row: `1 − 0.7 × 0.4 × 0.9 = 0.748`. The literal
+    is still exact, so the pair is weaker than the same-file one and
+    stronger than a pair with no code context at all (`0.72`) — the
+    arithmetic says the anchor is worth something and not everything.
+    """
+    p = project(
+        files={"apps/routes.py": "", "services/indexer.py": ""},
+        capabilities={
+            "services/indexer.py": _caps(
+                "services/indexer.py", **{"index_documents": {
+                    "writes_rag_corpus",
+                }},
+            ),
+        },
+        entry_points=_imports(**{"services/indexer.py": ["apps.routes"]}),
+    )
+    p.delta.nodes.append(_component("index_documents", "services/indexer.py"))
+    p.delta.nodes.append(_corpus_source("apps/routes.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    expected = combine_signals(
+        BASE, [LITERAL_EQUAL, CODE_CONTEXT_SHARED_IMPORT]
+    )
+    assert round(expected, 4) == 0.748
+    assert [e.identity_confidence for e in delta.edges] == [
+        expected, expected,
+    ]
+
+
+def test_the_reads_from_link_keeps_the_strongest_pairing(project) -> None:
+    """S4 — several writers, one `reads_from`, one number on it.
+
+    A (store, source) pair gets one `reads_from` (ADR-0021 §3) while
+    every visible writer gets its own `writes_to`, so the read side has
+    to choose: it carries the strongest pairing, which is
+    `StoreResolver._keep_edge`'s rule for its own links. Here the
+    same-file writer scores 0.776 and the shared-import one 0.748, so
+    each `writes_to` carries its own value and the `reads_from` carries
+    0.776.
+    """
+    p = project(
+        files={"apps/routes.py": "", "services/indexer.py": ""},
+        capabilities={
+            "apps/routes.py": _caps("apps/routes.py", **{"index_local": {
+                "writes_rag_corpus",
+            }}),
+            "services/indexer.py": _caps(
+                "services/indexer.py", **{"index_remote": {
+                    "writes_rag_corpus",
+                }},
+            ),
+        },
+        entry_points=_imports(**{"services/indexer.py": ["apps.routes"]}),
+    )
+    p.delta.nodes.append(_component("index_local", "apps/routes.py"))
+    p.delta.nodes.append(_component("index_remote", "services/indexer.py"))
+    p.delta.nodes.append(_corpus_source("apps/routes.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    store = _named_store(p)
+    same_file = combine_signals(
+        BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]
+    )
+    shared_import = combine_signals(
+        BASE, [LITERAL_EQUAL, CODE_CONTEXT_SHARED_IMPORT]
+    )
+    assert [
+        (e.kind, e.source_id, e.target_id, e.identity_confidence)
+        for e in delta.edges
+    ] == [
+        ("writes_to", "tool:index_local", store.id, same_file),
+        ("writes_to", "tool:index_remote", store.id, shared_import),
+        ("reads_from", store.id, "untrusted_source:1", same_file),
+    ]
+
+
+
+def test_a_source_that_names_no_target_gets_no_store(project) -> None:
+    """S5 — §5: an unresolved identity produces no store.
+
+    `call_target` is the identity hint, so a source without one names no
+    place, and the stage creates nothing rather than a store with an
+    empty or invented hint. `untrusted_sources` always writes the
+    attribute, so this is the defensive half of the rule — pinned
+    because the failure it prevents (a store per unresolved source,
+    joining every call site of the family) is the one §5 exists for.
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    source = _corpus_source("app.py")
+    del source.attributes["call_target"]
+    p.delta.nodes.append(source)
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+    assert p.nodes("store") == []
+
+
+def test_a_store_the_delta_already_holds_is_reused(project) -> None:
+    """S6 — the delta's stores win over a second node for the same id.
+
+    `_store_index` reads the delta first, the way the upload writer's
+    index does: a store is one node per identity (§1) and the id is the
+    graph's primary key, so a delta that already holds the node gets it
+    reused rather than a duplicate row. A hand-built delta is what
+    reaches this today — the resolver builds its own stores at stage 19,
+    after this one — and it is pinned because a duplicate id is a write
+    the store repository rejects.
+    """
+    p = project(
+        files={"app.py": ""},
+        capabilities={
+            "app.py": _caps("app.py", **{"index_documents": {
+                "writes_rag_corpus",
+            }}),
+        },
+    )
+    existing = Node(
+        id=store_node_id("rag_corpus", CORPUS_READ),
+        kind="store",
+        name=f"rag_corpus:{CORPUS_READ}",
+        host_id="localhost",
+        attributes={"family": "rag_corpus", "identity_hint": CORPUS_READ},
+    )
+    p.delta.nodes.append(_component("index_documents", "app.py"))
+    p.delta.nodes.append(existing)
+    p.delta.nodes.append(_corpus_source("app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert p.nodes("store") == [existing]
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "tool:index_documents", existing.id),
+        ("reads_from", existing.id, "untrusted_source:1"),
+    ]
+
+
+def test_the_declared_family_is_not_migrated(project) -> None:
+    """M1/M2 — `mcp_tool_description` keeps the B.2 target (B.3c).
+
+    Its writer is a declaration and its store is the catalogue
+    (`mcp_catalogue`, B.3b-mcp-catalogue), so the source is still what
+    the write edge ends at: no `store` node, no `reads_from`, and no
+    `identity_confidence` — §7's field belongs to the two store links,
+    and this edge is not one of them.
+    """
+    p = project(files={"app.py": ""})
+    p.delta.nodes.append(_server("knowledge", "app.py"))
+    p.delta.nodes.append(_source(file_path="app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [
+        (e.kind, e.source_id, e.target_id, e.identity_confidence)
+        for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:knowledge", "untrusted_source:1", None),
+    ]
+    assert p.nodes("store") == []
+
