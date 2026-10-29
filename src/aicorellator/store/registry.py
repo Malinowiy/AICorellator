@@ -9,10 +9,11 @@ The registry is **empty until a family is imported**, and that is
 B.3b-core's contract: `FAMILIES` starts as a plain dict, every scan
 still runs the resolver, a registry holding no family yields no store
 edge rather than a special case, and the pipeline needs no branch for
-either state. The tree ships one name today — `fs`, added by B.3b-fs —
-and it arrives by importing `families/__init__.py`, which is where the
-registration line lives (`register_family("fs", FsFamily)`). A family
-that nobody imports does not run (the same rule the detector registry
+either state. The tree ships three names today — `fs` (B.3b-fs), `s3`
+(B.3b-s3) and `db` (B.3b-db) — and they arrive by importing
+`families/__init__.py`, which is where the registration lines live
+(`register_family("fs", FsFamily)` and the two below it). A family that
+nobody imports does not run (the same rule the detector registry
 follows).
 """
 

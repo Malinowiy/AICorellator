@@ -120,7 +120,7 @@ class StoreResolver:
     store edges under its own control.
 
     `context` is the per-family context (`families.base.Context`), and
-    it is `None` until a context exists (B.3b-user_upload). It is
+    it is `None` until a context exists (B.3b-user_upload-core). It is
     threaded to every `detect_*` call, which is the whole of what the
     interface promises a context: a family may read it, and a family
     that needs nothing ignores it.

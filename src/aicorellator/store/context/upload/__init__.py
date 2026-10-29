@@ -3,7 +3,7 @@
 ADR-0021 §8 (revision 2) adds one producer to the store subsystem: an
 entry-point handler that **accepts an upload** is a *context-based
 writer*, and the stores it writes into are its stores at base confidence
-0.5 instead of 0.3. This package is that producer, and it has five
+0.5 instead of 0.3. This package is that producer, and it has six
 pieces:
 
   - `base` — `UploadDetector` and `UploadSite`: the interface a framework
