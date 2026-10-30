@@ -1,6 +1,6 @@
 """CrossFileResolutionStage — cross-module edges (Resolvers 1 and B.1).
 
-Run order: 14 of 20 (see `normalizer_stages.STAGES`).
+Run order: 15 of 21 (see `normalizer_stages.STAGES`).
 
 C4: "**Cross-file resolution** — `uses_tool` edges from agent modules to
 tool modules they import (ADR-0013, Resolver 1)."

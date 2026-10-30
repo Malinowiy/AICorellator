@@ -1,6 +1,6 @@
 """ClassNodeStage — `class` symbols to nodes.
 
-Run order: 2 of 20 (see `normalizer_stages.STAGES`).
+Run order: 3 of 21 (see `normalizer_stages.STAGES`).
 
 C4: "**Class nodes** — Level 3 classification, with Level 2 capabilities
 supplied as input."

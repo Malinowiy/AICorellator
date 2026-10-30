@@ -27,7 +27,11 @@ convention the MCP framework detectors use (ADR-0013), and it is a
 layout, not a class name.
 
 Capabilities take precedence when they conflict with a path: a public
-method of an MCP server is a tool unless its body is a sink.
+method of an MCP server is a tool unless its body is a sink, and a
+method that validates input (B.4-gap-1, ADR-0024 §2) is a guardrail
+rather than a tool. A *class* is never a guardrail from that capability:
+the capability is credited on a function or method, so the method is the
+`guardrail` node and the class keeps whatever its own body yields.
 
 The rules are intentionally conservative: a missed component is worse
 than a spurious one, because Phase 3 (LLM analysis) filters noise.
@@ -39,8 +43,10 @@ from dataclasses import dataclass, field
 
 from ..patterns import (
     AGENT_CAPABILITIES,
+    CLASSIFYING_CAPABILITIES,
     EXCLUDED_CLASSES,
     EXCLUDED_CLASS_SUFFIXES,
+    GUARDRAIL_CAPABILITIES,
     LLM_ENDPOINT_CAPABILITIES,
     SINK_CAPABILITIES,
     TOOL_CAPABILITIES,
@@ -166,7 +172,11 @@ def classify_method(
         capabilities: capabilities extracted from the method body
                       (ADR-0009). This is the input that decides a kind.
 
-    Returns None if the method is not a tool or sink.
+    Returns None if the method is not a tool, a sink or a guardrail.
+
+    The order of the capability branches is the precedence: a sink
+    (strongest — the body executes, writes or sends), then a guardrail
+    (B.4-gap-1, ADR-0024 §2), then a tool. The layout rule is last.
     """
     caps = set(capabilities or ())
 
@@ -180,6 +190,20 @@ def classify_method(
             kind="sink",
             attributes={"category": _sink_category_from_caps(caps)},
         )
+
+    # The guardrail branch (B.4-gap-1, ADR-0024 §2), and it is *negative*
+    # like the capability it reads: `validates_input` means "called from a
+    # component, and a component of no kind itself". A symbol that also
+    # carries a classifying capability is that kind, not a guardrail: a
+    # sink is the stronger evidence (the branch above) and a tool
+    # capability is a declaration about the symbol's own body (the branch
+    # below). The producer (`normalizer_stages.guardrail_capability`)
+    # never credits the two together, so this condition is what keeps the
+    # classifier and the producer reading the same rule. It is checked
+    # before the layout rule: a public method of an MCP server that
+    # validates input is a guardrail, not a tool.
+    if caps & GUARDRAIL_CAPABILITIES and not caps & CLASSIFYING_CAPABILITIES:
+        return Classification(kind="guardrail")
 
     if caps & TOOL_CAPABILITIES:
         attrs: dict[str, str] = {}

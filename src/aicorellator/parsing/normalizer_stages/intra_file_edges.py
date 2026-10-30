@@ -1,6 +1,6 @@
 """IntraFileEdgeStage — `provides_tool` and same-file `has_access_to`.
 
-Run order: 4 of 20 (see `normalizer_stages.STAGES`).
+Run order: 5 of 21 (see `normalizer_stages.STAGES`).
 
 C4: "**Intra-file edges** — `provides_tool` (MCP server to tool),
 `has_access_to` (tool to sink)."

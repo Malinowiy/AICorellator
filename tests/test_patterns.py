@@ -119,6 +119,39 @@ def test_capability_sets_not_empty() -> None:
     assert len(patterns.AGENT_CAPABILITIES) > 0
     assert len(patterns.LLM_ENDPOINT_CAPABILITIES) > 0
     assert len(patterns.TOOL_CAPABILITIES) > 0
+    assert len(patterns.GUARDRAIL_CAPABILITIES) > 0
+
+
+def test_validates_input_is_a_declared_capability() -> None:
+    """B.4-gap-1: the guardrail capability is in the vocabulary.
+
+    No `CALL_RULES` entry credits it — the producer is
+    `normalizer_stages.guardrail_capability`, which writes the map — but
+    it must be a declared name: `classification.py` reads the set, and
+    the LLM payload may carry the capability on a node.
+    """
+    assert "validates_input" in patterns.VALID_CAPABILITIES
+    assert patterns.GUARDRAIL_CAPABILITIES == {"validates_input"}
+
+
+def test_the_guardrail_capability_is_not_a_classifying_capability() -> None:
+    """The rule is negative (ADR-0024 §2): the sets do not overlap.
+
+    A symbol's capability is one classifying kind, and `validates_input`
+    is credited only where none of the four is present — so the two sets
+    are disjoint, and the union is exactly the four.
+    """
+    assert not (
+        patterns.GUARDRAIL_CAPABILITIES
+        & patterns.CLASSIFYING_CAPABILITIES
+    )
+    assert patterns.CLASSIFYING_CAPABILITIES == (
+        patterns.SINK_CAPABILITIES
+        | patterns.AGENT_CAPABILITIES
+        | patterns.LLM_ENDPOINT_CAPABILITIES
+        | patterns.TOOL_CAPABILITIES
+    )
+    assert patterns.GUARDRAIL_CAPABILITIES <= patterns.VALID_CAPABILITIES
 
 
 def test_sink_capabilities_include_egress() -> None:

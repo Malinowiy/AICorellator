@@ -1,6 +1,6 @@
 """GuardrailEdgeStage — `guards` (guardrail → component) from source evidence.
 
-Run order: 20 of 20 (see `normalizer_stages.STAGES`) — last.
+Run order: 21 of 21 (see `normalizer_stages.STAGES`) — last.
 
 ADR-0019 §1 (emission). A `guards` edge is emitted only when the
 source-level evidence establishes a protection relationship, and B.4a

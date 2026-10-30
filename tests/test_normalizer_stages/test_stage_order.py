@@ -37,6 +37,11 @@ The order encodes four facts that are easy to lose in a refactor:
     merge constraint with `guardrail_edges` and nothing else, and
     neither reads what the other writes (see
     `normalizer_stages.store_resolver`).
+  - `guardrail_capability` (B.4-gap-1) runs at 2, before the two node
+    stages that read the capability map it writes. It is the only
+    constraint on it: the stage reads `ctx.capabilities` and the flat
+    call graph rather than the delta, and it emits no node or edge (see
+    `normalizer_stages.guardrail_capability`).
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ from aicorellator.parsing.normalizer_stages.base import NormalizerStage
 
 EXPECTED = (
     "mcp_server_nodes",
+    "guardrail_capability",
     "class_nodes",
     "method_nodes",
     "intra_file_edges",
@@ -72,9 +78,9 @@ def test_stages_are_in_the_documented_order() -> None:
     assert tuple(stage.name for stage in STAGES) == EXPECTED
 
 
-def test_stage_count_is_twenty() -> None:
-    """The count is quoted in the per-stage docstrings (`N of 20`)."""
-    assert len(STAGES) == 20
+def test_stage_count_is_twenty_one() -> None:
+    """The count is quoted in the per-stage docstrings (`N of 21`)."""
+    assert len(STAGES) == 21
 
 
 def test_every_stage_satisfies_the_protocol() -> None:
@@ -94,6 +100,33 @@ def test_guardrail_edges_runs_last() -> None:
     the delta and the call graph rather than anything a later stage would
     produce."""
     assert STAGES[-1].name == "guardrail_edges"
+
+
+def test_guardrail_capability_precedes_the_node_stages() -> None:
+    """B.4-gap-1's only ordering constraint.
+
+    The stage writes a capability into `ctx.capabilities`, and
+    `class_nodes` / `method_nodes` are what read that map and turn it into
+    nodes. It reads capabilities and the call graph rather than the
+    delta, so nothing else constrains it — but it must be before both.
+    """
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("mcp_server_nodes")
+        < names.index("guardrail_capability")
+        < names.index("class_nodes")
+        < names.index("method_nodes")
+    )
+
+
+def test_guardrail_capability_precedes_the_guardrail_edges() -> None:
+    """The producer runs before the emitter (B.4a reads the node set)."""
+    names = [stage.name for stage in STAGES]
+    assert (
+        names.index("guardrail_capability")
+        < names.index("detector_merge")
+        < names.index("guardrail_edges")
+    )
 
 
 def test_lethal_trifecta_precedes_guardrail_edges() -> None:

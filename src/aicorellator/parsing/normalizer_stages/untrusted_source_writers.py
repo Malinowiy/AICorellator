@@ -1,6 +1,6 @@
 """UntrustedSourceWriterStage — `writes_to` into a store, or a source.
 
-Run order: 11 of 20 (see `normalizer_stages.STAGES`).
+Run order: 12 of 21 (see `normalizer_stages.STAGES`).
 
 C4: no pre-1.3 row. This is the write half of ADR-0010's channel. 1.3a
 built the read side — a source node per read site, plus

@@ -1,6 +1,6 @@
 """StoreResolverStage — store nodes, `writes_to` and `reads_from` (B.3b).
 
-Run order: 19 of 20 (see `normalizer_stages.STAGES`).
+Run order: 20 of 21 (see `normalizer_stages.STAGES`).
 
 ADR-0021 §12: store identity is decided by **families** — one module per
 technology a store is reached through — registered in

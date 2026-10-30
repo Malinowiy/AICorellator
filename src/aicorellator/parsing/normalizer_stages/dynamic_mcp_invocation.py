@@ -1,6 +1,6 @@
 """DynamicMcpInvocationStage — `uses_tool` for a reader (1.3a.1.2).
 
-Run order: 13 of 20 (see `normalizer_stages.STAGES`).
+Run order: 14 of 21 (see `normalizer_stages.STAGES`).
 
 C4: no pre-1.3 row. ADR-0010's channel has two halves by now — 1.3a
 emits `source → reader` for every catalogue read, 1.3a.1 emits the write

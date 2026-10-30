@@ -11,28 +11,37 @@ stage table in `C4_L3_Phase1.md`, which lists these stages in this
 order:
 
      1  mcp_server_nodes       mcp_server nodes from paths
-     2  class_nodes            class nodes (classification + capabilities)
-     3  method_nodes           method nodes; tools/sinks indexed per file
-     4  intra_file_edges       provides_tool, has_access_to (same file)
-     5  entry_points           entry_point nodes
-     6  untrusted_sources      untrusted_source nodes + reader edges (1.3a)
-     7  llm_endpoints          llm_endpoint nodes from configs
-     8  delegation_edges       entry → agent, agent → agent, agent → server
-     9  entry_to_sink          entry → same-file sink reachability
-    10  detector_merge         detector nodes authoritative; id remap
-    11  untrusted_source_writers  writer → writes_to → store (B.3c, B.3b)
-    12  flow_kind              flow_kind = control on every edge (ADR-0016)
-    13  dynamic_mcp_invocation agent → uses_tool → tool (1.3a.1.2)
-    14  cross_file_resolution  uses_tool across modules (Resolver 1)
-    15  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
-    16  orphan_entry           orphan entry → single agent (Resolver 2)
-    17  body_attributes        sink_data_flow / returns_data backfill
-    18  lethal_trifecta        lethal trifecta as a node attribute (1.3d)
-    19  store_resolver         store nodes, writes_to / reads_from (B.3b)
-    20  guardrail_edges        guards (guardrail → component), B.4a
+     2  guardrail_capability   validates_input capability (B.4-gap-1)
+     3  class_nodes            class nodes (classification + capabilities)
+     4  method_nodes           method nodes; tools/sinks indexed per file
+     5  intra_file_edges       provides_tool, has_access_to (same file)
+     6  entry_points           entry_point nodes
+     7  untrusted_sources      untrusted_source nodes + reader edges (1.3a)
+     8  llm_endpoints          llm_endpoint nodes from configs
+     9  delegation_edges       entry → agent, agent → agent, agent → server
+    10  entry_to_sink          entry → same-file sink reachability
+    11  detector_merge         detector nodes authoritative; id remap
+    12  untrusted_source_writers  writer → writes_to → store (B.3c, B.3b)
+    13  flow_kind              flow_kind = control on every edge (ADR-0016)
+    14  dynamic_mcp_invocation agent → uses_tool → tool (1.3a.1.2)
+    15  cross_file_resolution  uses_tool across modules (Resolver 1)
+    16  mcp_entry_synthesis    virtual MCP entry (Resolver 3)
+    17  orphan_entry           orphan entry → single agent (Resolver 2)
+    18  body_attributes        sink_data_flow / returns_data backfill
+    19  lethal_trifecta        lethal trifecta as a node attribute (1.3d)
+    20  store_resolver         store nodes, writes_to / reads_from (B.3b)
+    21  guardrail_edges        guards (guardrail → component), B.4a
 
 Note on the order:
 
+  - `guardrail_capability` (B.4-gap-1) runs at 2 — after the MCP server
+    nodes and before `class_nodes` / `method_nodes`, and it is the only
+    constraint on it: the stage writes a capability into
+    `ctx.capabilities`, and those two stages are what read the map and
+    turn it into nodes (`normalizer_stages.guardrail_capability`). It
+    reads the capability map and the flat call graph rather than the
+    delta, so no node stage has to have run for it, and it emits no node
+    or edge of its own.
   - `entry_to_sink` runs **before** the detector merge, where the code it
     was split from called it. This is load-bearing, for a mechanical
     reason: the resolver reads the TSA-side `sinks_by_file` index, whose
@@ -100,6 +109,7 @@ from .dynamic_mcp_invocation import DynamicMcpInvocationStage
 from .entry_points import EntryPointStage
 from .entry_to_sink import EntryToSinkStage
 from .flow_kind import FlowKindStage
+from .guardrail_capability import GuardrailCapabilityStage
 from .guardrail_edges import GuardrailEdgeStage
 from .intra_file_edges import IntraFileEdgeStage
 from .lethal_trifecta import LethalTrifectaStage
@@ -120,6 +130,7 @@ __all__ = ["STAGES", "NormalizerStage"]
 # run the stages by hand.
 STAGES: tuple[NormalizerStage, ...] = (
     McpServerNodeStage(),
+    GuardrailCapabilityStage(),
     ClassNodeStage(),
     MethodNodeStage(),
     IntraFileEdgeStage(),

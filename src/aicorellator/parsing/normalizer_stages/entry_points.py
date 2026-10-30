@@ -1,6 +1,6 @@
 """EntryPointStage — `entry_point` nodes.
 
-Run order: 5 of 20 (see `normalizer_stages.STAGES`).
+Run order: 6 of 21 (see `normalizer_stages.STAGES`).
 
 C4: "**Entry point nodes** — from the entry points detector, including
 HTTP, CLI, and Streamlit."

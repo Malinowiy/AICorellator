@@ -72,6 +72,17 @@ def test_llm_capability_alone_is_an_agent() -> None:
     assert c.kind == "agent"
 
 
+def test_validates_input_does_not_make_a_class_a_guardrail() -> None:
+    """A class is not a guardrail from the capability (B.4-gap-1).
+
+    The capability is credited on a function or a method — the method is
+    the node, and the class keeps whatever its own body yields. A class
+    whose body carries only `validates_input` therefore gets no node.
+    """
+    c = classify_class("InputPolicy", "core/policy.py", ["validates_input"])
+    assert c is None
+
+
 def test_class_without_a_capability_is_not_classified() -> None:
     """The class-A name rules are gone (ADR-0016, decision 7).
 
@@ -190,6 +201,78 @@ def test_tool_capability_makes_a_method_a_tool() -> None:
     assert c is not None
     assert c.kind == "tool"
     assert c.attributes["parent_class"] == "ChatAgent"
+
+
+# ============================================================
+# method classification — the guardrail branch (B.4-gap-1)
+# ============================================================
+
+def test_validates_input_makes_a_method_a_guardrail() -> None:
+    """`validates_input` alone → guardrail (ADR-0024 §2).
+
+    The capability is negative — the producer credits it only where no
+    classifying capability is present — so it is the only thing the body
+    says, and the kind is the guardrail's.
+    """
+    c = classify_method(
+        "validate_input", "core/validation.py", None, ["validates_input"],
+    )
+    assert c is not None
+    assert c.kind == "guardrail"
+
+
+def test_sink_capability_beats_the_guardrail_capability() -> None:
+    """O1: a symbol with both is a sink — the stronger evidence."""
+    c = classify_method(
+        "save_file", "core/validation.py", None,
+        ["validates_input", "writes_filesystem"],
+    )
+    assert c is not None
+    assert c.kind == "sink"
+    assert c.attributes["category"] == "filesystem"
+
+
+def test_tool_capability_beats_the_guardrail_capability() -> None:
+    """O2: a tool-capability symbol is a tool, not a guardrail.
+
+    The producer never writes the two together (`_is_a_component`), and
+    the classification agrees: its own capability is a declaration about
+    its body, and the guardrail branch requires the negative case.
+    """
+    c = classify_method(
+        "read_docs", "agents/chat.py", "ChatAgent",
+        ["validates_input", "invokes_mcp_tool"],
+    )
+    assert c is not None
+    assert c.kind == "tool"
+
+
+def test_guardrail_beats_the_mcp_server_layout() -> None:
+    """A public method of an MCP server that validates input.
+
+    The layout rule is last: `validates_input` is a statement about the
+    body, and the path is only a declaration about where the file lives.
+    """
+    c = classify_method(
+        "validate_input", "mcp/servers/findrive/server.py",
+        "FinDriveServer", ["validates_input"],
+    )
+    assert c is not None
+    assert c.kind == "guardrail"
+
+
+def test_an_agent_capability_is_not_a_guardrail() -> None:
+    """The capability is negative; `calls_llm` is a component of its own.
+
+    `classify_method` has no agent branch (an agent is a class), so the
+    answer is None — what it was before `validates_input` existed. The
+    point is that the guardrail branch does not claim it.
+    """
+    c = classify_method(
+        "validate_input", "agents/chat.py", "ChatAgent",
+        ["validates_input", "calls_llm"],
+    )
+    assert c is None
 
 
 def test_tool_in_mcp_server() -> None:

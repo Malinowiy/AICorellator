@@ -355,6 +355,15 @@ VALID_CAPABILITIES: frozenset[str] = frozenset({
     "calls_llm",
     "invokes_mcp_tool",
     "reads_untrusted",
+    # The negative guardrail capability (B.4-gap-1, ADR-0024 §2). No rule
+    # in `patterns_registry` credits it: `normalizer_stages.
+    # guardrail_capability` credits it on a function or method that is
+    # called from a component-capability caller and carries none of the
+    # classifying sets (`CLASSIFYING_CAPABILITIES` below). It is declared
+    # here because this is the closed vocabulary every consumer reads —
+    # `classification.py` yields `guardrail` from it, and the LLM
+    # payload's `capabilities` list may contain it.
+    "validates_input",
     # The write side of ADR-0010's channel (B.2). Two names, not one:
     # unlike `reads_untrusted` — whose family is carried by the
     # `untrusted_source` node the read creates — a write has no node of
@@ -1347,6 +1356,33 @@ LLM_ENDPOINT_CAPABILITIES: frozenset[str] = frozenset({
 TOOL_CAPABILITIES: frozenset[str] = frozenset({
     "invokes_mcp_tool",
 })
+
+# Capabilities that make a symbol a guardrail, regardless of name
+# (B.4-gap-1, ADR-0024 §2). One member today; a second guardrail
+# capability adds here, and `classification.py` reads the set rather than
+# the name. The capability is **negative** — it is credited by
+# `normalizer_stages.guardrail_capability` on a symbol that is called from
+# a component and carries none of `CLASSIFYING_CAPABILITIES` — so the set
+# is disjoint from the four above by construction, and a symbol whose
+# capabilities intersect both is classified by the order in
+# `classify_method` (sink, then guardrail, then tool).
+GUARDRAIL_CAPABILITIES: frozenset[str] = frozenset({
+    "validates_input",
+})
+
+# The four sets above, unioned: every capability that makes a symbol a
+# component of its own (a sink, an agent, an llm_endpoint or a tool).
+# ADR-0024 §2 states the guardrail rule as a *negative*: `validates_input`
+# is credited only where none of these four is present, and
+# `classify_method`'s guardrail branch reads the same condition. One
+# definition, so the producer and the classifier cannot disagree about
+# which symbols the capability excludes.
+CLASSIFYING_CAPABILITIES: frozenset[str] = (
+    SINK_CAPABILITIES
+    | AGENT_CAPABILITIES
+    | LLM_ENDPOINT_CAPABILITIES
+    | TOOL_CAPABILITIES
+)
 
 # ============================================================
 # Method name patterns — removed (ADR-0016, decision 7)
