@@ -2,8 +2,8 @@
 
 Single registry of deferred, in-progress, and planned work. Complements the ADRs (which record *decisions*) with a working list of *what to do next*.
 
-**Last updated:** 2026-10-29
-**Revision:** restructured around ADR-0016, ADR-0017, ADR-0019, ADR-0020, ADR-0021. Phase B in progress (B.1, B.2, B.3a, B.3b-core, B.3b-fs, B.3b-user_upload-core, B.3b-user_upload-fastapi, B.4a, B.4b, B.10a, B.10b done). See §0 for the direction and the Top-10 view.
+**Last updated:** 2026-10-30
+**Revision:** restructured around ADR-0016, ADR-0017, ADR-0019, ADR-0020, ADR-0021. Phase B in progress: B.1, B.2, B.3a–B.3c, B.3b-core, B.3b-fs, B.3b-s3, B.3b-db, B.3b-user_upload-core (with `-module`, `-module-followup`, `-route-detectors-followup`), B.3b-user_upload-fastapi / -streamlit / -django / -flask, B.3b-mcp-catalogue, B.4a, B.4b, B.10a, B.10b done (2026-10-30). Outstanding in B.3: B.3b-llm_fallback, B.3b-fs-followup, B.3b-user_upload-attribution.
 
 ---
 
@@ -15,12 +15,12 @@ The previous revision (2026-10-25) was built on ADR-0016 and ADR-0017: the AST l
 
 1. **ADR-0019 — guardrail emission and evaluation weighting.** `guards` is emitted from source-level evidence (call site, `@guardrail(...)` decorator) and reaches the LLM as a `guardrails` payload section, not as an enumeration filter. B.4a and B.4b implement it; end-to-end is blocked by B.4-gap (no producer of `guardrail` nodes after ADR-0016).
 2. **ADR-0020 — capability inheritance from a scanned base class.** A subclass of a scanned base inherits the base's own capabilities, one level, cycle-safe. B.10b implements it; the FinBot-shaped hierarchy (a `BaseAgent` that calls `self.llm_client.chat(...)`, subclasses that call `_run_agent_loop`) now produces an `agent` node for the subclass, structurally.
-3. **ADR-0021 — store as a graph entity, with probabilistic write/read links.** A `store` is a place write and read call sites point at; `writes_to` / `reads_from` are structural edges with an `identity_confidence` computed from signals (family, literal, code context). Two revisions: §1 (family = technology, `user_upload` is a source type), §8 (base 0.5 for a context-based writer). B.3a (mechanism), B.3b-core (family interface, registry, resolver), B.3b-fs (first family), B.3b-user_upload-core (upload detector interface, context, writer logic), B.3b-user_upload-fastapi (first detector) implement it.
+3. **ADR-0021 — store as a graph entity, with probabilistic write/read links.** A `store` is a place write and read call sites point at; `writes_to` / `reads_from` are structural edges with an `identity_confidence` computed from signals (family, literal, code context). Two revisions: §1 (family = technology, `user_upload` is a source type), §8 (base 0.5 for a context-based writer). B.3a (mechanism), B.3b-core (family interface, registry, resolver), B.3b-fs / B.3b-s3 / B.3b-db (the three families), B.3b-user_upload-core (upload detector interface, context, writer logic) with the four detectors (B.3b-user_upload-fastapi / -streamlit / -django / -flask), and B.3c / B.3b-mcp-catalogue (the B.2 and MCP writers migrate to the store) implement it.
 
-Four facts from the 2026-10-29 state:
+Four facts from the 2026-10-30 state:
 
-1. **Phase B is closing the coverage gaps.** B.1 (cross-file `tool → sink`), B.2 (write-side for `rag_corpus` / `email_inbox`), B.4a / B.4b (guardrails), B.10a / B.10b (capability coverage + inheritance), B.3a / B.3b-core / B.3b-fs / B.3b-user_upload-core / B.3b-user_upload-fastapi (store model) are done.
-2. **The store model is the largest new subsystem since Phase A.** A `store` node kind, `writes_to` / `reads_from` as structural edges, `identity_confidence` as a second confidence field, a store-family registry and a store-context registry, and a join in `find_chain_groups` by store id. The **first real family** (`fs`) is shipped; the **first real upload detector** (FastAPI) is shipped; **three known gaps** (B.4-gap, B.3b-user_upload-attribution, B.3b-fs prefix-inert) are recorded and not papered over.
+1. **Phase B is closing the coverage gaps.** B.1 (cross-file `tool → sink`), B.2 (write-side for `rag_corpus` / `email_inbox`), B.4a / B.4b (guardrails), B.10a / B.10b (capability coverage + inheritance), B.3a / B.3b-core / B.3b-fs / B.3b-s3 / B.3b-db / B.3b-user_upload-core / B.3b-user_upload-fastapi / -streamlit / -django / -flask / B.3c (store model) are done.
+2. **The store model is the largest new subsystem since Phase A.** A `store` node kind, `writes_to` / `reads_from` as structural edges, `identity_confidence` as a second confidence field, a store-family registry and a store-context registry, and a join in `find_chain_groups` by store id. The **three families** (`fs`, `s3`, `db`) and the **four upload detectors** (FastAPI, Streamlit, Django, Flask) are shipped; **three known gaps** (B.4-gap, B.3b-user_upload-attribution, B.3b-fs prefix-inert) are recorded and not papered over.
 3. **The `max_depth` dimension is not yet implemented.** `find_chain_groups(max_depth=1)` is the current enumeration; `max_depth=2+` (three-hop and longer) is a post-release step. Depth is the parameter that makes a multi-store chain (write → store → read → write → store → read) enumerable.
 4. **Layer 3 validates existence, semantics, and now (via B.9) will validate evidence presence.** B.9 remains a Medium item.
 
@@ -34,7 +34,7 @@ Plus two coverage gaps that Phase B has not yet closed:
 **Fix the foundation, then build; close coverage gaps family by family.**
 
 - **Phase A — done.** ADR-0016 and ADR-0017 implemented; Layer 3 semantic validation (A.4) done.
-- **Phase B — in progress.** Cross-file `tool → sink` (B.1), write-side for `rag_corpus` / `email_inbox` (B.2), guardrail emission and weighting (B.4a, B.4b), capability coverage and inheritance (B.10a, B.10b), store model (B.3a, B.3b-core, B.3b-fs, B.3b-user_upload-core, B.3b-user_upload-fastapi) are done. Remaining: Streamlit / Django / Flask upload detectors (B.3b-user_upload-streamlit / -django / -flask), B.3b-s3, B.3b-db, B.3b-llm_fallback, B.3c (migration of B.2 to the store model), B.5 (judge determinism), B.9 (evidence presence).
+- **Phase B — in progress.** Cross-file `tool → sink` (B.1), write-side for `rag_corpus` / `email_inbox` (B.2), guardrail emission and weighting (B.4a, B.4b), capability coverage and inheritance (B.10a, B.10b), store model (B.3a, B.3b-core, B.3b-fs, B.3b-s3, B.3b-db, B.3b-user_upload-core, B.3b-user_upload-fastapi / -streamlit / -django / -flask, B.3c) are done. Remaining in B.3: B.3b-llm_fallback (LLM identity fallback) and the two open followups (B.3b-fs-followup, B.3b-user_upload-attribution). Remaining in the phase: B.4-gap, B.5 (judge determinism), B.9 (evidence presence).
 - **Phase C — next.** Layer 2 runtime for Python. The only path to `data_edges_only > 0` on a real corpus.
 - **Phase D — then.** Resume the roadmap: `openai_agents` detector, prompt engineering on a graph where the data exists, LLM classifier fine-tune.
 
@@ -46,13 +46,13 @@ Plus two coverage gaps that Phase B has not yet closed:
 |---|---|---|---|
 | 1 | **Cross-file `tool → sink`** (B.1) | **High** | **Done.** Enables real paths through imports. |
 | 2 | **Guardrails affect evaluation** (B.4a + B.4b) | **High** | **Done.** Guardrails enter the payload, not the traversal. End-to-end blocked by B.4-gap. |
-| 3 | **Store model** (B.3a, B.3b-core, B.3b-fs, B.3b-user_upload-core) | **High** | **Done.** A `store` node, `writes_to` / `reads_from` with `identity_confidence`, a family registry, a context registry. |
-| 4 | **Upload detector (FastAPI)** (B.3b-user_upload-fastapi) | **High** | **Done.** First real `UploadDetector`. |
-| 5 | **Write-side for `rag_corpus` / `email_inbox`** (B.2) | **Medium** | **Done.** Both families now have a writer. Migrates to store in B.3c. |
+| 3 | **Store model** (B.3a, B.3b-core, B.3b-*) | **High** | **Done** (2026-10-30). A `store` node, `writes_to` / `reads_from` with `identity_confidence`, a family registry (three families), a context registry (four detectors), and the B.3c / B.3b-mcp-catalogue migration. |
+| 4 | **Upload detectors** (B.3b-user_upload-fastapi / -streamlit / -django / -flask) | **High** | **Done** (2026-10-30). Four real `UploadDetector`s on one interface (signature, module-level entry, body). |
+| 5 | **Write-side for `rag_corpus` / `email_inbox`** (B.2) | **Medium** | **Done.** Both families have a writer; migrated to the store model in B.3c (2026-10-30). |
 | 6 | **`guardrail` node producer** (B.4-gap) | **High** | B.4a and B.4b are correct but return zero until a producer exists. A decision, not a fix. |
-| 7 | **Upload detectors for Streamlit / Django / Flask** (B.3b-user_upload-streamlit / -django / -flask) | **Medium** | Three more detectors on the same interface. **Next.** |
-| 8 | **`s3` / `db` families** (B.3b-s3, B.3b-db) | **Medium** | Two more store families. Parallel or sequential; Cline's and your choice. |
-| 9 | **Store migration of B.2** (B.3c) | **Medium** | `writes_to` targets `store`, not `untrusted_source`, for every family. |
+| 7 | **Upload detectors for Streamlit / Django / Flask** (B.3b-user_upload-streamlit / -django / -flask) | **Medium** | **Done** (2026-10-30). Three more detectors on the same interface, plus the route-shape followup in `entry_points.py`. |
+| 8 | **`s3` / `db` families** (B.3b-s3, B.3b-db) | **Medium** | **Done** (2026-10-30). The registry now ships three (`fs`, `s3`, `db`). |
+| 9 | **Store migration of B.2** (B.3c) | **Medium** | **Done** (2026-10-30). `writes_to` targets `store` for every family; the read side is unchanged. |
 | 10 | **Judge determinism** (B.5) | **Medium** | Verdicts in `chain_groups` are not reproducible. |
 
 ---
@@ -78,6 +78,71 @@ Plus two coverage gaps that Phase B has not yet closed:
 ---
 
 ## Recently done
+
+### 2026-10-30 — Doc-debt ×3: docstrings after B.3b-* and B.3c
+
+- Three doc-debt commits (six stale docstrings, then four, then seven) — docstrings and one C4 table row only. No behaviour, no test, no schema, no ADR.
+- `store/context/upload/__init__.py` and `store/context/upload/registry.py`: "two names" → the four the tree ships (`fastapi`, `streamlit`, `django`, `flask`); the "empty until a detector is imported" clause kept verbatim (still B.3b-user_upload-core's contract).
+- `store/families/fs.py` / `s3.py` / `db.py` and `store/families/base.py`: `B.3b-user_upload` → `B.3b-user_upload-core`.
+- `store/registry.py`: verified already true ("three names: `fs`, `s3`, `db`") — unchanged.
+- `store/resolver.py::_link_confidence`: the case list now names the containment branch (`LITERAL_PREFIX`, +0.3, B.3b-fs's row).
+- `parsing/normalizer_stages/store_resolver.py`: the duplicate `__all__` removed (one is left, line 313).
+- `graph/query.py`: the write-side paragraph and the code comment said "no producer yet" and "B.3c removes the first path". All three `writes_to` producers target a store now, so the source-anchored join still runs and still fires where a `writes_to` lands on the source itself, and the store join is where the groups come from.
+- `Documentation/Architecture/C4_L3_Phase1.md`: the stage table is 20 rows 1–20 — `store_resolver` added as 19, `guardrail_edges` renumbered 20, and the "19 stages" counts now say 20.
+- **Tests:** 1907 passed, 13 stage-order. Unchanged.
+- **Still stale, flagged:** `store/context/__init__.py` ("the detectors the tree ships — `fastapi` … and `streamlit`") and `store_resolver.py`'s "two names today" sentence.
+
+### 2026-10-30 — B.3b-user_upload-route-detectors-followup: Django and Flask route shapes in `entry_points.py`
+
+- `_extract_route` recognizes four shapes: a call on an attribute whose last segment is an HTTP method or `websocket` (`@router.post(...)`, `@app.post(...)`); the same with `route` as the last segment (`@app.route(..., methods=[...])`, method = first name in `methods=`, GET when absent); a bare name Django guard (`@require_POST`); a call on a name taking a literal list (`@require_http_methods([...])`, DRF's `@api_view([...])`).
+- A Django view decorated the documented way therefore produces an entry point, and the Django detector's name match finds it.
+- A path-less route is named `"<METHOD> <handler>"` — `"POST "` names nothing, and the pattern lives in `urls.py`.
+- **Tests:** +23 (test_entry_points +12). No behaviour change for the shapes already handled.
+
+### 2026-10-30 — B.3b-user_upload-flask: fourth upload detector
+
+- **New `store/context/upload/detectors/flask.py`.** Fourth and last detector; `django`'s shape with `request.files` for `request.FILES` (subscript and `.get`).
+- Both of Flask's spellings (`@app.post(...)`, `@app.route(..., methods=[...])`) are routes since the route-shape followup.
+- **Tests:** +56 (test_store_upload_flask 56, three forced registration edits). 1884 passed.
+
+### 2026-10-30 — B.3b-user_upload-django: third upload detector
+
+- **New `store/context/upload/detectors/django.py`.** Function-level, and the marker is the handler's **body** (`request.FILES["file"]`, `request.FILES.get("file")`) rather than its signature.
+- **Tests:** +53 (test_store_upload_django 53, one forced edit). 1828 passed.
+
+### 2026-10-30 — B.3b-mcp-catalogue: `mcp_tool_description` migrates to the store model
+
+- The MCP catalogue writer emits `writes_to → store`, the B.3c shape applied to the third source type; the direct shape is still read for hand-built deltas.
+- Two latent fixes found on the way: `dynamic_mcp_invocation` and `evaluator._chain_edges`.
+- **Tests:** +8 net (17 mcp tests re-pointed, plus new store-identity tests). 1775 passed.
+
+### 2026-10-30 — B.3c: B.2 migrates to the store model
+
+- `rag_corpus` and `email_inbox` writers emit `writes_to → store`; the store join in `find_chain_groups` produces their groups.
+- The read side is **unchanged**: `untrusted_source` remains the read site, `reads_from` connects the store to it, and the source-anchored join still exists (it fires where a `writes_to` lands on the source itself).
+- **Tests:** +10 net (test_untrusted_source_writers re-pointed, three query-layer group tests added). 1767 passed. Four stale test names corrected.
+
+### 2026-10-30 — B.3b-db: third family
+
+- **New `store/families/db.py`.** SQLAlchemy / asyncpg call sites; literal table extraction (a simple regex, not a SQL parser).
+- **Tests:** +51 (test_db 40, test_db_resolver 11, three forced assertion updates). 1757 passed.
+
+### 2026-10-30 — B.3b-s3: second family
+
+- **New `store/families/s3.py`.** `put_object` / `get_object`, literal `Bucket` / `Key`.
+- **Tests:** +40 net (family + resolver). 1706 passed. `test_store_core/conftest.py` autouse-empties the registry, so the family tests get their own conftest — `fs` is split the same way.
+
+### 2026-10-30 — B.3b-user_upload-streamlit: second upload detector
+
+- **New `store/context/upload/detectors/streamlit.py`.** Module-level: `st.file_uploader` in an entry point whose body is the module.
+- Asked the question B.3b-user_upload-core's decision #5 left open (a module-level entry got no writer edge) and answered it by extracting the module-level branch into B.3b-user_upload-core-module.
+- **Tests:** +41 (test_store_upload_streamlit 41). 1666 passed.
+
+### 2026-10-30 — B.3b-user_upload-core-module + -followup: the module-level entry shape
+
+- The writer gains a module-level branch: `entry_kind` `"cli"` / `"streamlit"` → the module's top-level functions (BFS from each) and the writes directly in the module body. A write in the module's own body is weaker evidence (the module is a file) and carries base **0.4** (`UPLOAD_WRITER_BASE_MODULE`) instead of 0.5.
+- Followup: the selector is **`entry_kind`**, not `entry_points`' `<module>` sentinel — the sentinel is on the `EntryPoint` record and the node has no `handler` at all, so a branch keyed on the sentinel could not fire on a real scan.
+- **Tests:** +3 net (54 core-module, replacing the gap test). 1624 passed.
 
 ### 2026-10-29 — B.3b-user_upload-fastapi: first upload detector
 
@@ -322,7 +387,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.2 — Write-side for `rag_corpus` / `email_inbox`
 
 **Priority:** **Medium**
-**Status:** Done (2026-10-29). Migrates to the store model in B.3c.
+**Status:** Done (2026-10-29). Migrated to the store model in B.3c (2026-10-30).
 **Rationale:** 1.3a.1 said RAG corpora and mailboxes had no writer evidence; only `mcp_tool_description` had a write side.
 **What changed:** two new capabilities (`writes_rag_corpus`, `writes_email_inbox`) and two writer rules; `WRITER_RULES` table next to `UNTRUSTED_SOURCE_RULES`; `untrusted_writer_match`. Anchor rule: writer is the node the delta holds for the symbol that credited the capability; visible from the source by same-file or shared-import.
 **Size:** ~1 day.
@@ -331,7 +396,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.3 — Store model (the largest Phase B step)
 
 **Priority:** **High**
-**Status:** In progress.
+**Status:** In progress. Done (2026-10-30): B.3a, B.3b-core, B.3b-fs, B.3b-s3, B.3b-db, B.3b-user_upload-core (+ `-module` / `-module-followup` / `-route-detectors-followup`), B.3b-user_upload-fastapi / -streamlit / -django / -flask, B.3b-mcp-catalogue, B.3c. Remaining: B.3b-llm_fallback and the two open followups (B.3b-fs-followup, B.3b-user_upload-attribution).
 
 #### B.3a — Mechanism: store node, reads_from, identity_confidence, store join
 
@@ -369,6 +434,24 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 **Size:** ~1 day.
 **References:** ADR-0021 §1, §8 (revision 2).
 
+#### B.3b-user_upload-core-module — The module-level entry shape
+
+**Priority:** **Medium**
+**Status:** Done (2026-10-30).
+**Rationale:** B.3b-user_upload-core's decision #5 left a module-level entry point (a Streamlit script, a CLI script) with no writer edge, so an upload at module level could not produce one.
+**What changed:** `store/context/upload/writer.py` gains the module-level branch — the module's top-level functions (BFS from each) and the writes directly in the module body. A write in the module's own body is weaker evidence (the module is a file) and carries `UPLOAD_WRITER_BASE_MODULE` (0.4) instead of 0.5.
+**Size:** ~1 day.
+**References:** B.3b-user_upload-core; B.3b-user_upload-streamlit.
+
+#### B.3b-user_upload-core-module-followup — The marker is `entry_kind`
+
+**Priority:** **Low**
+**Status:** Done (2026-10-30).
+**Rationale:** The branch was first keyed on `entry_points`' `<module>` sentinel, which lives on the `EntryPoint` **record**; the **node** a site carries has no `handler` at all, so a branch keyed on the sentinel could not fire on a real scan.
+**What changed:** the selector is `entry_kind` (`"cli"` / `"streamlit"`), which `EntryPointStage` writes for every entry it builds; `handler` stays function-only, so `ctx.entry_node_by_handler` is not polluted with a sentinel.
+**Size:** ~0.5 day.
+**References:** B.3b-user_upload-core-module.
+
 #### B.3b-user_upload-fastapi — First upload detector
 
 **Priority:** **Medium**
@@ -381,41 +464,55 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 #### B.3b-user_upload-streamlit — Second upload detector
 
 **Priority:** **Medium**
-**Status:** **Next.**
+**Status:** Done (2026-10-30).
 **Rationale:** `st.file_uploader` is already an entry point (`STREAMLIT_ENTRY_CALLS`). The detector emits an `UploadSite` for a module-level entry point whose body calls `st.file_uploader`.
-**Open question:** module-level entries currently get no writer edge (B.3b-user_upload-core decision #5). The Streamlit step must decide: accept no edge, or extend the interface with a module-level entry shape (a new step). The **retro** before the brief settles this.
+**What changed:** `store/context/upload/detectors/streamlit.py`; registration.
+**Open question (answered):** module-level entries got no writer edge (B.3b-user_upload-core decision #5). The answer was to extend the interface with a module-level entry shape — extracted into its own step, B.3b-user_upload-core-module (with `-followup` making the marker `entry_kind`), so a module-level entry now gets a writer edge.
 **Size:** ~0.5 day.
 **References:** B.3b-user_upload-core; `parsing/entry_points.py`.
 
 #### B.3b-user_upload-django — Third upload detector
 
 **Priority:** **Medium**
-**Status:** Not started.
+**Status:** Done (2026-10-30).
 **Rationale:** `request.FILES` in a Django view. Same interface.
+**What changed:** `store/context/upload/detectors/django.py` — function-level, and the marker is the handler's **body** (`request.FILES["file"]`, `request.FILES.get("file")`) rather than its signature. The route check is `entry_points`', which learns Django's own spellings in B.3b-user_upload-route-detectors-followup.
 **Size:** ~0.5 day.
 **References:** B.3b-user_upload-core.
 
 #### B.3b-user_upload-flask — Fourth upload detector
 
 **Priority:** **Medium**
-**Status:** Not started.
+**Status:** Done (2026-10-30).
 **Rationale:** `request.files` in a Flask view. Same interface.
+**What changed:** `store/context/upload/detectors/flask.py` — `django`'s shape with `request.files` for `request.FILES`; the fourth and last detector.
 **Size:** ~0.5 day.
 **References:** B.3b-user_upload-core.
+
+#### B.3b-user_upload-route-detectors-followup — Django and Flask route shapes
+
+**Priority:** **Medium**
+**Status:** Done (2026-10-30).
+**Rationale:** The Django and Flask detectors match a handler's name against the nodes `EntryPointStage` built, so the stage has to recognize the two frameworks' own spellings — a Django view decorated the documented way was not an entry point at all.
+**What changed:** `entry_points._extract_route` recognizes four shapes — a call on an attribute whose last segment is an HTTP method or `websocket` (`@router.post(...)`, `@app.post(...)`); the same with `route` as the last segment (`@app.route(..., methods=[...])`, method = the first name in `methods=`, GET when absent); a bare name Django guard (`@require_POST`, `@require_GET`, ...); a call on a name taking a literal list (`@require_http_methods([...])`, DRF's `@api_view([...])`). A path-less route keeps the `"<METHOD> <handler>"` name.
+**Size:** ~0.5 day.
+**References:** B.3b-user_upload-django; B.3b-user_upload-flask; ADR-0011.
 
 #### B.3b-s3 — `s3` family
 
 **Priority:** **Medium**
-**Status:** Not started.
+**Status:** Done (2026-10-30).
 **Rationale:** Second family. `s3.put_object` / `s3.get_object`, `boto3` / `s3fs` / `MinIO`. Literal `Bucket` / `Key` extraction; prefix containment.
+**What changed:** `store/families/s3.py`; registration by import; the family tests carry their own conftest (`test_store_core/conftest.py` autouse-empties the registry — `fs` is split the same way). The containment branch is still inert end-to-end (B.3b-fs-followup).
 **Size:** ~1 day.
 **References:** ADR-0021 §8; B.3b-fs.
 
 #### B.3b-db — `db` family
 
 **Priority:** **Medium**
-**Status:** Not started.
+**Status:** Done (2026-10-30).
 **Rationale:** Third family. SQLAlchemy / asyncpg. Literal `INSERT INTO` / `SELECT FROM` table extraction (simple regex, not a SQL parser).
+**What changed:** `store/families/db.py`; registration by import.
 **Size:** ~1 day.
 **References:** ADR-0021 §8.
 
@@ -430,11 +527,20 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 #### B.3c — Migrate B.2 to the store model
 
 **Priority:** **Medium**
-**Status:** Not started. **Blocked by** B.3b-s3 and B.3b-db (both families must be in the store model), and by B.3b-user_upload-* (the upload context must be in the store model).
+**Status:** Done (2026-10-30). Was blocked by B.3b-s3, B.3b-db and B.3b-user_upload-*; all three landed first.
 **Rationale:** `writes_to` targets `store` for every family, including `rag_corpus`, `email_inbox`, `mcp_catalogue`. `untrusted_source` remains the read site. `reads_from` connects the store to the read site. `find_chain_groups` joins by store id for all families.
-**What changes:** B.2's writer rules emit `writes_to → store`; `untrusted_source_writers` and `untrusted_source_writers` retarget; the transitional control flow_kind for `writes_to` becomes structural; the collision between the old path and the store path is removed; `report.md` and `chain_groups.json` gain `weak: true` when relevant.
+**What changed:** B.2's writer rules emit `writes_to → store`; `untrusted_source_writers` retargets; the transitional control flow_kind for `writes_to` becomes structural; the source-anchored join stays (it still fires where a `writes_to` lands on the source itself) alongside the store join; `report.md` and `chain_groups.json` gain `weak: true` when relevant.
 **Size:** ~2 days.
 **References:** ADR-0021 §11.
+
+#### B.3b-mcp-catalogue — `mcp_tool_description` migrates to the store model
+
+**Priority:** **Medium**
+**Status:** Done (2026-10-30).
+**Rationale:** B.3c migrated the B.2 writers; `mcp_tool_description` was the third source type still emitting the pre-store shape.
+**What changed:** the MCP catalogue writer emits `writes_to → store`; the direct shape is still read for hand-built deltas. Two latent fixes found on the way: `dynamic_mcp_invocation` and `evaluator._chain_edges`.
+**Size:** ~1 day.
+**References:** ADR-0021 §11; B.3c.
 
 #### B.3b-fs-followup — Prefix containment through the resolver
 
@@ -752,47 +858,48 @@ required for D.2; record it so the limitation is visible.
 
 ## Doc-debt
 
-All in the "do not change" sets of past steps; each is one line or one sentence. A single doc-debt commit clears them.
+All in the "do not change" sets of past steps; each is one line or one sentence. Three doc-debt commits landed on 2026-10-30 (six stale docstrings, then four, then seven); the items still open are the ones below with a status other than `Done`.
 
 ### `store/registry.py` — "empty in B.3b-core"
 
 **Priority:** **Low**
-**Status:** Not started.
-**Rationale:** Docstring says the registry is empty in B.3b-core. After B.3b-fs it is not.
+**Status:** Done (2026-10-30) — verified, no change needed. The docstring's "empty until a family is imported" is B.3b-core's **contract** and still true, and the same paragraph already names the three families (`fs`, `s3`, `db`).
 
 ### `store/context/upload/registry.py` — "empty in B.3b-user_upload-core"
 
 **Priority:** **Low**
-**Status:** Not started.
-**Rationale:** Same shape. After B.3b-user_upload-fastapi it is not.
+**Status:** Done (2026-10-30). The docstring now names the four the tree ships (`fastapi`, `streamlit`, `django`, `flask`); the "empty until a detector is imported" clause is kept verbatim, because it is the contract.
 
 ### `store/resolver.py::_link_confidence` — case list
 
 **Priority:** **Low**
-**Status:** Not started.
-**Rationale:** Docstring enumerates `literal_match`'s cases; it should mention the containment branch.
+**Status:** Done (2026-10-30). The case list now names the containment branch (`LITERAL_PREFIX`, +0.3, B.3b-fs's row: `startswith` in both directions, nothing normalised).
 
 ### `families/base.py` — `B.3b-user_upload` naming
 
 **Priority:** **Low**
-**Status:** Not started.
-**Rationale:** Docstring names `B.3b-user_upload` as the first context; the actual first context is `B.3b-user_upload-core`.
+**Status:** Done (2026-10-30). The docstring names `B.3b-user_upload-core` as the first concrete context, next to `B.3b-core` for the parameter itself.
 
 ### `store_resolver.py` — stale sentence + duplicate `__all__`
 
 **Priority:** **Low**
+**Status:** Partially done (2026-10-30). The duplicate `__all__` is gone (one left, line 313). The stale sentence is still there: lines 23–27 say the detector registry holds **two names** (`fastapi`, `streamlit`) where the tree ships four.
+
+### `store/context/__init__.py` — "the detectors the tree ships"
+
+**Priority:** **Low**
 **Status:** Not started.
-**Rationale:** Lines 23–26 ("detector registry is empty in this step") are stale after B.3b-user_upload-fastapi. `__all__` appears twice (312 and 315, committed in `3dcec80`). One-line fix each.
+**Rationale:** Lines 9–12 name `fastapi` and `streamlit` as the detectors importing `upload` registers; `django` and `flask` are registered too. Flagged as out of scope in the 2026-10-30 doc-debt pass.
 
 ### `flow_kind.py` inline comment + `ast_normalizer.py` edge-list header
 
 **Priority:** **Low**
 **Status:** Done (2026-10-29) — first doc-debt commit; the follow-up commit touched `flow_kind.py`'s inline comment and `ast_normalizer.py`'s edge-list header. `ast_normalizer.py`'s "fifteen → nineteen stages" also fixed.
 
-### `family/base.py` — `B.3b-user_upload` and `B.3b-core` naming
+### `store/families/base.py` — `B.3b-user_upload` and `B.3b-core` naming
 
 **Priority:** **Low**
-**Status:** Done (2026-10-29) — part of B.3b-user_upload-core's "left alone deliberately" flags; **not** actually fixed. The `B.3b-user_upload` naming in `base.py` is stale.
+**Status:** Done (2026-10-30) — the same file as the `families/base.py` item above; this entry's title said `family/base.py`, the path is `store/families/base.py`. Actually fixed in the 2026-10-30 doc-debt pass: `B.3b-user_upload` → `B.3b-user_upload-core`, and `B.3b-core` is the correct reference for the parameter itself.
 
 ---
 
