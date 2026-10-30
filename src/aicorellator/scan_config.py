@@ -18,6 +18,9 @@ One file, sections per subsystem. This module owns the scan side
       mode: "off"                 # off | auto | required
       config: null                # reserved; the model is below
 
+    llm_fallback:
+      mode: "off"                 # off | auto | required
+
     runtime:
       mode: "off"                 # off | python
       test_command: null
@@ -38,8 +41,9 @@ there is nothing to configure for it here.
 
 The other two sections belong to other subsystems and are read
 elsewhere: `evaluation` (the ensemble config, from
-`analysis/config_loader.py`) and `llm_classifier_model` (the
-classifier's own model, BACKLOG D.2). This module ignores both —
+`analysis/config_loader.py`), `llm_classifier_model` (the
+classifier's own model, BACKLOG D.2) and `llm_fallback_model` (the
+store-identity fallback's, ADR-0023 §2). This module ignores all three —
 they are not scan policy.
 
 Every key is optional and has a default, so a partial (or empty)
@@ -48,7 +52,15 @@ A misspelled *value* of a documented key is an error, never a silent
 fallback: a policy that is not understood is worse than a policy
 that refuses to load.
 
-Only `detectors` and `llm_classifier` are honored today; the `runtime`
+`llm_classifier` and `llm_fallback` are the two opt-in LLM layers, and
+their `mode` is the same shape for the same reason: `off` (never called),
+`auto` (fill the gaps the deterministic layers left; a failure is a
+warning) and `required` (fill them or fail the scan). Both default to
+`off`: a scan that reaches a model endpoint by default is a scan nobody
+can run offline. `llm_fallback` is ADR-0023's layer, and its model is the
+separate `llm_fallback_model` section.
+
+Only `detectors` and the two `mode`s are honored today; the `runtime`
 section is parsed and carried for the layer that will read it (BACKLOG
 A.3+). A policy that asks for a layer which does not exist yet is warned
 about, not rejected: the file is the record of intent, and silence would
@@ -69,6 +81,7 @@ log = logging.getLogger(__name__)
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 
 DEFAULT_LLM_CLASSIFIER_MODE = "off"
+DEFAULT_LLM_FALLBACK_MODE = "off"
 DEFAULT_RUNTIME_MODE = "off"
 DEFAULT_UNCLASSIFIED_ACTION = "ask"
 DEFAULT_LOG_ARCHIVES = 5
@@ -82,6 +95,7 @@ DEFAULT_LOG_ARCHIVES = 5
 DEFAULT_STORE_CONFIDENCE_THRESHOLD = 0.7
 
 VALID_LLM_CLASSIFIER_MODES = frozenset({"off", "auto", "required"})
+VALID_LLM_FALLBACK_MODES = frozenset({"off", "auto", "required"})
 VALID_RUNTIME_MODES = frozenset({"off", "python"})
 VALID_UNCLASSIFIED_ACTIONS = frozenset({"ask", "skip", "llm", "error"})
 
@@ -123,6 +137,24 @@ class LLMClassifierConfig:
 
     mode: str = DEFAULT_LLM_CLASSIFIER_MODE
     config: str | None = None
+
+
+@dataclass
+class LLMFallbackConfig:
+    """The store-identity LLM fallback (ADR-0023).
+
+    `mode` is `off` (never called), `auto` (called for the unresolved
+    sites in the upload writers' scope; a failure is a warning) or
+    `required` (a failure is a scan failure).
+
+    `off` is the default for `llm_classifier`'s reason, and one more: the
+    fallback's answer is weaker than anything the AST produces
+    (`identity_confidence=0.2`, a weak group), so a scan that wants it
+    should say so. The model is `llm_fallback_model`, a section of its own
+    (ADR-0023 §2), read by `store.llm_fallback.config`.
+    """
+
+    mode: str = DEFAULT_LLM_FALLBACK_MODE
 
 
 @dataclass
@@ -186,6 +218,9 @@ class ScanConfig:
     llm_classifier: LLMClassifierConfig = field(
         default_factory=LLMClassifierConfig
     )
+    llm_fallback: LLMFallbackConfig = field(
+        default_factory=LLMFallbackConfig
+    )
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     unclassified: UnclassifiedConfig = field(
         default_factory=UnclassifiedConfig
@@ -235,8 +270,8 @@ def default_config_path(workspace_root: Path | None = None) -> Path:
 def load_scan_config(path: str | Path) -> ScanConfig:
     """Load the scan-side policy from a YAML config file.
 
-    `evaluation` and `llm_classifier_model` are read by other
-    subsystems and are ignored here.
+    `evaluation`, `llm_classifier_model` and `llm_fallback_model` are read
+    by other subsystems and are ignored here.
 
     Args:
         path: path to the YAML config.
@@ -288,6 +323,7 @@ def _parse_scan_config(data: dict) -> ScanConfig:
     """Build a ScanConfig from a parsed YAML mapping."""
     detectors = _section(data, "detectors")
     llm = _section(data, "llm_classifier")
+    fallback = _section(data, "llm_fallback")
     runtime = _section(data, "runtime")
     unclassified = _section(data, "unclassified")
     logs = _section(data, "logs")
@@ -304,6 +340,12 @@ def _parse_scan_config(data: dict) -> ScanConfig:
                 "llm_classifier", DEFAULT_LLM_CLASSIFIER_MODE,
             ),
             config=_optional_string(llm, "config", "llm_classifier"),
+        ),
+        llm_fallback=LLMFallbackConfig(
+            mode=_enum(
+                fallback, "mode", VALID_LLM_FALLBACK_MODES,
+                "llm_fallback", DEFAULT_LLM_FALLBACK_MODE,
+            ),
         ),
         runtime=RuntimeConfig(
             mode=_enum(
@@ -479,6 +521,16 @@ llm_classifier:
   mode: "off"                 # off | auto | required
   config: null                # reserved; the model is below
 
+# The store-identity LLM fallback (ADR-0023). Off by default, for the
+# classifier's reason and one more: it runs only on a site no
+# deterministic producer could name, only inside an upload writer's
+# scope, and its answer is weak (identity_confidence 0.2 — a store that
+# shows up with include_weak=True). "auto" warns when the model names no
+# store; "required" fails the scan instead. The model is
+# llm_fallback_model, below.
+llm_fallback:
+  mode: "off"                 # off | auto | required
+
 runtime:
   mode: "off"                 # off | python
   test_command: null
@@ -577,5 +629,22 @@ llm_classifier_model:
   model: "qwen/qwen3-4b-2507"
   temperature: 0.0
   max_tokens: 800
+  timeout: 120
+
+# --- LLM fallback model (store identity, ADR-0023 §2) ---
+#
+# The store-identity fallback's model, and a section of its own on
+# purpose: the task (infer a bucket, a directory or a table from the
+# surrounding code) is not the classifier's (label a symbol), so a user
+# may point this at a smaller or fine-tuned model without touching
+# llm_classifier_model. The default below is the same model, because one
+# model answering two prompts is the default case. Read only when
+# llm_fallback.mode is "auto" or "required".
+
+llm_fallback_model:
+  base_url: "http://localhost:1234/v1"
+  model: "qwen/qwen3-4b-2507"   # default: the same as llm_classifier_model
+  temperature: 0.0
+  max_tokens: 400
   timeout: 120
 """

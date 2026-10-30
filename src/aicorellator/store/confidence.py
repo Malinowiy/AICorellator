@@ -51,6 +51,16 @@ attachment decision, not one this module can take.
 `literal_match` returns `None` for "no link": its signature would like a
 float, and a float cannot say "these name different stores, do not pair
 them". `None` is that answer, and the resolver drops the pair on it.
+
+One constant here is not a weight. `WEAK_JOIN_FLOOR_LLM` is ADR-0023
+§5's exception to §9's floor: a link the store-identity LLM fallback
+created (`identity_source=LLM_IDENTITY_SOURCE`, base
+`LLM_IDENTITY_BASE`) is judged against 0.1 instead of the mirror of
+`graph.query.WEAK_JOIN_FLOOR` in `graph/query.py`, because §9's 0.3 is a
+floor on structural claims and the LLM's hint is an inference. The
+exception is named here, next to the base it protects, so the three
+numbers are read together; the *check* lives where §9's floor is applied
+(`graph.query.QueryLayer._store_chain_groups`).
 """
 
 from __future__ import annotations
@@ -84,6 +94,32 @@ CODE_CONTEXT_SHARED_IMPORT = 0.1
 #: short of certainty is the honest ceiling (ADR-0021 §7), and
 #: `graph.repositories.edges` caps the stored value at the same number.
 IDENTITY_CONFIDENCE_CAP = 0.99
+
+#: The producer named on an edge the store-identity LLM fallback created
+#: (ADR-0023 §5). It is an *attribute* on the store and on its
+#: `writes_to` / `reads_from` edges, not a signal: no weight reads it,
+#: and a deterministic link never carries it. What reads it is the floor
+#: below, so the string is a constant with a name rather than a literal
+#: in two subsystems.
+LLM_IDENTITY_SOURCE = "llm"
+
+#: §5's base for a link the fallback created: 0.2, not `BASE`. The AST
+#: sees a literal, the LLM sees the surrounding code and infers, so the
+#: guess is weaker than the weakest deterministic signal. It is a base
+#: and not a combination: the fallback applies no literal match and no
+#: code context — the code context is already the reason it ran.
+LLM_IDENTITY_BASE = 0.2
+
+#: §9's floor, mirrored from `graph.query.WEAK_JOIN_FLOOR` (0.3), and
+#: ADR-0023 §5's one exception to it: a link whose `identity_source` is
+#: `LLM_IDENTITY_SOURCE` uses **this** floor instead. §9's floor is a
+#: floor on *structural* claims, and the LLM's guess is a probabilistic
+#: inference, not a structural fact; at 0.2 the fallback would otherwise
+#: be inert. The exception is `identity_source='llm'` only — a
+#: deterministic link at 0.2 (impossible from the producers, whose bases
+#: are 0.3 / 0.4 / 0.5) still fails 0.3. A test pins the three numbers'
+#: order (`WEAK_JOIN_FLOOR_LLM < LLM_IDENTITY_BASE < WEAK_JOIN_FLOOR`).
+WEAK_JOIN_FLOOR_LLM = 0.1
 
 
 def combine_signals(base: float, signals: Iterable[float]) -> float:
@@ -273,6 +309,9 @@ __all__ = [
     "LITERAL_EQUAL",
     "LITERAL_ONE_SIDE",
     "LITERAL_PREFIX",
+    "LLM_IDENTITY_BASE",
+    "LLM_IDENTITY_SOURCE",
+    "WEAK_JOIN_FLOOR_LLM",
     "code_context",
     "combine_signals",
     "literal_match",

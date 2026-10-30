@@ -33,6 +33,7 @@ from aicorellator.analysis.config_loader import EnsembleConfig
 from aicorellator.analysis.evaluator import evaluate_chain_groups
 from aicorellator.analysis.models import VoterConfig, VoterResponse
 from aicorellator.analysis.prompts import GROUP_SYSTEM_PROMPT
+from aicorellator.graph.models import Edge, Node
 from aicorellator.ingestion import discover, ingest
 from aicorellator.parsing import (
     make_context,
@@ -45,7 +46,12 @@ from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.parsing.detectors_runner import run as run_detectors
 from aicorellator.parsing.capability_extractor import extract as extract_capabilities
+from aicorellator.parsing.normalizer_stages import (
+    store_resolver as store_resolver_stage,
+)
 from aicorellator.reporting import render_report, write_bundle
+from aicorellator.scan_config import default_scan_config
+from aicorellator.store.resolver import store_node_id
 from aicorellator.workspace import Workspace
 
 
@@ -1469,4 +1475,157 @@ def test_the_pipeline_produces_store_edges_for_a_store_literal(
             if e.kind not in ("writes_to", "reads_from")
         )
 
+
+
+
+# ============================================================
+# B.3b-llm_fallback — the store resolver stage's third step
+# ============================================================
+
+#: A FastAPI app whose upload handler writes into a path it does not
+#: name: `upload_dir` is a parameter, so the `fs` family reports the call
+#: site with `identity_hint=None` — the gap ADR-0023 §1 describes.
+FALLBACK_FILES: dict[str, str] = {
+    "app/main.py": '''\
+"""A FastAPI app that writes an upload into a path it does not name."""
+from fastapi import FastAPI, UploadFile
+
+app = FastAPI()
+
+
+@app.post("/upload")
+async def upload_report(file: UploadFile, upload_dir: str = "uploads"):
+    """Persist the upload under the directory it was given."""
+    with open(upload_dir + "/report.txt", "wb") as fh:
+        fh.write(await file.read())
+    return {"status": "ok"}
+''',
+}
+
+
+@pytest.fixture
+def fallback_target(tmp_path: Path) -> Path:
+    root = tmp_path / "fallback"
+    for path, source in FALLBACK_FILES.items():
+        abs_path = root / path
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text(source, encoding="utf-8")
+    return root
+
+
+def _normalize_fallback(
+    target: Path, tmp_path: Path, mode: str | None = None,
+):
+    """The whole pipeline, with or without the fallback's three inputs.
+
+    `mode=None` is a scan that never offers the layer (no policy, no
+    config path, no cache path — what every caller that predates
+    B.3b-llm_fallback passes). Otherwise the context carries them, the
+    way `run_scan.py` fills them from the workspace.
+    """
+    target = ingest(target, kind="folder")
+    manifest = discover(target)
+    tsa = run_tsa(manifest, target.root)
+    ep = run_entry_points(manifest)
+    llm = run_llm_extractor(manifest)
+    capabilities = {
+        entry.path: extract_capabilities(entry.abs_path, entry.path)
+        for entry in manifest.files
+        if entry.language == "python"
+    }
+    detection = run_detectors(manifest)
+    extra = {}
+    if mode is not None:
+        policy = default_scan_config()
+        policy.llm_fallback.mode = mode
+        extra = {
+            "scan_config": policy,
+            "config_path": tmp_path / "config.yaml",
+            "cache_path": tmp_path / "cache" / "llm_classifier.sqlite3",
+        }
+    return normalize(make_context(
+        manifest, tsa, ep, llm,
+        capabilities=capabilities, framework_detection=detection,
+        **extra,
+    ))
+
+
+def _fingerprint(delta) -> list[tuple]:
+    """The delta's contents, for a byte-identical comparison."""
+    nodes = sorted(
+        (n.id, n.kind, n.name, tuple(sorted(n.attributes.items())))
+        for n in delta.nodes
+    )
+    edges = sorted(
+        (e.id, e.kind, e.source_id, e.target_id, e.identity_confidence)
+        for e in delta.edges
+    )
+    return [*nodes, *edges]
+
+
+def test_the_fallback_step_is_a_no_op_at_its_default(
+    fallback_target: Path, tmp_path: Path,
+) -> None:
+    """N1 — `off` is byte-identical to a scan that never offered it.
+
+    The stage's third step is the only one that reaches a model, and with
+    no policy it does not even walk the families: the delta is the one
+    the resolver and the attribution produced.
+    """
+    without = _normalize_fallback(fallback_target, tmp_path)
+    off = _normalize_fallback(fallback_target, tmp_path, mode="off")
+
+    assert _fingerprint(off) == _fingerprint(without)
+    assert [n for n in off.nodes if n.kind == "store"] == []
+
+
+def test_mode_auto_fills_the_gap_in_the_pipeline(
+    fallback_target: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage's third step, through the whole pipeline.
+
+    The model call itself is stubbed at the stage's seam (`run_fallback`),
+    because the stage has no `llm_call` to inject and a pipeline test must
+    not need an endpoint: what is pinned here is the *wiring* — the
+    unresolved site in the writer's scope reaching the step, and the store
+    and edge it returns landing in the delta every stage has built.
+    """
+    calls: list[dict] = []
+    store = Node(
+        id=store_node_id("fs", "uploads"), kind="store", name="fs:uploads",
+        host_id="localhost",
+        attributes={
+            "family": "fs", "identity_hint": "uploads",
+            "identity_source": "llm",
+        },
+    )
+    edge = Edge(
+        id="edge:llm", source_id="sink:writer", target_id=store.id,
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.2,
+        attributes={"identity_source": "llm", "identity_confidence_llm": 0.9},
+    )
+
+    def fake_run(**kwargs):
+        calls.append(kwargs)
+        return [store], [edge]
+
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", fake_run)
+
+    delta = _normalize_fallback(fallback_target, tmp_path, mode="auto")
+
+    assert len(calls) == 1
+    sites = calls[0]["sites"]
+    assert [site.family for site in sites] == ["fs"]
+    assert [site.site.file_path for site in sites] == ["app/main.py"]
+    assert sites[0].site.identity_hint is None
+    assert [site.framework for site in calls[0]["upload_sites"]] == [
+        "fastapi",
+    ]
+
+    assert "store:fs:uploads" not in [n.id for n in delta.nodes]
+    assert store.id in [n.id for n in delta.nodes]
+    assert "edge:llm" in [e.id for e in delta.edges]
 

@@ -36,6 +36,24 @@ resolver's `resolve` is unchanged by this step, and the context is a
 second producer on top of a family's sites, which is where the pipeline
 sees the delta.
 
+B.3b-llm_fallback adds a **third** step, after both of those: the
+store-identity LLM fallback (ADR-0023). It is the last resort for the
+sites no deterministic producer could name — a `Bucket=var`, an
+`open(path)`, an f-string with no literal part — and it runs here because
+this is the only place that holds all three of its inputs at once: the
+families' sites (`_family_sites`), the upload sites whose scope rule
+decides which of them are in scope, and the delta both ends are resolved
+against. Its output is a `store` with `identity_source='llm'` and its
+`writes_to` / `reads_from` edges, at `identity_confidence=0.2` — weak, so
+the group it can form is out of the default enumeration. It is **opt-in**
+(`llm_fallback.mode`, `off` by default) and needs the scan's policy and
+two paths, which arrive on the context (`scan_config`, `config_path`,
+`cache_path`): a context without them means the scan did not offer the
+layer, and the step is a no-op. `run_scan.py` is what fills them in, and
+it is what reports `FallbackConfigError` / `FallbackError` as a scan
+failure — the first a policy that asks for a layer nobody configured, the
+second `mode: required` and a site the model could not name.
+
 Why a stage, and not a call in `run_scan.py` after `normalize`:
 
   - `normalize()` is where every node and edge in this graph is built,
@@ -80,7 +98,12 @@ from ...store.context.upload.base import UploadSite
 from ...store.context.upload.context import UserUploadContext
 from ...store.context.upload.writer import FS_FAMILY, find_upload_stores
 from ...store.families.base import ReadSite, WriteSite
-from ...store.registry import resolve as resolve_families
+from ...store.llm_fallback import FamilySite
+from ...store.llm_fallback import run as run_fallback
+from ...store.registry import (
+    registered_families,
+    resolve as resolve_families,
+)
 from ...store.resolver import StoreResolver
 from ..framework_detectors.cross_file import _module_matches_file
 from ..normalizer_context import NormalizeContext
@@ -127,9 +150,16 @@ class StoreResolverStage:
         has just written: with no detector registered it identifies
         nothing, emits nothing and attributes nothing, so the delta is
         still the one B.3b-fs produced.
+
+        The fallback runs last (B.3b-llm_fallback), on the upload sites
+        the second step identified: it is the only step that reaches a
+        model, and it is a no-op unless the scan offered it a policy and
+        two paths (`ctx.scan_config` / `config_path` / `cache_path`) and
+        the policy says `auto` or `required`.
         """
         delta.edges.extend(self._resolver.resolve(delta, ctx))
-        self._link_uploads(delta, ctx)
+        upload_sites = self._link_uploads(delta, ctx)
+        self._fill_identity_gaps(delta, ctx, upload_sites)
         return delta
 
     # --------------------------------------------------------
@@ -138,7 +168,7 @@ class StoreResolverStage:
 
     def _link_uploads(
         self, delta: "GraphDelta", ctx: NormalizeContext
-    ) -> None:
+    ) -> list[UploadSite]:
         """`entry_point → store` for the handlers that accept an upload.
 
         Four calls, in the order the brief names them: identify the
@@ -154,10 +184,14 @@ class StoreResolverStage:
         (`_merge_nodes`): a node the pass only *stamped* is already in the
         delta, and appending it again would put one node in the list
         twice.
+
+        Returns the upload sites it identified, because the fallback's
+        scope rule is theirs (ADR-0022 §1) and re-identifying them would
+        be a second pass over the entry points for the same answer.
         """
         sites = self._upload_sites(delta, ctx)
         if not sites:
-            return
+            return []
 
         fs_writes, fs_reads = _fs_sites(ctx)
         store_nodes = [node for node in delta.nodes if node.kind == "store"]
@@ -179,6 +213,62 @@ class StoreResolverStage:
             stores=store_nodes,
             modules=modules,
         ))
+        return sites
+
+    # --------------------------------------------------------
+    # The store-identity fallback (B.3b-llm_fallback)
+    # --------------------------------------------------------
+
+    def _fill_identity_gaps(
+        self,
+        delta: "GraphDelta",
+        ctx: NormalizeContext,
+        upload_sites: list[UploadSite],
+    ) -> None:
+        """`store` + `writes_to` / `reads_from` for the sites nothing named.
+
+        ADR-0023's step, and the stage's only call into a model. It runs
+        *after* the resolver and the attribution, because its input is the
+        sites those two could not name and its output is a store the
+        attribution's `reads_from` may already point at — a fallback store
+        can be the target of an attributed source, and that link is weak
+        like the rest.
+
+        The guard is the context: no policy, no config path or no cache
+        path means the scan did not offer the layer, and the step is a
+        no-op. With the policy at `off` the step returns before the
+        families are walked, so an opt-out scan pays nothing for the
+        sites it will not use.
+
+        `FallbackConfigError` and `FallbackError` propagate: the first is
+        a policy that asks for a layer nobody configured, the second is
+        `mode: required` and a gap, and both are the caller's to report
+        (`run_scan.py` exits on them). A raising *family* is not possible
+        here — `_family_sites` applies the resolver's own rule, and the
+        fallback's own failure modes are the two above.
+        """
+        if (
+            ctx.scan_config is None
+            or ctx.config_path is None
+            or ctx.cache_path is None
+        ):
+            return
+        if ctx.scan_config.llm_fallback.mode == "off":
+            return
+
+        stores, edges = run_fallback(
+            sites=_family_sites(ctx),
+            delta=delta,
+            upload_sites=upload_sites,
+            imports_by_file=ctx.entry_points.imports,
+            ctx=ctx,
+            scan=ctx.scan_config,
+            config_path=ctx.config_path,
+            cache_path=ctx.cache_path,
+            host_id=ctx.host_id,
+        )
+        _merge_nodes(delta, stores)
+        _merge_edges(delta, edges)
 
     def _upload_sites(
         self, delta: "GraphDelta", ctx: NormalizeContext
@@ -321,6 +411,50 @@ def _fs_sites(
                     "store family %s failed on %s", family.name, entry.path,
                 )
     return writes, reads
+
+
+def _family_sites(ctx: NormalizeContext) -> list[FamilySite]:
+    """Every registered family's sites, with the family that reported them.
+
+    The fallback's input (B.3b-llm_fallback). The resolver runs the same
+    loop for its own edges and does not hand its sites out, so this is the
+    stage's second copy of it (`_fs_sites` is the first, for the upload
+    step) — the same price the stage already pays, for the same seam.
+
+    All families, not `fs` alone: the store an unresolved `Bucket=var`
+    names is `s3`'s, and one an unresolved `cursor.execute` names is
+    `db`'s. Both directions are collected, because a site is a write *or*
+    a read and the fallback creates the edge the site's kind asks for.
+
+    No `context` is passed to the families: the resolver hands its own,
+    and the stage builds a resolver with none (`StoreResolver()`), so this
+    is the same call the pipeline's resolver makes. `ctx.module_for` is
+    the scan-wide parse cache the resolver has already filled, so a family
+    costs the detection and not a second parse. A family that raises is
+    logged and contributes nothing (ADR-0011's rule, the same one
+    `StoreResolver._detect` and `_fs_sites` apply).
+    """
+    sites: list[FamilySite] = []
+    for family in registered_families():
+        for entry in ctx.manifest.files:
+            if entry.language != "python":
+                continue
+            module = ctx.module_for(entry.path)
+            if module is None:
+                continue
+            for detect in (family.detect_writes, family.detect_reads):
+                try:
+                    found = detect(module, entry.path)
+                except Exception:
+                    log.exception(
+                        "store family %s failed on %s",
+                        family.name, entry.path,
+                    )
+                    continue
+                sites.extend(
+                    FamilySite(family.name, site) for site in found
+                )
+    return sites
 
 
 def _modules_for(

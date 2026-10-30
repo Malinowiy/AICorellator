@@ -8,6 +8,10 @@ from aicorellator.graph.query import (
     SCORE_USER_WRITABLE_SOURCE,
     SCORE_WRITES_DB,
 )
+from aicorellator.store.confidence import (
+    LLM_IDENTITY_BASE,
+    LLM_IDENTITY_SOURCE,
+)
 
 
 def test_find_chains_entry_to_sink(
@@ -1895,6 +1899,7 @@ def _store_group(
     write_confidence: float | None = 0.9,
     read_confidence: float | None = 0.8,
     write_flow_kind: str = "structural",
+    identity_source: str | None = None,
 ) -> dict[str, str]:
     """One write chain into a store and one read chain out of it.
 
@@ -1905,8 +1910,14 @@ def _store_group(
     The write link and the read link each carry an
     `identity_confidence`; the two chains meet at the store, and the
     join is by the store's id. `tag` fills the ids so two of these can
-    live in one store without colliding.
+    live in one store without colliding. `identity_source`, when given,
+    is stamped on both links' attributes — which is what decides §5's
+    special floor (ADR-0023 §5).
     """
+    attributes = (
+        {} if identity_source is None
+        else {"identity_source": identity_source}
+    )
     ids = {
         "entry": f"entry_point:{'e' * 15}{tag}",
         "writer": f"tool:{'w' * 15}{tag}",
@@ -1932,11 +1943,13 @@ def _store_group(
         id=ids["w_s"], source_id=ids["writer"], target_id=ids["store"],
         kind="writes_to", host_id="localhost", flow_kind=write_flow_kind,
         identity_confidence=write_confidence,
+        attributes=dict(attributes),
     ))
     store.edges.upsert(Edge(
         id=ids["s_r"], source_id=ids["store"], target_id=ids["source"],
         kind="reads_from", host_id="localhost", flow_kind="structural",
         identity_confidence=read_confidence,
+        attributes=dict(attributes),
     ))
     _link(store, ids["s_x"], ids["source"], ids["reader"], flow_kind="data")
     _link(store, ids["r_k"], ids["reader"], ids["sink"])
@@ -2064,6 +2077,48 @@ def test_a_join_below_the_floor_is_no_group_at_all(
     _store_group(store, tag="a", write_confidence=0.8, read_confidence=0.2)
 
     assert store.query.find_chain_groups() == []
+    assert store.query.find_chain_groups(include_weak=True) == []
+
+
+def test_a_fallback_join_at_0_2_is_a_weak_group(store: GraphStore) -> None:
+    """ADR-0023 §5 — an `identity_source='llm'` pair is judged at 0.1.
+
+    The store-identity fallback's links are 0.2 (its base), which §9's
+    0.3 floor would drop: the fallback would be inert. The pair carries
+    the producer's attribute, so it is judged against the special floor
+    and appears as a **weak** group — real evidence, out of the default
+    enumeration, `include_weak=True` to see it.
+    """
+    ids = _store_group(
+        store, tag="a",
+        write_confidence=LLM_IDENTITY_BASE,
+        read_confidence=LLM_IDENTITY_BASE,
+        identity_source=LLM_IDENTITY_SOURCE,
+    )
+
+    assert store.query.find_chain_groups() == []
+
+    groups = store.query.find_chain_groups(include_weak=True)
+
+    assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_confidence == LLM_IDENTITY_BASE
+    assert groups[0].weak is True
+
+
+def test_the_special_floor_is_the_llm_attribute_only(
+    store: GraphStore,
+) -> None:
+    """The same 0.2 without the attribute is still no group at all.
+
+    That is the pin that keeps the exception narrow: §9's floor is
+    unchanged for every deterministic producer, whose bases are 0.3 / 0.4
+    / 0.5 anyway.
+    """
+    _store_group(
+        store, tag="a", write_confidence=0.2, read_confidence=0.2,
+    )
+
     assert store.query.find_chain_groups(include_weak=True) == []
 
 

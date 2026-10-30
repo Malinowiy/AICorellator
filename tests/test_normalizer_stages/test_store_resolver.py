@@ -30,14 +30,21 @@ the test it emits the upload writer's edge and stamps the read site.
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
-from aicorellator.graph.models import Node
+from aicorellator.graph.models import Edge, Node
 from aicorellator.parsing.entry_points import EntryPointOutput
-from aicorellator.parsing.normalizer_stages import STAGES, StoreResolverStage
+from aicorellator.parsing.normalizer_stages import (
+    STAGES,
+    StoreResolverStage,
+    store_resolver as store_resolver_stage,
+)
 from aicorellator.parsing.normalizer_stages.base import NormalizerStage
 from aicorellator.parsing.normalizer_stages.store_resolver import _modules_for
+from aicorellator.scan_config import default_scan_config
 from aicorellator.store import register_family, registry
 from aicorellator.store.context.upload import registry as upload_registry
 from aicorellator.store.context.upload.base import (
@@ -46,6 +53,8 @@ from aicorellator.store.context.upload.base import (
 )
 from aicorellator.store.families.base import Family, ReadSite, WriteSite
 from aicorellator.store.families.fs import FsFamily
+from aicorellator.store.families.s3 import S3Family
+from aicorellator.store.llm_fallback import FallbackError
 from aicorellator.store.resolver import StoreResolver
 
 HANDLER = "app/handler.py"
@@ -603,4 +612,172 @@ def test_imports_of_imports_are_not_parsed(project) -> None:
     modules = _modules_for(built.ctx, [], [_fs_write()], [])
 
     assert sorted(modules) == [MODULE_WRITER, MODULE_WRAPPER]
+
+
+
+# ============================================================
+# The store-identity fallback (B.3b-llm-fallback)
+# ============================================================
+
+def _fallback_ctx(built, mode: str):
+    """The context a scan that offered the fallback builds (`run_scan.py`).
+
+    The three fields are what the stage's third step needs and has no
+    other way to reach: the policy, the config file and the cache file.
+    `run_scan.py` fills them from the workspace; a test fills them from
+    the manifest's target root.
+    """
+    policy = default_scan_config()
+    policy.llm_fallback.mode = mode
+    root = Path(built.ctx.manifest.target.root)
+    return replace(
+        built.ctx,
+        scan_config=policy,
+        config_path=root / "config.yaml",
+        cache_path=root / "cache" / "llm_classifier.sqlite3",
+    )
+
+
+class FallbackSpy:
+    """A stand-in for `store.llm_fallback.run`, recording its call."""
+
+    def __init__(self, stores=None, edges=None, raises=None) -> None:
+        self.stores = stores or []
+        self.edges = edges or []
+        self.raises = raises
+        self.calls: list[dict] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.raises is not None:
+            raise self.raises
+        return self.stores, self.edges
+
+
+def _fake_store() -> Node:
+    return Node(
+        id="store:fake", kind="store", name="fs:/uploads/",
+        host_id="localhost",
+        attributes={
+            "family": "fs", "identity_hint": "/uploads/",
+            "identity_source": "llm",
+        },
+    )
+
+
+def _fake_edge() -> Edge:
+    return Edge(
+        id="edge:fake", source_id="tool:handle", target_id="store:fake",
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.2,
+    )
+
+
+def test_without_a_policy_the_fallback_step_is_a_no_op(
+    project, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N1 — a context with no policy is a scan that did not offer it."""
+    register_family("fs", FsFamily)
+    spy = FallbackSpy(raises=AssertionError("the fallback must not run"))
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", spy)
+    built = _fs_delta(project)
+
+    StoreResolverStage().apply(built.delta, built.ctx)
+
+    assert spy.calls == []
+    assert [e.kind for e in built.delta.edges] == [
+        "writes_to", "reads_from",
+    ]
+
+
+def test_with_the_mode_off_the_fallback_step_is_a_no_op(
+    project, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`off` returns before the families are walked, so it costs nothing."""
+    register_family("fs", FsFamily)
+    spy = FallbackSpy(raises=AssertionError("the fallback must not run"))
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", spy)
+    built = _fs_delta(project)
+    ctx = _fallback_ctx(built, "off")
+
+    StoreResolverStage().apply(built.delta, ctx)
+
+    assert spy.calls == []
+
+
+def test_the_stage_merges_the_fallback_store_and_edges(
+    project, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The step's output goes into the delta the way the resolver's does."""
+    register_family("fs", FsFamily)
+    spy = FallbackSpy(stores=[_fake_store()], edges=[_fake_edge()])
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", spy)
+    built = _fs_delta(project)
+    ctx = _fallback_ctx(built, "auto")
+
+    StoreResolverStage().apply(built.delta, ctx)
+
+    assert len(spy.calls) == 1
+    call = spy.calls[0]
+    assert call["scan"].llm_fallback.mode == "auto"
+    assert call["config_path"] == ctx.config_path
+    assert call["cache_path"] == ctx.cache_path
+    assert call["host_id"] == "localhost"
+    assert call["upload_sites"] == []
+    assert call["sites"]
+
+    assert "store:fake" in [n.id for n in built.delta.nodes]
+    assert "edge:fake" in [e.id for e in built.delta.edges]
+
+
+def test_the_stage_hands_the_fallback_every_familys_sites(
+    project, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`s3` is asked about too, not only `fs`."""
+    register_family("fs", FsFamily)
+    register_family("s3", S3Family)
+    spy = FallbackSpy()
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", spy)
+    built = project(files={
+        FS_HANDLER: FS_SOURCE,
+        "app/store.py": "s3.put_object(Bucket=bucket, Key=name, Body=b)\n",
+    })
+    ctx = _fallback_ctx(built, "auto")
+
+    StoreResolverStage().apply(built.delta, ctx)
+
+    families = {site.family for site in spy.calls[0]["sites"]}
+    assert families == {"fs", "s3"}
+
+
+def test_a_fallback_error_fails_the_stage(
+    project, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`mode: required` and a gap: the stage's caller reports the failure."""
+    register_family("fs", FsFamily)
+    spy = FallbackSpy(raises=FallbackError("required and unresolved"))
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", spy)
+    built = _fs_delta(project)
+    ctx = _fallback_ctx(built, "required")
+
+    with pytest.raises(FallbackError, match="required"):
+        StoreResolverStage().apply(built.delta, ctx)
+
+
+def test_the_stage_hands_over_the_upload_sites_it_identified(
+    project, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scope rule is the upload sites', and they are passed on."""
+    register_family("fs", FsFamily)
+    upload_registry.register_upload_detector("fake", FakeDetector)
+    spy = FallbackSpy()
+    monkeypatch.setattr(store_resolver_stage, "run_fallback", spy)
+    built = _upload_delta(project)
+    ctx = _fallback_ctx(built, "auto")
+
+    StoreResolverStage().apply(built.delta, ctx)
+
+    assert [site.framework for site in spy.calls[0]["upload_sites"]] == [
+        "fake",
+    ]
 

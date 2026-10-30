@@ -33,6 +33,7 @@ from aicorellator.parsing.llm_classifier import (
 from aicorellator.parsing.llm_extractor import run as run_llm_extractor
 from aicorellator.reporting import write_bundle
 from aicorellator.scan_config import ScanConfigError, load_scan_config
+from aicorellator.store.llm_fallback import FallbackConfigError, FallbackError
 from aicorellator.workspace import open_workspace
 
 
@@ -179,11 +180,22 @@ def main() -> int:
     print()
 
     # --- Normalization (merge everything into a graph delta) ---
-    delta = normalize(make_context(
-        manifest, tsa, ep, llm,
-        capabilities=capabilities,
-        framework_detection=detection,
-    ))
+    # The context carries the policy and the two paths the store-identity
+    # fallback needs (`llm_fallback.mode`, `llm_fallback_model`, D.2's
+    # cache file — the fallback shares it). `off` is the default, and the
+    # stage's third step returns before it walks a family then.
+    try:
+        delta = normalize(make_context(
+            manifest, tsa, ep, llm,
+            capabilities=capabilities,
+            framework_detection=detection,
+            scan_config=scan,
+            config_path=config_path,
+            cache_path=ws.cache_dir / CACHE_FILENAME,
+        ))
+    except (FallbackConfigError, FallbackError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
     # --- Write to SQLite ---
     with GraphStore(ws.db_path) as store:

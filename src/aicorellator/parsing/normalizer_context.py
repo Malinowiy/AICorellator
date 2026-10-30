@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..ingestion.discovery import FileManifest
+    from ..scan_config import ScanConfig
     from .capability_extractor import FileCapabilities
     from .entry_points import EntryPointOutput
     from .framework_detectors import DetectionResult
@@ -61,6 +62,20 @@ class NormalizeContext:
     capabilities: dict[str, "FileCapabilities"]
     framework_detection: "DetectionResult"
     host_id: str = "localhost"
+
+    # --- The store-identity LLM fallback (B.3b-llm_fallback, ADR-0023) ---
+    # Three things the store resolver stage has no other way to reach: the
+    # scan policy (`llm_fallback.mode` decides whether the layer runs) and
+    # the two paths it reads — the config file, for the
+    # `llm_fallback_model` section, and D.2's cache file, which the
+    # fallback shares. `None` for any of them means "this scan did not
+    # offer the fallback", and the stage's third step is then a no-op —
+    # which is what every caller that does not pass them gets, the
+    # pipeline tests among them. The policy is carried rather than
+    # re-read, so a scan reads its config once (`run_scan.py`).
+    scan_config: "ScanConfig | None" = None
+    config_path: Path | None = None
+    cache_path: Path | None = None
 
     # --- Caches (was: closures in normalize()) ---
     # Three consumers read source beyond the TSA index: the Flow Analyzer
@@ -150,6 +165,9 @@ def make_context(
     capabilities: dict[str, "FileCapabilities"] | None = None,
     framework_detection: "DetectionResult | None" = None,
     host_id: str = "localhost",
+    scan_config: "ScanConfig | None" = None,
+    config_path: Path | None = None,
+    cache_path: Path | None = None,
 ) -> NormalizeContext:
     """Build a context, filling the optional inputs with empty objects.
 
@@ -157,6 +175,10 @@ def make_context(
     defaults are what `normalize()` used to apply inline: a missing
     input means "this scan did not run that detector", not "skip the
     stages that consume it".
+
+    `scan_config`, `config_path` and `cache_path` are the store-identity
+    fallback's (ADR-0023) and default to `None`, which is "no fallback".
+    A caller that does not offer the layer passes nothing.
     """
     from .entry_points import EntryPointOutput
     from .framework_detectors import DetectionResult
@@ -170,4 +192,7 @@ def make_context(
         capabilities=capabilities or {},
         framework_detection=framework_detection or DetectionResult(),
         host_id=host_id,
+        scan_config=scan_config,
+        config_path=config_path,
+        cache_path=cache_path,
     )

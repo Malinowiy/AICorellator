@@ -189,12 +189,65 @@ DEFAULT_STORE_CONFIDENCE_THRESHOLD = 0.7
 # does not believe in.
 WEAK_JOIN_FLOOR = 0.3
 
+# ADR-0023 §5's one exception to the floor above: a link the
+# store-identity LLM fallback created carries
+# `attributes["identity_source"] = "llm"` and a base of 0.2, and it is
+# judged against `confidence.WEAK_JOIN_FLOOR_LLM` (0.1) instead. §9's
+# floor is a floor on *structural* claims — a family's literal, a code
+# layout — and the LLM's hint is an inference from the surrounding code,
+# so the two are not the same kind of evidence and 0.3 would make the
+# fallback inert (every fallback store would be below it). The exception
+# is `identity_source="llm"` only: a deterministic link at 0.2 still
+# fails 0.3, because the producers' bases are 0.3 / 0.4 / 0.5 and a
+# number below one of them is not a deterministic answer. The constants
+# live in `store/confidence.py` (they are the store subsystem's policy
+# about its own links) and are imported lazily by `_join_floors`, for the
+# reason `store.resolver._graph_ids` gives: `aicorellator.store` imports
+# `graph.models`, so a module-level import here would close a cycle for a
+# caller that imports `aicorellator.graph` first.
+
 # The one edge kind a write chain may cross as its *last* hop, at the
 # anchor. It is structural (ADR-0021 §4), so the ordinary traversal rule
 # would skip it; the anchor hop is not a hop along a path, it is the
 # declaration that names the chain's end (ADR-0021 §6). Deeper hops
 # still require a traversable flow kind.
 ANCHOR_EDGE_KINDS: frozenset[str] = frozenset({"writes_to"})
+
+
+def _join_floors() -> tuple[float, float, str]:
+    """`(floor, llm_floor, llm_source)` for the store join.
+
+    The three values the floor check needs, imported once per call rather
+    than per pair. `floor` is this module's own `WEAK_JOIN_FLOOR`; the
+    other two are `store.confidence`'s, so the string that marks an LLM
+    link and the floor it is judged against cannot drift apart from the
+    base the fallback stamps on the link.
+    """
+    from ..store.confidence import LLM_IDENTITY_SOURCE, WEAK_JOIN_FLOOR_LLM
+
+    return WEAK_JOIN_FLOOR, WEAK_JOIN_FLOOR_LLM, LLM_IDENTITY_SOURCE
+
+
+def _identity_source(attributes: object) -> str | None:
+    """The `identity_source` an edge's JSON `attributes` carry, or None.
+
+    `None` for every deterministic link, which has no such attribute, and
+    for an unreadable blob: the column is written by this codebase, and a
+    single row written by something else must not take down a query (the
+    rule `ClassifierCache.get` applies to its own column). The value is
+    only ever compared against `confidence.LLM_IDENTITY_SOURCE`; nothing
+    dispatches on it.
+    """
+    if not attributes:
+        return None
+    try:
+        data = json.loads(attributes)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    source = data.get("identity_source")
+    return source if isinstance(source, str) else None
 
 
 def join_confidence(
@@ -821,7 +874,7 @@ class QueryLayer:
                 source_id, sink_ids, max_hops, max_read_chains_per_source
             )
 
-            for write_id, write_nodes, _ in write_chains:
+            for write_id, write_nodes, _, _ in write_chains:
                 for read_id, read_nodes in read_chains:
                     if len(groups) >= max_groups:
                         break
@@ -887,8 +940,17 @@ class QueryLayer:
         confidence is the weaker of the two. A link with no confidence
         states no identity, and §5's rule is that unresolved identity
         produces no group, so such a pair is skipped rather than joined
-        at some invented confidence. A pair below `WEAK_JOIN_FLOOR` is
+        at some invented confidence. A pair below the applicable floor is
         skipped for the same reason — §9 says there is no link there.
+
+        **Which floor.** `WEAK_JOIN_FLOOR` (0.3), or
+        `confidence.WEAK_JOIN_FLOOR_LLM` (0.1) when either link of the
+        pair carries `attributes["identity_source"] = "llm"` — ADR-0023
+        §5's exception, and the reason a fallback store at 0.2 exists at
+        all. The exception is per *pair*, decided by the links' own
+        attribute: a pair with one LLM side is an LLM guess about the
+        store, and it is the side the join is least sure about. A pair
+        with no such attribute is judged exactly as before.
 
         Read chains are enumerated once per source and reused: the
         `store → source` cardinality is N:1, but a source's read chains
@@ -899,6 +961,8 @@ class QueryLayer:
         """
         if max_groups <= 0:
             return []
+
+        floor, llm_floor, llm_source = _join_floors()
 
         stores = self._conn.execute(
             """
@@ -923,17 +987,25 @@ class QueryLayer:
             if not write_chains:
                 continue
 
-            for source_id, source_name, read_link in self._store_read_links(
-                store["id"]
+            for source_id, source_name, read_link, read_source in (
+                self._store_read_links(store["id"])
             ):
                 if source_id not in by_source:
                     by_source[source_id] = self._read_chains_from(
                         source_id, sink_ids, max_hops, max_read_chains
                     )
 
-                for write_id, write_nodes, write_link in write_chains:
+                for write_id, write_nodes, write_link, write_source in (
+                    write_chains
+                ):
                     confidence = join_confidence(write_link, read_link)
-                    if confidence is None or confidence < WEAK_JOIN_FLOOR:
+                    if confidence is None:
+                        continue
+                    llm_pair = (
+                        write_source == llm_source
+                        or read_source == llm_source
+                    )
+                    if confidence < (llm_floor if llm_pair else floor):
                         continue
                     weak = is_weak(confidence, threshold)
                     if weak and not include_weak:
@@ -967,17 +1039,23 @@ class QueryLayer:
 
     def _store_read_links(
         self, store_id: str
-    ) -> list[tuple[str, str, float | None]]:
-        """`(source_id, source_name, identity_confidence)` per `reads_from`.
+    ) -> list[tuple[str, str, float | None, str | None]]:
+        """`(source_id, source_name, identity_confidence, identity_source)`.
 
         One row per read site that reads from this store, ordered by
         source id. Only active links between active nodes: a stale link
         is not evidence about the graph as it stands.
+
+        `identity_source` is the link's producer attribute — `"llm"` for a
+        link the store-identity fallback created (ADR-0023 §5) and `None`
+        for every deterministic one, which carries no such attribute. The
+        join reads it to pick the floor; nothing else does.
         """
         rows = self._conn.execute(
             """
             SELECT e.target_id AS source_id, n.name AS source_name,
-                   e.identity_confidence AS identity_confidence
+                   e.identity_confidence AS identity_confidence,
+                   e.attributes AS attributes
             FROM edges e
             JOIN nodes n ON n.id = e.target_id
             WHERE e.source_id = ?
@@ -990,7 +1068,12 @@ class QueryLayer:
             (store_id,),
         ).fetchall()
         return [
-            (r["source_id"], r["source_name"], r["identity_confidence"])
+            (
+                r["source_id"],
+                r["source_name"],
+                r["identity_confidence"],
+                _identity_source(r["attributes"]),
+            )
             for r in rows
         ]
 
@@ -1000,13 +1083,16 @@ class QueryLayer:
         entry_ids: set[str],
         max_hops: int,
         max_chains: int,
-    ) -> list[tuple[str, list[str], float | None]]:
-        """Paths `entry_point → ... → source_id`, as (chain_id, nodes, link).
+    ) -> list[tuple[str, list[str], float | None, str | None]]:
+        """Paths `entry_point → ... → source_id`, as (chain, nodes, link).
 
         The third element is the anchor hop's `identity_confidence` — the
         link that names the anchor, not a hop along the path. It is what
         a store join reads (ADR-0021 §7); the B.2-shaped caller ignores
-        it. `None` when the anchor edge carries none.
+        it. `None` when the anchor edge carries none. The fourth is that
+        same link's `identity_source` attribute (`"llm"` for a fallback
+        link, `None` otherwise), which the join reads to pick the floor
+        (ADR-0023 §5).
 
         Walked **in reverse** — from the anchor along the edges that
         point at it — because that is the direction the graph stores: a
@@ -1030,26 +1116,30 @@ class QueryLayer:
         if max_chains == 0 or not entry_ids:
             return []
 
-        found: list[tuple[str, list[str], float | None]] = []
+        found: list[tuple[str, list[str], float | None, str | None]] = []
         seen: set[str] = set()
 
-        # stack entries: (current, path_nodes, path_edges, anchor_link)
-        stack: list[tuple[str, list[str], list[str], float | None]] = [
-            (source_id, [source_id], [], None)
+        # stack entries: (current, path_nodes, path_edges, link, source)
+        stack: list[
+            tuple[str, list[str], list[str], float | None, str | None]
+        ] = [
+            (source_id, [source_id], [], None, None)
         ]
 
         while stack:
             if len(found) >= max_chains:
                 break
 
-            current, path_nodes, path_edges, anchor_link = stack.pop()
+            current, path_nodes, path_edges, anchor_link, anchor_source = (
+                stack.pop()
+            )
 
             if path_edges and current in entry_ids:
                 nodes = list(reversed(path_nodes))
                 chain_id = self._chain_id(nodes, list(reversed(path_edges)))
                 if chain_id not in seen:
                     seen.add(chain_id)
-                    found.append((chain_id, nodes, anchor_link))
+                    found.append((chain_id, nodes, anchor_link, anchor_source))
                 continue
 
             if len(path_edges) >= max_hops:
@@ -1080,11 +1170,13 @@ class QueryLayer:
                     and edge.kind in ANCHOR_EDGE_KINDS
                 ):
                     link = edge.identity_confidence
+                    source = edge.attributes.get("identity_source")
                 else:
                     # Structural edges are declarations, not paths.
                     if edge.flow_kind not in TRAVERSABLE_FLOW_KINDS:
                         continue
                     link = anchor_link
+                    source = anchor_source
                 previous = edge.source_id
                 # Cycle guard: do not revisit a node in the same path.
                 if previous in path_nodes:
@@ -1095,6 +1187,7 @@ class QueryLayer:
                         path_nodes + [previous],
                         path_edges + [edge.id],
                         link,
+                        source,
                     )
                 )
 

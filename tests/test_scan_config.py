@@ -37,6 +37,9 @@ llm_classifier:
   mode: "required"
   config: "config/other.yaml"
 
+llm_fallback:
+  mode: "auto"
+
 runtime:
   mode: "python"
   test_command: "pytest -q tests/"
@@ -59,6 +62,7 @@ def test_defaults_match_the_documented_template() -> None:
     assert cfg.detectors.disabled == []
     assert cfg.llm_classifier.mode == "off"
     assert cfg.llm_classifier.config is None
+    assert cfg.llm_fallback.mode == "off"
     assert cfg.runtime.mode == "off"
     assert cfg.runtime.test_command is None
     assert cfg.unclassified.action == "ask"
@@ -82,6 +86,7 @@ def test_valid_load(tmp_path: Path) -> None:
     assert cfg.detectors.disabled == ["fastmcp"]
     assert cfg.llm_classifier.mode == "required"
     assert cfg.llm_classifier.config == "config/other.yaml"
+    assert cfg.llm_fallback.mode == "auto"
     assert cfg.runtime.mode == "python"
     assert cfg.runtime.test_command == "pytest -q tests/"
     assert cfg.unclassified.action == "error"
@@ -192,9 +197,11 @@ def test_template_holds_every_subsystem_section(tmp_path: Path) -> None:
     for section in (
         "detectors:",
         "llm_classifier:",
+        "llm_fallback:",
         "runtime:",
         "evaluation:",
         "llm_classifier_model:",
+        "llm_fallback_model:",
         "unclassified:",
         "logs:",
         "store:",
@@ -235,6 +242,10 @@ def test_root_not_mapping(tmp_path: Path) -> None:
             "llm_classifier.mode",
             'llm_classifier:\n  mode: "sometimes"\n',
         ),
+        (
+            "llm_fallback.mode",
+            'llm_fallback:\n  mode: "sometimes"\n',
+        ),
         ("runtime.mode", 'runtime:\n  mode: "jvm"\n'),
         (
             "unclassified.action",
@@ -255,6 +266,9 @@ def test_enum_rejections(tmp_path: Path, where: str, content: str) -> None:
         'llm_classifier:\n  mode: "off"\n',
         'llm_classifier:\n  mode: "auto"\n',
         'llm_classifier:\n  mode: "required"\n',
+        'llm_fallback:\n  mode: "off"\n',
+        'llm_fallback:\n  mode: "auto"\n',
+        'llm_fallback:\n  mode: "required"\n',
         'runtime:\n  mode: "off"\n',
         'runtime:\n  mode: "python"\n',
         'unclassified:\n  action: "ask"\n',
@@ -375,6 +389,7 @@ def test_the_store_default_matches_the_query_layer_default() -> None:
     [
         ("detectors", "detectors: langchain\n"),
         ("llm_classifier", "llm_classifier: auto\n"),
+        ("llm_fallback", "llm_fallback: auto\n"),
         ("runtime", "runtime: python\n"),
         ("unclassified", "unclassified: ask\n"),
         ("logs", "logs: 5\n"),
