@@ -76,10 +76,10 @@ def _fastapi_node() -> Node:
 # R1 — importing the package is the registration
 # ============================================================
 
-def test_importing_the_detectors_package_registers_both(
+def test_importing_the_detectors_package_registers_every_detector(
     monkeypatch,
 ) -> None:
-    """R1: empty the registry, re-import the package, both are there.
+    """R1: empty the registry, re-import the package, all three are there.
 
     A reload is the only way to observe the import in a process that has
     already imported the package: the registration is a statement in
@@ -91,7 +91,7 @@ def test_importing_the_detectors_package_registers_both(
 
     importlib.reload(detectors_package)
 
-    assert registry.all_names() == ["fastapi", "streamlit"]
+    assert registry.all_names() == ["django", "fastapi", "streamlit"]
     assert registry.UPLOAD_DETECTORS["streamlit"] is StreamlitUploadDetector
     assert registry.UPLOAD_DETECTORS["fastapi"] is FastAPIUploadDetector
 
@@ -121,11 +121,13 @@ def test_resolve_returns_an_instance() -> None:
     assert resolved[0].name == "streamlit"
 
 
-def test_resolving_all_gives_both_in_registration_order() -> None:
+def test_resolving_all_gives_every_detector_in_registration_order() -> None:
     """R2 — a scan's default is the whole registry, in order."""
     resolved = registry.resolve(None)
 
-    assert [det.name for det in resolved] == ["fastapi", "streamlit"]
+    assert [det.name for det in resolved] == [
+        "fastapi", "streamlit", "django",
+    ]
 
 
 def test_the_class_declares_the_key() -> None:
@@ -141,7 +143,8 @@ def test_the_class_declares_the_key() -> None:
 
 def test_all_names_includes_streamlit() -> None:
     """R3: the name a config asks for is the name in the list."""
-    assert registry.all_names() == ["fastapi", "streamlit"]
+    assert "streamlit" in registry.all_names()
+    assert registry.all_names() == ["django", "fastapi", "streamlit"]
 
 
 def test_the_families_registry_is_untouched() -> None:

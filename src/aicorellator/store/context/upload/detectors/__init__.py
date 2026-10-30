@@ -13,13 +13,18 @@ run.
   - `streamlit` — `StreamlitUploadDetector` (B.3b-user_upload-streamlit):
     a file whose `st.file_uploader` is its entry point, and the first
     **module-level** detector — the site it reports is the module, which
-    is what `writer._module_level` reads. `django` and `flask` are
-    separate steps.
+    is what `writer._module_level` reads.
+  - `django` — `DjangoUploadDetector` (B.3b-user_upload-django): a view
+    whose body reads `request.FILES`, matched by name against the route
+    nodes `EntryPointStage` built — function-level, like `fastapi`, and
+    the marker is the body rather than the signature. `flask` is a
+    separate step.
 """
 
 from ..registry import register_upload_detector
 from .fastapi import FastAPIUploadDetector
 from .streamlit import StreamlitUploadDetector
+from .django import DjangoUploadDetector
 
 # Registered by the literal name config names, and not by
 # `FastAPIUploadDetector.name`: a drift between the two is what
@@ -27,5 +32,10 @@ from .streamlit import StreamlitUploadDetector
 # class's own attribute would silence it.
 register_upload_detector("fastapi", FastAPIUploadDetector)
 register_upload_detector("streamlit", StreamlitUploadDetector)
+register_upload_detector("django", DjangoUploadDetector)
 
-__all__ = ["FastAPIUploadDetector", "StreamlitUploadDetector"]
+__all__ = [
+    "DjangoUploadDetector",
+    "FastAPIUploadDetector",
+    "StreamlitUploadDetector",
+]
