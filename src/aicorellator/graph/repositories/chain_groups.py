@@ -20,9 +20,16 @@ class only moves rows.
     re-running prioritization over a graph cannot discard a verdict
     that was already paid for, and 1.3e's post-evaluation write can
     land on a row 1.3c created.
-  - the group-level `lethal_trifecta` column has no writer yet: 1.3d
-    wrote the per-*node* attribute, and nothing projects it onto the
-    group row. `upsert` leaves it as `add` found it.
+  - `lethal_trifecta` is a projection, not a verdict: 1.3d writes the
+    per-*node* attribute and `evaluator._evaluate_one_group` (B.6)
+    projects the read side's flags onto the group row, so `add` writes
+    what the evaluator computed. `upsert` does not refresh it — the
+    value is deterministic from the graph and the graph is rebuilt per
+    scan, so the next scan's `add` is a fresh INSERT carrying a fresh
+    projection. A re-upsert of an existing id therefore leaves the
+    column exactly as it found it, the way it leaves `created_at`
+    alone. `test_upsert_leaves_the_evaluation_columns_alone` pins that
+    from the other side.
 """
 
 from __future__ import annotations

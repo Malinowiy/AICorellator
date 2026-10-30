@@ -331,6 +331,16 @@ def _evaluate_one_group(
     `{"write": [...], "read": [...], "anchor": [...]}`, and the judge —
     which is the linear one — gets the three lists flattened back into
     the single `guardrails` list its prompt defines.
+
+    The row's `lethal_trifecta` is a *projection*, not a verdict (B.6):
+    1.3d writes the flag on every node, and the group carries "some node
+    on the read side has it". The write side is not consulted — the
+    attacker's content enters through the read, and a trifecta node
+    upstream of the write is another chain's problem, which is the
+    reasoning `graph/query.py::_score_lethal_trifecta` uses for its own
+    +5. A group that was never evaluated keeps `False`: the projection
+    is the evaluator's, the same "not computed" convention `validated`
+    follows.
     """
     payload, node_dicts, edge_dicts = _group_payload(store, group)
     user_prompt = build_group_prompt(group.group_id, payload)
@@ -422,6 +432,16 @@ def _evaluate_one_group(
     # test passed, "existence" otherwise — the level the group reached,
     # spelled the way a chain spells it. No new check.
     record.validated_kind = "semantic" if validated else "existence"
+    # B.6: the group-level column is 1.3d's per-node flag projected onto
+    # the read side. The map `_group_payload` already built is that flag
+    # read once per node (`_lethal_trifecta_flag`), so this is a read of
+    # a read — no second store walk, and no capability walk here either
+    # (the stage is the single writer of the definition, ADR-0009).
+    record.lethal_trifecta = any(
+        flag
+        for chain in payload["read_chains"]
+        for flag in chain["lethal_trifecta"].values()
+    )
     return record
 
 

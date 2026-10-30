@@ -211,6 +211,52 @@ def test_prompt_carries_the_lethal_trifecta_attribute(store) -> None:
     assert f'"{SINK}": false' in payload
 
 
+def test_the_group_row_projects_the_read_sides_trifecta(store) -> None:
+    """B.6: the group column is 1.3d's node flag, read off the read side.
+
+    The fixture's reader carries `lethal_trifecta: True` and the other
+    nodes of the read chain do not, so the projection has something to
+    say. It says it on the *row*: the payload's per-node map is the same
+    read, and `test_prompt_carries_the_lethal_trifecta_attribute` pins
+    that half of it. The column was written by `add` — this row did not
+    exist before the evaluation — so the value is the evaluator's, not a
+    default that happened to be false.
+    """
+    group = _build(store, trifecta=True)
+    fake, _ = _voter([E_READ_1, E_READ_2])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    row = store.chain_groups.get(GROUP_ID)
+    assert row.verdict == "exploitable"
+    assert row.lethal_trifecta is True
+
+
+def test_a_trifecta_on_the_write_side_is_not_the_groups(store) -> None:
+    """The write side is the delivery, not the impact (ADR-0009).
+
+    `entry` is on the write chain only — `entry → source`, while the read
+    chain is `source → reader → sink` — so a trifecta flag there says
+    nothing about the group: the attacker's content enters through the
+    read, and a trifecta node upstream of the write is another chain's
+    problem. That is the reasoning `graph/query.py::_score_lethal_trifecta`
+    uses, and the projection follows it rather than reading both sides.
+    """
+    group = _build(store)
+    entry = store.nodes.get(ENTRY)
+    entry.attributes["lethal_trifecta"] = True
+    store.nodes.upsert(entry)
+    fake, _ = _voter([E_READ_1, E_READ_2])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    row = store.chain_groups.get(GROUP_ID)
+    assert row.verdict == "exploitable"
+    assert row.lethal_trifecta is False
+
+
 def test_evidence_outside_the_group_fails_layer_3(store) -> None:
     """A cited edge that is not in the pair is a hallucination.
 

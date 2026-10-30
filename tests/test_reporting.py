@@ -28,11 +28,16 @@ E_READ_1 = "edge:" + "2" * 16
 E_READ_2 = "edge:" + "3" * 16
 
 
-def _graph(store: GraphStore) -> None:
+def _graph(store: GraphStore, trifecta: bool = False) -> None:
     """The two sides a group needs: a writer into the anchor, a reader out.
 
         POST /upload --writes_to--> rag_corpus --has_access_to-->
         get_documents --has_access_to(data)--> run_shell
+
+    `trifecta` writes 1.3d's flag on the reader — the node that reads
+    untrusted content on its way to the sink — which is what B.6's
+    projection reads. Default `False` keeps every other test's graph
+    exactly as it was.
     """
     store.nodes.upsert(Node(
         id=SOURCE, kind="untrusted_source", name="rag_corpus:catalogue.list",
@@ -43,6 +48,7 @@ def _graph(store: GraphStore) -> None:
     ))
     store.nodes.upsert(Node(
         id=READER, kind="tool", name="get_documents", host_id="localhost",
+        attributes=({"lethal_trifecta": True} if trifecta else {}),
     ))
     store.nodes.upsert(Node(
         id=SINK, kind="sink", name="run_shell", host_id="localhost",
@@ -92,16 +98,28 @@ def _store(
     group: ChainGroup,
     verdict: str | None = None,
     validated: bool = False,
+    validated_kind: str | None = None,
+    lethal_trifecta: bool = False,
     confidence: float = 0.0,
     reasoning: str | None = None,
 ) -> None:
-    """Persist a group the way the two owners do: 1.3c, then 1.3e."""
+    """Persist a group the way the two owners do: 1.3c, then 1.3e.
+
+    The three columns of the evaluated row travel together, the way one
+    evaluation writes them: `validated_kind` is A.4's label for the
+    Layer 3 check the verdict went through, and `lethal_trifecta` is
+    B.6's projection of 1.3d's per-node flag — the row's, written beside
+    the verdict rather than derived here (what the evaluator puts in it
+    is `test_analysis_evaluator_groups.py`'s to pin).
+    """
     record = group.to_record()
     if verdict is not None:
         record.verdict = verdict
         record.confidence = confidence
         record.reasoning = reasoning
         record.validated = validated
+        record.validated_kind = validated_kind
+        record.lethal_trifecta = lethal_trifecta
     store.chain_groups.upsert(record)
 
 
@@ -256,6 +274,59 @@ def test_bundle_writes_both_json_files(store: GraphStore, tmp_path) -> None:
 
     # report.md in the bundle is the same document, section included.
     assert "## Chain groups (Phase 3)" in (path / "report.md").read_text()
+
+
+def test_bundle_carries_the_projection_and_the_layer_3_label(
+    store: GraphStore,
+    tmp_path,
+) -> None:
+    """B.6: `chain_groups.json` names the trifecta and A.4's label.
+
+    Both are row columns the bundle used to drop, so a consumer of the
+    file could not tell a group whose read side has all three halves of
+    the trifecta (ADR-0009) from one whose read side does not, nor read
+    the level Layer 3 reached. The row carries both, and the file now
+    says both.
+    """
+    _graph(store, trifecta=True)
+    group = _group(store)
+    _store(
+        store, group, verdict="exploitable", validated=True,
+        validated_kind="semantic", lethal_trifecta=True,
+        confidence=0.7, reasoning="r",
+    )
+
+    path = write_bundle(store, Workspace(root=tmp_path))
+
+    entry = json.loads((path / "chain_groups.json").read_text())[0]
+    assert entry["lethal_trifecta"] is True
+    assert entry["validated_kind"] == "semantic"
+
+
+def test_bundle_says_false_and_none_before_an_evaluation(
+    store: GraphStore,
+    tmp_path,
+) -> None:
+    """1.3c's row: no projection has run and no label exists.
+
+    The graph here *has* a trifecta reader, and the file still says
+    `False` — the column is the evaluator's projection, and a row 1.3e
+    has not reached carries "not computed" rather than a claim about the
+    graph. The label is `null` for the same reason: no verdict, so no
+    Layer 3 check has run — and the file mirrors the stored column,
+    where it is NULL. (Reading the row through the model would turn that
+    NULL into "existence", `from_row`'s default for a row written before
+    A.4; a row 1.3c wrote is not one of those.)
+    """
+    _graph(store, trifecta=True)
+    group = _group(store)
+    _store(store, group)  # 1.3c only: no verdict.
+
+    path = write_bundle(store, Workspace(root=tmp_path))
+
+    entry = json.loads((path / "chain_groups.json").read_text())[0]
+    assert entry["lethal_trifecta"] is False
+    assert entry["validated_kind"] is None
 
 
 def test_bundle_writes_an_empty_array_without_groups(

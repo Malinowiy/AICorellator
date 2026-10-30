@@ -1033,6 +1033,11 @@ def test_pipeline_chain_groups_persist_and_prioritize(
     node with all three halves of the trifecta, and it is not bent to
     produce one. What is asserted is the mechanism's shape — every node
     carries the attribute, and every value is `False`.
+
+    B.6's group-level projection is asserted at zero for the same
+    reason, plus one of its own: these rows are 1.3c's, never evaluated,
+    so the projection has not run at all. The `True` case is
+    `test_analysis_evaluator_groups.py`'s.
     """
     target = ingest(dynamic_target, kind="folder")
     delta = _normalized_dynamic(target)

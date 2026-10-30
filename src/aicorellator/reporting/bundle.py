@@ -126,6 +126,17 @@ def _group_to_dict(
     that keys on ids (or that wants to check a path against them) does not
     have to re-parse the nodes list.
 
+    Two of those columns used to be dropped, which made the file silent
+    about facts the row carries (B.6): `lethal_trifecta` — the projection
+    of 1.3d's per-node flag onto the read side, `False` on a row no
+    evaluation has reached — and `validated_kind`, A.4's label for the
+    Layer 3 check the verdict travelled with. Both keys are always
+    emitted, so a consumer never has to tell "false" from "not asked";
+    the label is `null` until a verdict exists, because a row 1.3c wrote
+    has not been through the check at all (see the comment at the
+    assignment). B.7's `prompt_version` and `voter_outputs` are not
+    here: they are that item's schema change, not this row's shape.
+
     A chain whose path is not in `paths` (see `group_chain_paths`) is
     emitted with `nodes: []` rather than dropped: the id is still the
     durable reference.
@@ -156,9 +167,24 @@ def _group_to_dict(
         "score": group.score,
         "score_components": group.score_components,
         "priority": group.priority,
+        # B.6: the projection of 1.3d's per-node flag onto the read side,
+        # and A.4's label for the Layer 3 check the verdict travelled
+        # with. Both are the row's, which is why they sit beside the
+        # verdict rather than inside the chains.
+        "lethal_trifecta": group.lethal_trifecta,
         "verdict": group.verdict,
         "confidence": group.confidence,
         "validated": group.validated,
+        # The label travels with the verdict (the repository's rule): a
+        # row with no verdict has not been through Layer 3, so there is
+        # no level to name. `from_row` reads a NULL label back as
+        # "existence" — the honest answer for a *chain* row, which exists
+        # only once it was evaluated; a group row 1.3c wrote is not one
+        # of those, and "existence" there would read as a check that ran.
+        # So the file mirrors the stored column, NULL included.
+        "validated_kind": (
+            group.validated_kind if group.verdict is not None else None
+        ),
         "reasoning": group.reasoning,
         "status": group.status,
     }
