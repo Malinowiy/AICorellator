@@ -406,3 +406,70 @@ def test_a_detector_makes_the_stage_emit_the_upload_writer_edge(
     source = [n for n in built.delta.nodes if n.kind == "untrusted_source"][0]
     assert source.attributes["source_type"] == "user_upload"
 
+
+def test_the_stamped_node_is_not_appended_twice(project) -> None:
+    """A stamped node is already in the delta; the stage adds it once.
+
+    The pass returns the nodes it gave the role to — the created ones *and*
+    the stamped ones — and the caller appends only the ones the delta does
+    not already hold (`_merge_nodes`). A second row for one node id is what
+    the repository's primary key rejects, so this is the assertion that
+    keeps the return value and the append from disagreeing.
+    """
+    register_family("fs", FsFamily)
+    upload_registry.register_upload_detector("fake", FakeDetector)
+    built = _upload_delta(project)
+
+    StoreResolverStage().apply(built.delta, built.ctx)
+
+    sources = [n for n in built.delta.nodes if n.kind == "untrusted_source"]
+    assert [node.id for node in sources] == ["untrusted_source:1"]
+
+
+def test_the_stage_creates_the_source_and_its_links(project) -> None:
+    """The read side, at the seam (B.3b-user_upload-attribution).
+
+    The `fs` fixture's read is in the handler's own file and names the
+    store's literal, and nothing in the delta is a source for it: the
+    stage creates the node, appends it (the pass returns it and does not
+    append it itself), and appends the store's `reads_from` and the
+    source's `has_access_to` to the reader — `tool:handle`, the node the
+    read's enclosing function names.
+
+    The reader's link is §8's reader side: base 0.3, an equal literal and
+    the same module, `1 − 0.7 × 0.4 × 0.8 = 0.776`.
+    """
+    register_family("fs", FsFamily)
+    upload_registry.register_upload_detector("fake", FakeDetector)
+    built = _upload_delta(project)
+    built.delta.nodes = [
+        node for node in built.delta.nodes
+        if node.id != "untrusted_source:1"
+    ]
+
+    StoreResolverStage().apply(built.delta, built.ctx)
+
+    sources = [n for n in built.delta.nodes if n.kind == "untrusted_source"]
+    assert [node.name for node in sources] == ["user_upload:open"]
+    source = sources[0]
+    assert source.attributes == {
+        "source_type": "user_upload",
+        "call_target": "open",
+        "source_file": FS_HANDLER,
+        "line_start": FS_READ_LINE,
+        "reader_kind": "function",
+        "reader": "handle",
+    }
+
+    store = [n for n in built.delta.nodes if n.kind == "store"][0]
+    reads_from = [e for e in built.delta.edges if e.kind == "reads_from"]
+    assert [(e.source_id, e.target_id) for e in reads_from] == [
+        (store.id, source.id)
+    ]
+    assert round(reads_from[0].identity_confidence, 4) == 0.776
+
+    access = [e for e in built.delta.edges if e.kind == "has_access_to"]
+    assert [(e.source_id, e.target_id) for e in access] == [
+        (source.id, "tool:handle")
+    ]
+

@@ -24,7 +24,9 @@ pieces:
   - `writer` — `find_upload_stores`: the BFS from a handler to the `fs`
     write sites it reaches, and the `writes_to` edges that come out.
   - `attribution` — `attribute_source_type`: the `source_type` on the
-    read sites in a writer's scope.
+    read sites in a writer's scope, and — since
+    B.3b-user_upload-attribution — the `untrusted_source` nodes and the
+    `reads_from` / `has_access_to` edges that pass creates (ADR-0022).
 
 The package depends on `graph.models`, `store.confidence`,
 `store.families.base` and `store.resolver`'s `STRUCTURAL`, and on

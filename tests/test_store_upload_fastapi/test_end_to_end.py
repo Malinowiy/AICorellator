@@ -8,15 +8,14 @@ not hand-built — so what is pinned here is the whole seam: a route the
 scan found, a signature the detector read, a store the `fs` family
 recognized, and the `writes_to` edge that joins them.
 
-What is **not** pinned as working is the attribution. `user_upload` is a
-read *role*, and giving a filesystem read its role is the read side's
-step (B.3, "`user_upload` source type"): 1.3a has no `open(...)` source
-type, so a scan of this fixture produces no `untrusted_source` node for
-the reader at all and `attribution.attribute_source_type` has nothing to
-stamp. The test asserts that state — and `tests/test_store_upload_core/
-test_attribution.py` pins the rule on nodes that do exist. Bending this
-fixture to manufacture a source node would prove the wiring and lie about
-the pipeline.
+The read side is pinned since B.3b-user_upload-attribution: `GET /read`
+reads the same literal in the writer's own file, so the scan *creates* a
+`user_upload` source for it (ADR-0022 §1), links the store to it with
+`reads_from`, and gives the source 1.3a's `has_access_to` edge to the
+reader — the `GET /read` entry point, resolved by the handler name. The
+second fixture adds a sink to the reader's path, which is the shape
+`find_chain_groups` needs to pair the store's write chain with the read
+chain (ADR-0021 §6).
 """
 
 from __future__ import annotations
@@ -26,12 +25,19 @@ from pathlib import Path
 
 import pytest
 
+from aicorellator import GraphStore
 from aicorellator.ingestion import discover, ingest
-from aicorellator.parsing import make_context, normalize, run_tsa
+from aicorellator.parsing import make_context, normalize, run_tsa, write_graph
 from aicorellator.parsing.capability_extractor import (
     extract as extract_capabilities,
 )
 from aicorellator.parsing.entry_points import run as run_entry_points
+from aicorellator.store.confidence import (
+    BASE,
+    CODE_CONTEXT_SAME_MODULE,
+    LITERAL_EQUAL,
+    combine_signals,
+)
 from aicorellator.store.context.upload import registry
 from aicorellator.store.context.upload.context import UserUploadContext
 
@@ -41,6 +47,17 @@ LITERAL = "/uploads/report.txt"
 #: The handler's `def` line — `FunctionDef.lineno`, and therefore
 #: `UploadSite.line` — in the fixture below.
 UPLOAD_LINE = 8
+
+#: The read's own line and the call it is spelled with: the source node's
+#: `line_start` and `call_target` (`attribution._call_target`).
+READ_LINE = 18
+READ_TARGET = "open"
+
+#: The reader's link, from the constants: base 0.3 (the family's), an
+#: equal literal, and the same module — §8's reader side (ADR-0022 §5).
+READER_LINK = combine_signals(
+    BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]
+)
 
 FILES: dict[str, str] = {
     MAIN: '''\
@@ -87,6 +104,35 @@ def read_report():
     """Read it back."""
     with open("/uploads/report.txt", "rb") as fh:
         return fh.read()
+''',
+}
+
+
+#: The same app, with the reader's data on its way to a network sink. A
+#: read chain has to end at a sink (ADR-0010), so this is the shape that
+#: produces a group; the canonical fixture above stops at the read.
+SINK_FILES: dict[str, str] = {
+    MAIN: '''\
+"""A FastAPI app that accepts an upload and posts what it reads back."""
+import requests
+from fastapi import FastAPI, UploadFile
+
+app = FastAPI()
+
+
+@app.post("/upload")
+async def upload_report(file: UploadFile):
+    """Persist the upload."""
+    with open("/uploads/report.txt", "wb") as fh:
+        fh.write(await file.read())
+    return {"status": "ok"}
+
+
+@app.get("/read")
+def read_report():
+    """Read it back and send it on."""
+    with open("/uploads/report.txt", "rb") as fh:
+        return requests.post("https://example.test/ingest", data=fh.read())
 ''',
 }
 
@@ -264,25 +310,84 @@ def test_the_store_is_the_one_the_family_named(delta) -> None:
     assert stores[0].confidence == 1.0
 
 
-def test_the_read_side_gets_no_edge_and_no_role(delta) -> None:
-    """E2, as the pipeline holds it today: the writer edge, nothing more.
+def test_the_read_side_gets_the_source_and_the_links(delta) -> None:
+    """E2 — the read side is produced (B.3b-user_upload-attribution).
 
-    A filesystem read is not one of 1.3a's source types, so the reader
-    has no `untrusted_source` node — and giving a read its role is the
-    read side's step (B.3). There is therefore nothing for
-    `attribute_source_type` to stamp, which is the documented reason the
-    attribution is inert end to end; the rule itself is pinned in
-    `tests/test_store_upload_core/test_attribution.py`.
+    `GET /read` reads the literal the upload wrote, in the writer's own
+    file, so the read site is a `user_upload` source (ADR-0022 §1): the
+    scan creates the node, the store gets `reads_from` to it, and the
+    source gets 1.3a's `has_access_to` edge to the reader — the `GET
+    /read` entry point, resolved by the handler name.
+
+    The reader's link is §8's reader side (ADR-0022 §5): base 0.3 (the
+    family's, not the writer's 0.5), an equal literal, the same module —
+    `1 − 0.7 × 0.4 × 0.8 = 0.776`, which is also the pair's number,
+    because the writer's 0.872 is higher and the join takes the `min`.
     """
-    assert [e for e in delta.edges if e.kind == "reads_from"] == []
-    assert [
-        node for node in delta.nodes
-        if node.kind == "untrusted_source"
-    ] == []
-    assert [
-        node for node in delta.nodes
-        if node.attributes.get("source_type") == "user_upload"
-    ] == []
+    store = _of_kind(delta, "store")[0]
+    sources = _of_kind(delta, "untrusted_source")
+    assert [node.name for node in sources] == [f"user_upload:{READ_TARGET}"]
+    source = sources[0]
+    assert source.attributes == {
+        "source_type": "user_upload",
+        "call_target": READ_TARGET,
+        "source_file": MAIN,
+        "line_start": READ_LINE,
+        "reader_kind": "function",
+        "reader": "read_report",
+    }
+
+    reads_from = [e for e in delta.edges if e.kind == "reads_from"]
+    assert len(reads_from) == 1
+    edge = reads_from[0]
+    assert (edge.source_id, edge.target_id) == (store.id, source.id)
+    assert edge.flow_kind == "structural"
+    assert edge.observed_by == ["ast"]
+    assert edge.data_flow_confirmed is None
+    assert round(edge.identity_confidence, 4) == 0.776
+    assert round(READER_LINK, 4) == 0.776
+
+    access = [
+        e for e in delta.edges
+        if e.kind == "has_access_to" and e.source_id == source.id
+    ]
+    assert [e.target_id for e in access] == [_entry(delta, "GET /read").id]
+
+
+def test_the_group_joins_the_read_chain_to_the_write_chain(
+    tmp_path: Path,
+) -> None:
+    """E1 — the store is the shared node (ADR-0021 §6).
+
+    The write chain `POST /upload → store` and the read chain
+    `source → sink` meet at the store's id, and the group's confidence is
+    the weaker link — the reader's 0.776 against the writer's 0.872 — so
+    it is above §9's default threshold and not weak.
+
+    The fixture's writer reaches the store twice (the handler's own
+    `writes_to` at 0.872 and the `open(..., "wb")` sink's family-only
+    link at 0.776), which is why the store joins more than one write
+    chain: one group per (write chain, read chain) pair, all on the same
+    source and store.
+    """
+    delta = _scan(tmp_path, SINK_FILES)
+    source = _of_kind(delta, "untrusted_source")[0]
+    store = _of_kind(delta, "store")[0]
+
+    with GraphStore(tmp_path / "graph.db") as graph:
+        write_graph(graph, delta)
+        groups = graph.query.find_chain_groups()
+
+    assert groups
+    assert {group.store_id for group in groups} == {store.id}
+    assert {group.untrusted_source_id for group in groups} == {source.id}
+    assert {round(group.store_confidence, 4) for group in groups} == {0.776}
+    assert not any(group.weak for group in groups)
+    assert all(
+        chain[0] == source.id
+        for group in groups
+        for chain in group.read_chains
+    )
 
 
 # ============================================================

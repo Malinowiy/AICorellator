@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from aicorellator import GraphStore
 from aicorellator.graph import Edge, Node
-from aicorellator.graph.query import SCORE_WRITES_DB
+from aicorellator.graph.query import (
+    SCORE_USER_WRITABLE_SOURCE,
+    SCORE_WRITES_DB,
+)
 
 
 def test_find_chains_entry_to_sink(
@@ -745,6 +748,74 @@ def test_find_chain_groups_joins_a_catalogue_at_its_store(
     assert groups[0].read_chains == [
         [ids["source"], ids["reader"], ids["sink"]]
     ]
+
+
+def test_find_chain_groups_joins_a_user_upload_at_its_store(
+    store: GraphStore,
+) -> None:
+    """The B.3b-user_upload-attribution shape: an upload's store, joined.
+
+    The upload handler writes the store and the reader — a route that
+    reads what was uploaded — is reached from the source the attribution
+    created (ADR-0022 §1), and 1.3a's read chain runs on to a sink:
+
+        POST /upload --writes_to--> store --reads_from--> source
+              --has_access_to--> GET /read --has_access_to--> sink
+
+    The two store links carry §8's numbers and the group's confidence is
+    the weaker — the reader's 0.776 against the writer's 0.872 — and the
+    source's `user_upload` type is what ADR-0012's table weighs as
+    user-writable (+2), which is what puts the group over the threshold
+    with the short-chain point.
+    """
+    ids = {
+        "upload": "entry_point:" + "a" * 16,
+        "read": "entry_point:" + "b" * 16,
+        "store": "store:" + "c" * 16,
+        "source": "untrusted_source:" + "d" * 16,
+        "sink": "sink:" + "e" * 16,
+        "e_s": "edge:" + "1" * 16,
+        "s_u": "edge:" + "2" * 16,
+        "u_r": "edge:" + "3" * 16,
+        "r_k": "edge:" + "4" * 16,
+    }
+    _put(store, ids["upload"], "entry_point", "POST /upload")
+    _put(store, ids["read"], "entry_point", "GET /read")
+    _put(store, ids["store"], "store", "fs:/uploads/report.txt")
+    _put(store, ids["source"], "untrusted_source", "user_upload:open")
+    _put(store, ids["sink"], "sink", "post_to_webhook")
+    store.edges.upsert(Edge(
+        id=ids["e_s"], source_id=ids["upload"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.872,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_u"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.776,
+    ))
+    _link(store, ids["u_r"], ids["source"], ids["read"])
+    _link(store, ids["r_k"], ids["read"], ids["sink"])
+
+    groups = store.query.find_chain_groups()
+
+    assert len(groups) == 1
+    group = groups[0]
+    assert group.store_id == ids["store"]
+    assert group.store_name == "fs:/uploads/report.txt"
+    assert group.store_confidence == 0.776
+    assert group.weak is False
+    assert group.untrusted_source_id == ids["source"]
+    assert group.write_chains == [[ids["upload"], ids["store"]]]
+    assert group.read_chains == [[ids["source"], ids["read"], ids["sink"]]]
+
+    scored = store.query.prioritize_chain_groups(groups)
+
+    assert [g.score for g in scored] == [3.0]
+    assert (
+        scored[0].score_components["user_writable_source"]
+        == SCORE_USER_WRITABLE_SOURCE
+    )
 
 
 def test_find_chain_groups_with_the_dynamic_invocation_edge(

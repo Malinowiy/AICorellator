@@ -11,13 +11,13 @@ scope and a reader elsewhere is not. The rule itself is
 this file pins is that the site **this detector reports** is the shape
 that rule reads, and what the pipeline holds today.
 
-End to end the attribution is **inert**, and the last test asserts the
-status rather than bending the fixture: `user_upload` is a read *role*,
-1.3a has no `open(...)` source type, so a scan of a pure `fs` fixture
-produces no `untrusted_source` node for the reader at all and
-`attribute_source_type` has nothing to stamp. That is the state
-B.3b-user_upload-attribution recorded; writing a source node into the
-fixture would prove the wiring and lie about the pipeline.
+End to end the read side is produced since
+B.3b-user_upload-attribution: the reader in the view's own file is in the
+site's scope, so the scan creates the `user_upload` source and the links
+that name it — the store's `reads_from` and the source's
+`has_access_to` to the `GET /read` entry point. The last test asserts
+that state; the rule itself is pinned in
+`tests/test_store_upload_core/test_attribution.py`.
 """
 
 from __future__ import annotations
@@ -30,6 +30,12 @@ from aicorellator.ingestion import discover, ingest
 from aicorellator.parsing import make_context, normalize, run_tsa
 from aicorellator.parsing.ast_normalizer import GraphDelta
 from aicorellator.parsing.entry_points import run as run_entry_points
+from aicorellator.store.confidence import (
+    BASE,
+    CODE_CONTEXT_SAME_MODULE,
+    LITERAL_EQUAL,
+    combine_signals,
+)
 from aicorellator.store.context.upload.attribution import (
     SOURCE_TYPE,
     attribute_source_type,
@@ -39,6 +45,10 @@ from aicorellator.store.context.upload.context import UserUploadContext
 MAIN = "app/views.py"
 OTHER = "app/worker.py"
 LITERAL = "/uploads/report.txt"
+
+#: The `with open(..., "rb")` line in `FILES`: the source node's
+#: `line_start` and the read site's line.
+READ_LINE = 18
 
 FILES: dict[str, str] = {
     MAIN: '''\
@@ -198,29 +208,51 @@ def test_with_no_site_nothing_is_attributed(tmp_path: Path) -> None:
 
 
 # ============================================================
-# A1 — what the pipeline holds today (inert end to end)
+# A1 — the pipeline's own read side
 # ============================================================
 
-def test_the_pipeline_stamps_no_role_on_a_pure_fs_fixture(
-    tmp_path: Path,
-) -> None:
-    """A1 end to end: the write side works, the read side has nothing.
+def test_the_pipeline_builds_the_source_and_its_links(tmp_path: Path) -> None:
+    """A1 end to end: the view's read is a `user_upload` source.
 
-    The upload edge is there (E1) and the reader in the same file is in
-    the site's scope — but a filesystem read is not one of 1.3a's source
-    types, so the scan builds no `untrusted_source` node for it and
-    `attribute_source_type` has nothing to stamp. The test asserts that
-    state; the rule is pinned on nodes that exist, above and in
-    `test_store_upload_core`.
+    The reader is in the site's own file, so the scan creates the source
+    (B.3b-user_upload-attribution, ADR-0022 §1), links the store the view
+    wrote to, and hangs the source off the `GET /read` entry point — the
+    read's enclosing function is that route's handler.
+
+    The reader's link is §8's reader side: base 0.3, an equal literal and
+    the same module — `1 − 0.7 × 0.4 × 0.8 = 0.776`.
     """
     delta = _scan(tmp_path, FILES)
 
     sources = [
         node for node in delta.nodes if node.kind == "untrusted_source"
     ]
-    assert sources == []
-    assert [edge for edge in delta.edges if edge.kind == "reads_from"] == []
-    assert [
+    assert [node.name for node in sources] == ["user_upload:open"]
+    source = sources[0]
+    assert source.attributes["source_type"] == SOURCE_TYPE == "user_upload"
+    assert source.attributes["call_target"] == "open"
+    assert source.attributes["source_file"] == MAIN
+    assert source.attributes["line_start"] == READ_LINE
+    assert source.attributes["reader_kind"] == "function"
+    assert source.attributes["reader"] == "read_report"
+
+    store = next(node for node in delta.nodes if node.kind == "store")
+    reads_from = [edge for edge in delta.edges if edge.kind == "reads_from"]
+    assert [(edge.source_id, edge.target_id) for edge in reads_from] == [
+        (store.id, source.id)
+    ]
+    assert round(reads_from[0].identity_confidence, 4) == 0.776
+    assert round(
+        combine_signals(BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]), 4
+    ) == 0.776
+
+    readers = [
         node for node in delta.nodes
-        if node.attributes.get("source_type") == "user_upload"
-    ] == []
+        if node.kind == "entry_point"
+        and node.attributes.get("handler") == "read_report"
+    ]
+    access = [
+        edge for edge in delta.edges
+        if edge.kind == "has_access_to" and edge.source_id == source.id
+    ]
+    assert [edge.target_id for edge in access] == [readers[0].id]

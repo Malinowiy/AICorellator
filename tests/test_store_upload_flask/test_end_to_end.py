@@ -23,11 +23,11 @@ UPLOAD_WRITER_BASE, [equal literal, same module, context in body])` =
 **0.872** — base 0.5 (the view accepts an upload), an equal literal, the
 same module, and the write in the handler's own body.
 
-What is **not** pinned as working is the attribution: `user_upload` is a
-read *role*, and 1.3a has no `open(...)` source type, so a scan of this
-fixture produces no `untrusted_source` node for the reader at all. The
-state is asserted in `test_attribution.py`, and the rule itself is pinned
-in `tests/test_store_upload_core/test_attribution.py`.
+The read side is pinned since B.3b-user_upload-attribution: the second
+view reads the same literal in the writer's own file, so the scan creates
+a `user_upload` source for it (ADR-0022 §1) and links the store to it
+with `reads_from`. `test_attribution.py` asserts that state, and the rule
+itself is pinned in `tests/test_store_upload_core/test_attribution.py`.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from aicorellator.parsing.capability_extractor import (
 )
 from aicorellator.parsing.entry_points import run as run_entry_points
 from aicorellator.store.confidence import (
+    BASE,
     CODE_CONTEXT_SAME_MODULE,
     LITERAL_EQUAL,
     combine_signals,
@@ -61,6 +62,10 @@ LITERAL = "/uploads/report.txt"
 #: The view's `def` line — `FunctionDef.lineno`, and therefore
 #: `UploadSite.line` — in the first two fixtures below.
 UPLOAD_LINE = 8
+
+#: The `with open(..., "rb")` line in `FILES`: the source node's
+#: `line_start` and the read site's line.
+READ_LINE = 19
 
 FILES: dict[str, str] = {
     MAIN: '''\
@@ -334,25 +339,49 @@ def test_the_store_is_the_one_the_family_named(delta) -> None:
     assert stores[0].confidence == 1.0
 
 
-def test_the_read_view_gets_no_edge_and_no_role(delta) -> None:
-    """The reader in the same file: the write side, nothing else.
+def test_the_read_view_gets_its_source_and_links(delta) -> None:
+    """The reader in the same file: a `user_upload` source and its links.
 
-    A filesystem read is not one of 1.3a's source types, so the reader has
-    no `untrusted_source` node — and giving a read its role is the read
-    side's step (B.3). There is therefore nothing for
-    `attribute_source_type` to stamp, which is the documented reason the
-    attribution is inert end to end; the rule itself is pinned in
-    `tests/test_store_upload_core/test_attribution.py` and the site's
-    scope in `test_attribution.py`.
+    The second view reads the literal the first view wrote, so the read
+    site is a `user_upload` source (B.3b-user_upload-attribution,
+    ADR-0022 §1): the scan creates the node, the store gets `reads_from`
+    to it, and the source gets 1.3a's `has_access_to` edge to the reader —
+    the `GET /read` entry point, resolved by the handler name.
+
+    The reader's link is §8's reader side: base 0.3, an equal literal and
+    the same module — `1 − 0.7 × 0.4 × 0.8 = 0.776`.
     """
-    assert [e for e in delta.edges if e.kind == "reads_from"] == []
-    assert [
-        node for node in delta.nodes if node.kind == "untrusted_source"
-    ] == []
-    assert [
+    store = _of_kind(delta, "store")[0]
+    sources = _of_kind(delta, "untrusted_source")
+    assert [node.name for node in sources] == ["user_upload:open"]
+    source = sources[0]
+    assert source.attributes == {
+        "source_type": "user_upload",
+        "call_target": "open",
+        "source_file": MAIN,
+        "line_start": READ_LINE,
+        "reader_kind": "function",
+        "reader": "read_report",
+    }
+
+    reads_from = [e for e in delta.edges if e.kind == "reads_from"]
+    assert [(e.source_id, e.target_id) for e in reads_from] == [
+        (store.id, source.id)
+    ]
+    assert round(reads_from[0].identity_confidence, 4) == 0.776
+    assert round(
+        combine_signals(BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]), 4
+    ) == 0.776
+    assert not [
         node for node in delta.nodes
-        if node.attributes.get("source_type") == "user_upload"
-    ] == []
+        if node.attributes.get("parent_server") is not None
+    ]
+
+    access = [
+        e for e in delta.edges
+        if e.kind == "has_access_to" and e.source_id == source.id
+    ]
+    assert [e.target_id for e in access] == [_entry(delta, "GET /read").id]
 
 
 # ============================================================

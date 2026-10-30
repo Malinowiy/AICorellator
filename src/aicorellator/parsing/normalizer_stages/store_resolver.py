@@ -16,15 +16,18 @@ shape a second family reuses.
 B.3b-user_upload-core adds a second step to the same seam, after the
 resolver's own edges are in: the **upload context**. ADR-0021 §8
 (revision 2) makes an entry-point handler that accepts an upload a
-context-based writer, and the step is three calls —
+context-based writer, and the step is four calls —
 `UserUploadContext.identify` over the files that have entry points,
-`writer.find_upload_stores` for the `writes_to` edges, and
+`writer.find_upload_stores` for the `writes_to` edges,
 `attribution.attribute_source_type` for the `source_type` on the read
-sites in a writer's scope. Its detector registry holds **two names**
-today — `fastapi` (B.3b-user_upload-fastapi) and `streamlit`
-(B.3b-user_upload-streamlit) — so the step identifies an upload wherever
-one of them recognizes an entry point, and stays a no-op on the files it
-does not.
+sites in a writer's scope, and — since B.3b-user_upload-attribution — the
+`untrusted_source` nodes and the `reads_from` / `has_access_to` edges
+that pass creates (ADR-0022). Its detector registry holds **four names**
+today — `fastapi` (B.3b-user_upload-fastapi), `streamlit`
+(B.3b-user_upload-streamlit), `django` (B.3b-user_upload-django) and
+`flask` (B.3b-user_upload-flask) — so the step identifies an upload
+wherever one of them recognizes an entry point, and stays a no-op on the
+files it does not.
 
 Why the context is called from the stage and not from the resolver: the
 resolver's job is pairing a write site with a read site, and the upload
@@ -76,7 +79,7 @@ from ...store.context.upload.attribution import attribute_source_type
 from ...store.context.upload.base import UploadSite
 from ...store.context.upload.context import UserUploadContext
 from ...store.context.upload.writer import FS_FAMILY, find_upload_stores
-from ...store.families.base import WriteSite
+from ...store.families.base import ReadSite, WriteSite
 from ...store.registry import resolve as resolve_families
 from ...store.resolver import StoreResolver
 from ..normalizer_context import NormalizeContext
@@ -137,25 +140,27 @@ class StoreResolverStage:
     ) -> None:
         """`entry_point → store` for the handlers that accept an upload.
 
-        Three calls, in the order the brief names them: identify the
+        Four calls, in the order the brief names them: identify the
         uploads, find the stores each writer reaches, attribute the read
-        sites in the writers' scope. With no upload site the first call
-        returns nothing and the step stops there — before the `fs`
-        family is asked for its write sites, so the no-op costs a delta
+        sites in the writers' scope — which is where the sources 1.3a did
+        not build are created and the store's `reads_from` and the
+        source's `has_access_to` are emitted. With no upload site the
+        first call returns nothing and the step stops there — before the
+        `fs` family is asked for its sites, so the no-op costs a delta
         scan and no parse.
 
-        `attribute_source_type` runs on the sites alone and not on the
-        edges found: accepting an upload is what makes the reads in a
-        handler's scope upload reads, and a handler whose stores this
-        scan did not recognize is still an upload handler.
+        The nodes the attribution created are appended here and not by it
+        (`_merge_nodes`): a node the pass only *stamped* is already in the
+        delta, and appending it again would put one node in the list
+        twice.
         """
         sites = self._upload_sites(delta, ctx)
         if not sites:
             return
 
-        fs_writes = _fs_write_sites(ctx)
+        fs_writes, fs_reads = _fs_sites(ctx)
         store_nodes = [node for node in delta.nodes if node.kind == "store"]
-        modules = _modules_for(ctx, sites, fs_writes)
+        modules = _modules_for(ctx, sites, fs_writes, fs_reads)
 
         _merge_edges(delta, find_upload_stores(
             delta=delta,
@@ -165,11 +170,14 @@ class StoreResolverStage:
             store_nodes=store_nodes,
             modules=modules,
         ))
-        attribute_source_type(
+        _merge_nodes(delta, attribute_source_type(
             delta=delta,
             upload_sites=sites,
             imports_by_file=ctx.entry_points.imports,
-        )
+            fs_reads=fs_reads,
+            stores=store_nodes,
+            modules=modules,
+        ))
 
     def _upload_sites(
         self, delta: "GraphDelta", ctx: NormalizeContext
@@ -231,6 +239,25 @@ def _merge_edges(delta: "GraphDelta", edges: list[Edge]) -> None:
             delta.edges[position] = edge
 
 
+def _merge_nodes(delta: "GraphDelta", nodes: list["Node"]) -> None:
+    """Append the nodes the delta does not already hold, by id.
+
+    The attribution returns the nodes it gave the role to, and only the
+    ones it *created* are new: a stamped node is already in the delta, so
+    appending it again would put one node in the list twice and the
+    repository's primary key would reject the second row. The id is the
+    graph's primary key, so this is the same discipline `_merge_edges`
+    applies to an edge, minus the confidence comparison — two nodes with
+    one id are one node, and the delta's copy is the one already there.
+    """
+    existing = {node.id for node in delta.nodes}
+    for node in nodes:
+        if node.id in existing:
+            continue
+        existing.add(node.id)
+        delta.nodes.append(node)
+
+
 def _entry_nodes_by_file(
     delta: "GraphDelta",
 ) -> dict[str, list["Node"]]:
@@ -253,23 +280,31 @@ def _entry_nodes_by_file(
     return index
 
 
-def _fs_write_sites(ctx: NormalizeContext) -> list[WriteSite]:
-    """The `fs` family's write sites, over the scan's Python files.
+def _fs_sites(
+    ctx: NormalizeContext,
+) -> tuple[list[WriteSite], list[ReadSite]]:
+    """The `fs` family's write and read sites, over the scan's files.
 
     The resolver runs the same pass for its own edges
-    (`StoreResolver._sites`) and does not hand its sites out, and
-    B.3b-user_upload-core does not change the resolver, so this is the
-    stage's own copy of the loop: the family from the registry, the
-    manifest's Python files, and `ctx.module_for` — already parsed by the
-    resolver in the same scan, so this costs the detection and not a
-    second parse. The duplication is the seam's price, and the fix, when
-    it is wanted, is one line in `StoreResolver` remembering the sites it
-    collected.
+    (`StoreResolver._sites`) and does not hand its sites out, and the
+    upload step does not change the resolver, so this is the stage's own
+    copy of the loop: the family from the registry, the manifest's Python
+    files, and `ctx.module_for` — already parsed by the resolver in the
+    same scan, so this costs the detection and not a second parse. The
+    duplication is the seam's price, and the fix, when it is wanted, is
+    one line in `StoreResolver` remembering the sites it collected.
+
+    Both directions come out of one loop because both are read off the
+    same module (`FsFamily` walks it once per `detect_*` call) and both
+    are needed together: the writer links an entry point to the stores
+    the *writes* name, and the attribution links those stores to the
+    sources the *reads* name (B.3b-user_upload-attribution).
 
     A family that raises is logged and contributes nothing (ADR-0011's
     rule, the same one `StoreResolver._detect` applies).
     """
     writes: list[WriteSite] = []
+    reads: list[ReadSite] = []
     for family in resolve_families([FS_FAMILY]):
         for entry in ctx.manifest.files:
             if entry.language != "python":
@@ -279,29 +314,35 @@ def _fs_write_sites(ctx: NormalizeContext) -> list[WriteSite]:
                 continue
             try:
                 writes.extend(family.detect_writes(module, entry.path))
+                reads.extend(family.detect_reads(module, entry.path))
             except Exception:
                 log.exception(
                     "store family %s failed on %s", family.name, entry.path,
                 )
-    return writes
+    return writes, reads
 
 
 def _modules_for(
     ctx: NormalizeContext,
     sites: list[UploadSite],
     fs_writes: list[WriteSite],
+    fs_reads: list[ReadSite],
 ) -> dict[str, ast.Module]:
-    """The parsed modules the writer needs, keyed by path.
+    """The parsed modules the writer and the attribution need, by path.
 
     The writer reads one thing out of a file: which function a write call
-    lives in (`writer._enclosing_functions`). The files it needs are
-    therefore the entry points' files and the write sites' files — both
-    already parsed in this scan, by the identify pass and by
-    `_fs_write_sites` — and nothing else is offered to it, so a scan with
-    an upload in one file does not hand over the whole target.
+    lives in (`writer._enclosing_functions`). The attribution reads one
+    thing out of a file: which definition a read call lives in
+    (`attribution._enclosing_symbol`, and therefore the source node's
+    `reader_kind` and its reader). The files they need are therefore the
+    entry points' files and the sites' files — all already parsed in this
+    scan, by the identify pass and by `_fs_sites` — and nothing else is
+    offered, so a scan with an upload in one file does not hand over the
+    whole target.
     """
     needed = {site.file_path for site in sites}
     needed.update(write.file_path for write in fs_writes)
+    needed.update(read.file_path for read in fs_reads)
     modules: dict[str, ast.Module] = {}
     for file_path in needed:
         module = ctx.module_for(file_path)
