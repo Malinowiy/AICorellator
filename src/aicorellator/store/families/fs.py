@@ -63,8 +63,9 @@ What the family does not do, and why:
     matches, and names the directory the chain started from.
   - **It does not decide the role of a read.** `ReadSite.source_type`
     stays `None`: a read's semantic role (`user_upload`, `rag_corpus`)
-    is the context's business (§1, B.3b-user_upload), and the resolver
-    finds the `untrusted_source` a read belongs to by its call site.
+    is the context's business (§1, B.3b-user_upload-core), and the
+    resolver finds the `untrusted_source` a read belongs to by its call
+    site.
 
 The sites come back in source order (line, then column), so a family's
 report is a property of the code and not of `ast.walk`'s breadth-first
@@ -114,8 +115,8 @@ class FsFamily(Family):
     ) -> list[WriteSite]:
         """The calls in one module that write into a file-system store.
 
-        `context` is accepted and unused: B.3b-user_upload is the first
-        family with a context to read.
+        `context` is accepted and unused: B.3b-user_upload-core is the
+        first family with a context to read.
         """
         return [
             WriteSite(

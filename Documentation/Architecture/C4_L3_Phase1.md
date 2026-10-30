@@ -36,7 +36,7 @@ flowchart TB
         EP[Entry Points Detector<br/>routes, call sites,<br/>call graph]
         LLMX[LLM Extractor<br/>config + env parsing]
         FLOW["flow/ package<br/>arguments, edge_analyzer,<br/>sink_analyzer, tool_analyzer"]
-        NORM["AST Normalizer<br/>19 stages (normalizer_stages/)"]
+        NORM["AST Normalizer<br/>20 stages (normalizer_stages/)"]
         WRITE[Graph Writer]
         FLAG[Flag Setter<br/>phase1_done]
     end
@@ -296,9 +296,9 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 - `GraphDelta.edges: list[Edge]`
 - `make_context(manifest, tsa_output, entry_points=None, llm_output=None, capabilities=None, framework_detection=None, host_id="localhost") -> NormalizeContext`
 
-`normalize` is a 135-line loop over `STAGES`; the work is in 19 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
+`normalize` is a 135-line loop over `STAGES`; the work is in 20 `NormalizerStage` objects. `NormalizeContext` holds the inputs, the per-scan caches (`module_cache`, `functions_cache`, `classes_cache`), and the derived indexes (`mcp_servers`, `tools_by_file`, `sinks_by_file`, `entry_node_by_handler`, `agent_node_by_name`, `agent_node_by_file`). No shim for the pre-repair signature.
 
-**The 19 stages, in order:**
+**The 20 stages, in order:**
 
 | # | Stage | Responsibility |
 |---|---|---|
@@ -320,7 +320,8 @@ The edge takes the strongest result across all arguments (non-linear ranking): a
 | 16 | `orphan_entry` | `delegates_to` from entry points with no outgoing delegation edge to the single framework agent (ADR-0013, Resolver 2). |
 | 17 | `body_attributes` | Backfill `sink_data_flow` and `returns_data` after the detector merge. Runs last because `detector_merge` may replace a TSA node and drop its body attributes; the guard (`"returns_data" not in attributes`) is the same one the pre-repair inline pass used. |
 | 18 | `lethal_trifecta` | `lethal_trifecta` node attribute (1.3d, ADR-0009): the node reads untrusted input, holds secrets and can get data out. Written on every node, `True` or `False`, recomputed from capabilities rather than source, which is why it is not a branch inside `body_attributes`. |
-| 19 | `guardrail_edges` | `guards` — `guardrail → component` from source evidence only (B.4a, ADR-0019): a call site through the call graph, or a `@guardrail(...)` decorator. **Not** emitted on co-location, and not for a guardrail wired in by DI, a framework hook or a `self.`-call. `structural` with `observed_by = ["ast"]` and no `data_flow_confirmed`; not traversed by `find_chains`. **Must run after `detector_merge`** (a framework detector or the LLM classifier can produce the `guardrail` node, and the merge is what puts it in the delta). |
+| 19 | `store_resolver` | `store` nodes, `writes_to` and `reads_from` (B.3b, ADR-0021 §12) — one call to `StoreResolver`, which pairs a family's write call site with its read call site through the store the two sides share: `family` is the technology and `identity_hint` the literal the site named, one node per `(family, identity_hint)` (§1), and `writer → store` `writes_to` plus `store → untrusted_source` `reads_from` carry §8's `identity_confidence` — both `structural` (§4), because they are declarations and not paths. A registry with no family yields no store edge rather than a special case. The same seam then runs the **upload context** (B.3b-user_upload-core, ADR-0021 §8 revision 2): `UserUploadContext.identify`, `find_upload_stores` and `attribute_source_type` make an entry-point handler that accepts an upload a context-based writer, its stores at base confidence 0.5 instead of 0.3, and stamp `source_type = "user_upload"` on the read sites in the writer's scope. `find_chain_groups` joins write and read chains on the store id (§6). **Must run after `detector_merge`** — the resolver resolves both ends against the delta (the component a write lives in, the `untrusted_source` a read belongs to) and the upload step reads the `entry_point` and `store` nodes the stages before it made; `flow_kind` (stage 12) is not a constraint, because the resolver classifies its own edges. See the invariants below. |
+| 20 | `guardrail_edges` | `guards` — `guardrail → component` from source evidence only (B.4a, ADR-0019): a call site through the call graph, or a `@guardrail(...)` decorator. **Not** emitted on co-location, and not for a guardrail wired in by DI, a framework hook or a `self.`-call. `structural` with `observed_by = ["ast"]` and no `data_flow_confirmed`; not traversed by `find_chains`. **Must run after `detector_merge`** (a framework detector or the LLM classifier can produce the `guardrail` node, and the merge is what puts it in the delta). |
 
 **Key invariants:**
 

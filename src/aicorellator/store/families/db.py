@@ -208,8 +208,8 @@ class DbFamily(Family):
     ) -> list[WriteSite]:
         """The calls in one module that write into a database store.
 
-        `context` is accepted and unused: B.3b-user_upload is the first
-        family with a context to read.
+        `context` is accepted and unused: B.3b-user_upload-core is the
+        first family with a context to read.
         """
         return [
             WriteSite(

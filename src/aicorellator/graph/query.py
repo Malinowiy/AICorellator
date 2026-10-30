@@ -724,16 +724,18 @@ class QueryLayer:
         would double-count the channel. The first hop of every read
         chain is the `source → reader` edge 1.3a emits.
 
-        **The write side has no producer yet.** Write chains are
-        whatever the graph contains: this method walks the edges that
-        point at S, in reverse, and reports the paths that start at an
-        entry point. Nothing in 1.3a emits `writer → source` edges — it
-        emits `source → reader` only — so on today's graphs the write
-        side is empty and this returns no groups. The enumerator is
-        complete regardless: it reads the graph, it does not produce
-        edges, exactly like `find_chains`. Landing the write side is
-        1.3a.1, and it is a *detection* question — which source node
-        does a writer write into? — not an enumeration one.
+        **The write side is whatever the graph contains.** Write chains
+        are what the edges say: this method walks the edges that point
+        at S, in reverse, and reports the paths that start at an entry
+        point. 1.3a emitted `source → reader` only; B.2 added the first
+        `writer → source` edges, and B.3c — with B.3b-mcp-catalogue —
+        retargeted every one of them to a store, so a source-anchored
+        walk finds no write chain on a scanned graph and the store path
+        below is where the groups come from. The enumerator is complete
+        regardless: it reads the graph, it does not produce edges,
+        exactly like `find_chains` — which writer writes into which
+        source was a *detection* question (1.3a.1, B.2), not an
+        enumeration one.
 
         **The store path (ADR-0021 §6).** A second enumeration joins the
         same two sides through a `store`: write chains end at the store,
@@ -746,9 +748,15 @@ class QueryLayer:
         below `store_confidence_threshold` is **weak**: reported with
         `weak = True` only when `include_weak` asks for it, and never
         below `WEAK_JOIN_FLOOR`, which is where §9 says there is no link
-        at all. B.3a declares this shape and produces none of its edges,
-        so on today's graphs it is a no-op; the B.2-shaped path below
-        still enumerates, and B.3c replaces it.
+        at all. B.3a declared this shape and produced none of its edges;
+        B.3b's families and B.3c's migration are what produce them, so
+        this is the join that yields groups today. The source-anchored
+        join is **unchanged** and still runs: B.3c moved the write side
+        onto the store model, so a writer's `writes_to` ends at a store
+        rather than at the source, and the join by `writes_to →
+        untrusted_source` stays the shape it enumerates. It finds no
+        write chain on a graph whose writers all target stores, which is
+        why the two joins coexist instead of one replacing the other.
 
         Deterministic and bounded: no LLM, ids derived from content,
         groups ordered by source id, then write chain id, then read
@@ -835,9 +843,10 @@ class QueryLayer:
         # and appended to them: the two joins are different claims (one
         # shares a source, the other shares a store) and their ids differ,
         # so a source reachable both ways yields two groups rather than
-        # one deduplicated group — B.3c removes the first path and leaves
-        # only this one. Appending keeps today's output stable while the
-        # store graph is empty.
+        # one deduplicated group. Both joins stay — B.3c migrated the
+        # write side onto the store model and did not remove the
+        # source-anchored one, which is where a `writes_to` onto the
+        # source itself is still read.
         groups.extend(
             self._store_chain_groups(
                 entry_ids=entry_ids,

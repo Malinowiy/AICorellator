@@ -55,8 +55,8 @@ What the family does not do, and why:
     — and this family reads only its own.
   - **It does not decide the role of a read.** `ReadSite.source_type`
     stays `None`: the role of a read (`user_upload`, `rag_corpus`) is
-    the context's business (§1, B.3b-user_upload), and this family has
-    no context to read.
+    the context's business (§1, B.3b-user_upload-core), and this family
+    has no context to read.
 
 **Not this family**, deliberately: `head_object` (metadata, not
 content), `list_objects_v2` / `list_objects` (enumeration, not a read),
@@ -149,9 +149,9 @@ class S3Family(Family):
     ) -> list[WriteSite]:
         """The calls in one module that write an S3 object.
 
-        `context` is accepted and unused: B.3b-user_upload is the first
-        family with a context to read, and an S3 store's identity is
-        the literal the call carries.
+        `context` is accepted and unused: B.3b-user_upload-core is the
+        first family with a context to read, and an S3 store's identity
+        is the literal the call carries.
         """
         return [
             WriteSite(

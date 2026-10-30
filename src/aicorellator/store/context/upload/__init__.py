@@ -10,14 +10,15 @@ pieces:
     detector implements (ADR-0011's shape), and the value it returns.
   - `registry` — `UPLOAD_DETECTORS`, the detectors a scan has. Empty
     until a detector is imported (B.3b-user_upload-core's contract), and
-    two names in it today: `fastapi` (B.3b-user_upload-fastapi) and
-    `streamlit` (B.3b-user_upload-streamlit). A detector nobody imports
-    does not run, so the registry holds what the tree shipped, not what
-    it could do.
-  - `detectors` — the framework modules, one per framework: `fastapi`
-    and `streamlit` today, `django` and `flask` in later steps.
-    Importing the package registers them; it is imported below, so
-    importing the upload context is enough.
+    four names in it today: `fastapi` (B.3b-user_upload-fastapi),
+    `streamlit` (B.3b-user_upload-streamlit), `django`
+    (B.3b-user_upload-django) and `flask` (B.3b-user_upload-flask). A
+    detector nobody imports does not run, so the registry holds what the
+    tree shipped, not what it could do.
+  - `detectors` — the framework modules, one per framework: `fastapi`,
+    `streamlit`, `django` and `flask` are registered here. Importing the
+    package registers them; it is imported below, so importing the
+    upload context is enough.
   - `context` — `UserUploadContext`, which runs the detectors over one
     file and merges what they report.
   - `writer` — `find_upload_stores`: the BFS from a handler to the `fs`

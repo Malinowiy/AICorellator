@@ -10,10 +10,11 @@ B.3b-user_upload-core's contract: `UPLOAD_DETECTORS` starts as a plain
 dict, `UserUploadContext.identify` then finds no detector, no
 `UploadSite` is identified, and the writer emits nothing — every scan
 still runs the context step, and the step is a no-op with no branch for
-it. The tree ships two names today: `fastapi` (B.3b-user_upload-fastapi)
-and `streamlit` (B.3b-user_upload-streamlit), both registered by the line
-in `detectors/__init__.py`, so a detector nobody imports does not run
-(the same rule the family registry follows).
+it. The tree ships four names today: `fastapi` (B.3b-user_upload-fastapi),
+`streamlit` (B.3b-user_upload-streamlit), `django`
+(B.3b-user_upload-django) and `flask` (B.3b-user_upload-flask), all
+registered by the lines in `detectors/__init__.py`, so a detector nobody
+imports does not run (the same rule the family registry follows).
 
 This registry is **separate** from `store.registry.FAMILIES`, and the
 separation is the point: a family is a store technology, a detector is a
