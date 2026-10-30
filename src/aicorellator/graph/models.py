@@ -325,8 +325,9 @@ class ChainGroupRecord:
     only structure. This one carries what the table carries — the
     prioritization results 1.3c writes (`score`, `score_components`,
     `priority`) and the evaluation results 1.3d/1.3e will write
-    (`lethal_trifecta`, `verdict`, `confidence`, `reasoning`,
-    `validated`). Two types rather than one because they have two
+    (`lethal_trifecta`, `verdict`, `confidence`, `reasoning`, B.7's
+    `voter_outputs` / `prompt_version`, `validated`, and A.4's
+    `validated_kind`). Two types rather than one because they have two
     owners and two lifetimes; `query.ChainGroup.to_record()` is the
     one-way bridge (a stored row never becomes an enumeration result).
     """
@@ -342,6 +343,13 @@ class ChainGroupRecord:
     verdict: str | None = None
     confidence: float = 0.0
     reasoning: str | None = None
+    # B.7: the verdict's provenance, the two columns `Chain` has had
+    # since Phase 0. `''` and `[]` mean "not computed" — a row 1.3e has
+    # not reached — which is why they default rather than being required
+    # the way `Chain.prompt_version` is (a chain row exists only once it
+    # was evaluated).
+    voter_outputs: list[dict[str, Any]] = field(default_factory=list)
+    prompt_version: str = ""
     validated: bool = False
     validated_kind: str | None = None
     priority: str | None = None
@@ -354,6 +362,7 @@ class ChainGroupRecord:
         row["write_chain_ids"] = json.dumps(self.write_chain_ids)
         row["read_chain_ids"] = json.dumps(self.read_chain_ids)
         row["score_components"] = json.dumps(self.score_components)
+        row["voter_outputs"] = json.dumps(self.voter_outputs)
         row["lethal_trifecta"] = 1 if self.lethal_trifecta else 0
         row["validated"] = 1 if self.validated else 0
         return row
@@ -372,6 +381,8 @@ class ChainGroupRecord:
             verdict=row["verdict"],
             confidence=row["confidence"],
             reasoning=row["reasoning"],
+            voter_outputs=json.loads(row["voter_outputs"] or "[]"),
+            prompt_version=row["prompt_version"] or "",
             validated=bool(row["validated"]),
             validated_kind=row["validated_kind"] or "existence",
             priority=row["priority"],

@@ -332,3 +332,43 @@ def test_confidence_clamped(store: GraphStore) -> None:
             VALUES ('n:bad', 'agent', 'x', 'localhost', 1.5)
             """
         )
+
+
+def test_chain_groups_carries_the_provenance_columns(
+    store: GraphStore,
+) -> None:
+    """B.7: the two columns a group verdict is traced by.
+
+    `PRAGMA table_info` rather than a round-trip through the repository
+    (`test_chain_groups_repository.py` covers that): what this pins is
+    the table the schema builds — the columns are there, neither is
+    nullable, and both default to the "not computed" value `chains`
+    spells them with.
+    """
+    columns = {
+        row["name"]: row
+        for row in store._conn.execute("PRAGMA table_info(chain_groups)")
+    }
+
+    assert columns["prompt_version"]["notnull"] == 1
+    assert columns["prompt_version"]["dflt_value"] == "''"
+    assert columns["voter_outputs"]["notnull"] == 1
+    assert columns["voter_outputs"]["dflt_value"] == "'[]'"
+
+
+def test_chain_groups_voter_outputs_must_be_json(store: GraphStore) -> None:
+    """`json_valid(voter_outputs)` is a CHECK, copied from `chains` (B.7)."""
+    store.nodes.add(Node(
+        id="untrusted_source:1",
+        kind="untrusted_source",
+        name="rag_corpus:catalogue.list",
+        host_id="localhost",
+        attributes={"source_type": "rag_corpus"},
+    ))
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute(
+            """
+            INSERT INTO chain_groups (id, untrusted_source_id, voter_outputs)
+            VALUES ('chain_group:1', 'untrusted_source:1', 'not json')
+            """
+        )

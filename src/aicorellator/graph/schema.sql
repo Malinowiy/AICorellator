@@ -335,6 +335,14 @@ CREATE INDEX IF NOT EXISTS idx_chains_prompt_version ON chains(prompt_version);
 -- between the two tables) but not to this path: the group's own
 -- check already folds the voters' citations in, so a group never
 -- writes 'evidence'. The group path is B.4b's, unchanged.
+--
+-- voter_outputs / prompt_version are B.7: the two provenance columns
+-- `chains` has carried since Phase 0, so a group verdict is traceable
+-- to the prompt that produced it and to the voter responses it was
+-- aggregated from (ADR-0005, ADR-0006). 1.3e writes them with the
+-- verdict; `'[]'` / `''` on a row 1.3e has not reached means "not
+-- computed" — the same convention `validated_kind`'s NULL uses, spelled
+-- with the NOT NULL defaults `chains` already spells it with.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chain_groups (
@@ -349,6 +357,8 @@ CREATE TABLE IF NOT EXISTS chain_groups (
     verdict             TEXT,
     confidence          REAL NOT NULL DEFAULT 0.0,
     reasoning           TEXT,
+    voter_outputs       JSON NOT NULL DEFAULT '[]',
+    prompt_version      TEXT NOT NULL DEFAULT '',
     validated           INTEGER NOT NULL DEFAULT 0,
     validated_kind      TEXT,
     priority            TEXT,
@@ -370,7 +380,8 @@ CREATE TABLE IF NOT EXISTS chain_groups (
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(write_chain_ids)),
     CHECK (json_valid(read_chain_ids)),
-    CHECK (json_valid(score_components))
+    CHECK (json_valid(score_components)),
+    CHECK (json_valid(voter_outputs))
 );
 
 CREATE INDEX IF NOT EXISTS idx_chain_groups_source
@@ -537,6 +548,15 @@ VALUES (2, 'Phase 2: capabilities + chain_groups');
 -- derived state, ADR-0006) is how an existing workspace picks this up.
 INSERT OR IGNORE INTO schema_version (version, description)
 VALUES (3, 'B.3a: store node, reads_from edge, identity_confidence');
+
+-- Version 4 is B.7's two `chain_groups` provenance columns. No ALTER is
+-- issued for an existing database: the same rule B.3a states above
+-- applies — the graph is derived state (ADR-0003) and is rebuilt per
+-- scan, so `run_scan.py --clean` is how a workspace picks the columns
+-- up. A database that is not rebuilt keeps the old `chain_groups` shape
+-- until then.
+INSERT OR IGNORE INTO schema_version (version, description)
+VALUES (4, 'B.7: chain_groups prompt_version + voter_outputs');
 
 -- ============================================================
 -- End of schema

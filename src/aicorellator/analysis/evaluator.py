@@ -341,6 +341,14 @@ def _evaluate_one_group(
     +5. A group that was never evaluated keeps `False`: the projection
     is the evaluator's, the same "not computed" convention `validated`
     follows.
+
+    `prompt_version` / `voter_outputs` are B.7: the linear path has
+    written both to `chains` since Phase 0, and a group verdict is
+    traceable by the same two facts. The responses go through
+    `_voter_response_dict` with `group_edge_ids` — the same set Layer 3
+    below judges the citations against — so a group's `evidence_valid`
+    answers the same question a chain's does: was the cited edge one of
+    *this* candidate's.
     """
     payload, node_dicts, edge_dicts = _group_payload(store, group)
     user_prompt = build_group_prompt(group.group_id, payload)
@@ -442,6 +450,14 @@ def _evaluate_one_group(
         for chain in payload["read_chains"]
         for flag in chain["lethal_trifecta"].values()
     )
+    # B.7: the verdict's provenance. The same helper the linear path
+    # uses, with the group's own edge set as the set a citation is
+    # checked against — the set Layer 3 above already judged the same
+    # citations by, so the two never disagree.
+    record.prompt_version = PROMPT_VERSION
+    record.voter_outputs = [
+        _voter_response_dict(r, group_edge_ids) for r in voter_responses
+    ]
     return record
 
 

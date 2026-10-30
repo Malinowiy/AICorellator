@@ -61,6 +61,39 @@ def test_add_and_get(store: GraphStore, source: str) -> None:
     assert fetched.status == "active"
     assert fetched.lethal_trifecta is False
     assert fetched.validated is False
+    # B.7: the stored "not computed" pair, the same defaults `chains`
+    # carries — 1.3c writes neither column and must not have to.
+    assert fetched.prompt_version == ""
+    assert fetched.voter_outputs == []
+
+
+def test_the_provenance_columns_round_trip(
+    store: GraphStore,
+    source: str,
+) -> None:
+    """B.7: the prompt and the voter responses survive write and read.
+
+    `to_row` encodes `voter_outputs` as JSON, so this is also the check
+    that the column holds the shape `chains.voter_outputs` holds — a JSON
+    array of per-voter dicts — rather than a repr the reader would have
+    to parse back.
+    """
+    record = _record()
+    record.verdict = "exploitable"
+    record.prompt_version = "v1.6.0"
+    record.voter_outputs = [{
+        "model": "v0",
+        "confidence": 0.8,
+        "evidence": ["edge:" + "2" * 16],
+        "evidence_valid": True,
+        "evidence_unknown": [],
+    }]
+    store.chain_groups.add(record)
+
+    fetched = store.chain_groups.get(record.id)
+
+    assert fetched.prompt_version == "v1.6.0"
+    assert fetched.voter_outputs == record.voter_outputs
 
 
 def test_get_missing_is_none(store: GraphStore) -> None:
@@ -110,6 +143,8 @@ def test_upsert_leaves_the_evaluation_columns_alone(
         UPDATE chain_groups SET
             lethal_trifecta = 1, verdict = 'exploitable',
             confidence = 0.9, reasoning = 'the read side runs a shell',
+            voter_outputs = '[{"model": "v0", "confidence": 0.9}]',
+            prompt_version = 'v1.6.0',
             validated = 1
         WHERE id = :id
         """,
@@ -126,6 +161,11 @@ def test_upsert_leaves_the_evaluation_columns_alone(
     assert fetched.verdict == "exploitable"
     assert fetched.confidence == 0.9
     assert fetched.reasoning == "the read side runs a shell"
+    # B.7: the provenance travels with the verdict it belongs to, so a
+    # prioritization re-run cannot leave a verdict with no prompt and no
+    # responses behind it.
+    assert fetched.prompt_version == "v1.6.0"
+    assert fetched.voter_outputs == [{"model": "v0", "confidence": 0.9}]
     assert fetched.validated is True
 
 

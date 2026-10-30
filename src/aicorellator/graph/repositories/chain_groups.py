@@ -15,11 +15,16 @@ class only moves rows.
     `score_components`, `priority`, `status`. `upsert` refreshes
     exactly those, every time.
   - 1.3d/1.3e own the evaluation columns (`verdict`, `confidence`,
-    `reasoning`, `validated`, and A.4's `validated_kind`). `upsert`
-    writes them only when the incoming record carries a verdict, so
-    re-running prioritization over a graph cannot discard a verdict
-    that was already paid for, and 1.3e's post-evaluation write can
-    land on a row 1.3c created.
+    `reasoning`, B.7's `voter_outputs` / `prompt_version`, `validated`,
+    and A.4's `validated_kind`). `upsert` writes them only when the
+    incoming record carries a verdict, so re-running prioritization
+    over a graph cannot discard a verdict that was already paid for, and
+    1.3e's post-evaluation write can land on a row 1.3c created.
+    `voter_outputs` / `prompt_version` travel with the verdict for the
+    same reason `validated` does: they are what the verdict is traced by
+    — the prompt that produced it and the responses it was aggregated
+    from (ADR-0005, ADR-0006) — so a verdict without them is a verdict
+    without provenance.
   - `lethal_trifecta` is a projection, not a verdict: 1.3d writes the
     per-*node* attribute and `evaluator._evaluate_one_group` (B.6)
     projects the read side's flags onto the group row, so `add` writes
@@ -58,13 +63,15 @@ class ChainGroupsRepository:
             INSERT INTO chain_groups (
                 id, name, untrusted_source_id, write_chain_ids,
                 read_chain_ids, lethal_trifecta, score, score_components,
-                verdict, confidence, reasoning, validated, validated_kind,
-                priority, status, created_at, updated_at
+                verdict, confidence, reasoning, voter_outputs,
+                prompt_version, validated, validated_kind, priority,
+                status, created_at, updated_at
             ) VALUES (
                 :id, :name, :untrusted_source_id, :write_chain_ids,
                 :read_chain_ids, :lethal_trifecta, :score, :score_components,
-                :verdict, :confidence, :reasoning, :validated,
-                :validated_kind, :priority, :status, :created_at, :updated_at
+                :verdict, :confidence, :reasoning, :voter_outputs,
+                :prompt_version, :validated, :validated_kind, :priority,
+                :status, :created_at, :updated_at
             )
             """,
             group.to_row(),
@@ -78,18 +85,19 @@ class ChainGroupsRepository:
           - `name`, the id sets, the anchor, `score`, `score_components`,
             `priority`, `status` are always refreshed — they are 1.3c's,
             and a re-run of prioritization must win.
-          - `verdict`, `confidence`, `reasoning`, `validated`,
-            `validated_kind` are written only when the incoming record
-            carries a verdict (`verdict is not None`). 1.3c's
-            `to_record()` rows have none, so a second prioritization
-            run (or a delta rescan) cannot erase a verdict that was
-            already paid for; 1.3e's evaluated row does have one, so
-            its write lands.
+          - `verdict`, `confidence`, `reasoning`, `voter_outputs`,
+            `prompt_version`, `validated`, `validated_kind` are written
+            only when the incoming record carries a verdict
+            (`verdict is not None`). 1.3c's `to_record()` rows have
+            none, so a second prioritization run (or a delta rescan)
+            cannot erase a verdict that was already paid for; 1.3e's
+            evaluated row does have one, so its write lands.
             `validated` travels with the verdict rather than on its own:
             a row with a verdict has been through Layer 3, and the flag
             says whether it survived; `validated_kind` (A.4) travels
             with it for the same reason — it is the label of that same
-            check.
+            check — and so do `voter_outputs` / `prompt_version` (B.7),
+            which are what the verdict is traced by.
 
         `created_at` is left alone too: it is when the group was first
         seen.
@@ -126,12 +134,16 @@ class ChainGroupsRepository:
                 "verdict = :verdict",
                 "confidence = :confidence",
                 "reasoning = :reasoning",
+                "voter_outputs = :voter_outputs",
+                "prompt_version = :prompt_version",
                 "validated = :validated",
                 "validated_kind = :validated_kind",
             ]
             params["verdict"] = group.verdict
             params["confidence"] = group.confidence
             params["reasoning"] = group.reasoning
+            params["voter_outputs"] = json.dumps(group.voter_outputs)
+            params["prompt_version"] = group.prompt_version
             params["validated"] = 1 if group.validated else 0
             params["validated_kind"] = group.validated_kind
 

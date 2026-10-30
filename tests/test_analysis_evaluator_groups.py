@@ -22,7 +22,7 @@ from aicorellator.analysis.models import (
     VoterConfig,
     VoterResponse,
 )
-from aicorellator.analysis.prompts import GROUP_SYSTEM_PROMPT
+from aicorellator.analysis.prompts import GROUP_SYSTEM_PROMPT, PROMPT_VERSION
 from aicorellator.graph import ChainGroup, Edge, Node
 
 
@@ -257,6 +257,40 @@ def test_a_trifecta_on_the_write_side_is_not_the_groups(store) -> None:
     assert row.lethal_trifecta is False
 
 
+def test_the_row_carries_the_prompt_version_and_the_voter_outputs(
+    store,
+) -> None:
+    """B.7: a group verdict is traced by the same two facts a chain's is.
+
+    `prompt_version` is the prompt the voters and the judge ran under and
+    `voter_outputs` is what they answered. The linear path has written
+    both to `chains` since Phase 0; the group path writes the same shape
+    through the same `_voter_response_dict`, so a consumer reading the
+    two tables sees one shape rather than two.
+    """
+    group = _build(store)
+    fake, _ = _voter([E_READ_1, E_READ_2])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    row = store.chain_groups.get(GROUP_ID)
+    assert row.prompt_version == PROMPT_VERSION
+    assert len(row.voter_outputs) == 1
+    output = row.voter_outputs[0]
+    assert output["model"] == "v0"
+    assert output["confidence"] == 0.8
+    assert output["evidence"] == [E_READ_1, E_READ_2]
+    # The set a citation is judged against is the group's own — the same
+    # set Layer 3 uses — so `evidence_valid` here answers the group's
+    # question, not the graph's.
+    assert output["evidence_valid"] is True
+    assert output["evidence_unknown"] == []
+    # The provider's raw response is not provenance the row needs (the
+    # same strip the linear path's rows get).
+    assert "raw" not in output
+
+
 def test_evidence_outside_the_group_fails_layer_3(store) -> None:
     """A cited edge that is not in the pair is a hallucination.
 
@@ -278,6 +312,12 @@ def test_evidence_outside_the_group_fails_layer_3(store) -> None:
     assert row.validated is False
     # B9G: B.4b's label for a group that its own check rejected.
     assert row.validated_kind == "existence"
+    # B.7: the same judgement is recorded on the provenance row, so a
+    # reader of `voter_outputs` can see *which* citation was outside the
+    # pair without re-deriving the group's edge set.
+    output = row.voter_outputs[0]
+    assert output["evidence_valid"] is False
+    assert output["evidence_unknown"] == [E_ELSEWHERE]
 
 
 def test_evidence_inside_the_group_validates(store) -> None:

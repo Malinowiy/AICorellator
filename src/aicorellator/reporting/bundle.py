@@ -134,8 +134,9 @@ def _group_to_dict(
     emitted, so a consumer never has to tell "false" from "not asked";
     the label is `null` until a verdict exists, because a row 1.3c wrote
     has not been through the check at all (see the comment at the
-    assignment). B.7's `prompt_version` and `voter_outputs` are not
-    here: they are that item's schema change, not this row's shape.
+    assignment). B.7 adds the verdict's provenance to the same block:
+    `prompt_version` / `voter_outputs`, the two columns `chains` has
+    carried since Phase 0.
 
     A chain whose path is not in `paths` (see `group_chain_paths`) is
     emitted with `nodes: []` rather than dropped: the id is still the
@@ -186,6 +187,14 @@ def _group_to_dict(
             group.validated_kind if group.verdict is not None else None
         ),
         "reasoning": group.reasoning,
+        # B.7: what the verdict is traced by — the prompt that produced
+        # it and the voter responses it was aggregated from (ADR-0005,
+        # ADR-0006). Like the rest of this block they are the row's, and
+        # like `validated_kind` they are always emitted: a row 1.3e has
+        # not reached carries the stored "not computed" pair, `''` and
+        # `[]`, rather than an absent key.
+        "prompt_version": group.prompt_version,
+        "voter_outputs": group.voter_outputs,
         "status": group.status,
     }
 

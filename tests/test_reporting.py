@@ -102,15 +102,18 @@ def _store(
     lethal_trifecta: bool = False,
     confidence: float = 0.0,
     reasoning: str | None = None,
+    prompt_version: str = "",
+    voter_outputs: list[dict] | None = None,
 ) -> None:
     """Persist a group the way the two owners do: 1.3c, then 1.3e.
 
-    The three columns of the evaluated row travel together, the way one
+    The columns of the evaluated row travel together, the way one
     evaluation writes them: `validated_kind` is A.4's label for the
-    Layer 3 check the verdict went through, and `lethal_trifecta` is
-    B.6's projection of 1.3d's per-node flag — the row's, written beside
-    the verdict rather than derived here (what the evaluator puts in it
-    is `test_analysis_evaluator_groups.py`'s to pin).
+    Layer 3 check the verdict went through, `lethal_trifecta` is B.6's
+    projection of 1.3d's per-node flag, and `prompt_version` /
+    `voter_outputs` are B.7's provenance — the row's, written beside the
+    verdict rather than derived here (what the evaluator puts in them is
+    `test_analysis_evaluator_groups.py`'s to pin).
     """
     record = group.to_record()
     if verdict is not None:
@@ -120,6 +123,8 @@ def _store(
         record.validated = validated
         record.validated_kind = validated_kind
         record.lethal_trifecta = lethal_trifecta
+        record.prompt_version = prompt_version
+        record.voter_outputs = voter_outputs or []
     store.chain_groups.upsert(record)
 
 
@@ -276,17 +281,19 @@ def test_bundle_writes_both_json_files(store: GraphStore, tmp_path) -> None:
     assert "## Chain groups (Phase 3)" in (path / "report.md").read_text()
 
 
-def test_bundle_carries_the_projection_and_the_layer_3_label(
+def test_bundle_carries_the_projection_the_label_and_the_provenance(
     store: GraphStore,
     tmp_path,
 ) -> None:
-    """B.6: `chain_groups.json` names the trifecta and A.4's label.
+    """B.6/B.7: `chain_groups.json` names the row's evaluation columns.
 
-    Both are row columns the bundle used to drop, so a consumer of the
-    file could not tell a group whose read side has all three halves of
-    the trifecta (ADR-0009) from one whose read side does not, nor read
-    the level Layer 3 reached. The row carries both, and the file now
-    says both.
+    B.6: `lethal_trifecta` and `validated_kind` are row columns the
+    bundle used to drop, so a consumer of the file could not tell a group
+    whose read side has all three halves of the trifecta (ADR-0009) from
+    one whose read side does not, nor read the level Layer 3 reached.
+    B.7: `prompt_version` / `voter_outputs` are the other two — what the
+    verdict is traced by (ADR-0005, ADR-0006). The row carries all four,
+    and the file now says all four.
     """
     _graph(store, trifecta=True)
     group = _group(store)
@@ -294,6 +301,8 @@ def test_bundle_carries_the_projection_and_the_layer_3_label(
         store, group, verdict="exploitable", validated=True,
         validated_kind="semantic", lethal_trifecta=True,
         confidence=0.7, reasoning="r",
+        prompt_version="v1.6.0",
+        voter_outputs=[{"model": "v0", "confidence": 0.8, "evidence": []}],
     )
 
     path = write_bundle(store, Workspace(root=tmp_path))
@@ -301,13 +310,17 @@ def test_bundle_carries_the_projection_and_the_layer_3_label(
     entry = json.loads((path / "chain_groups.json").read_text())[0]
     assert entry["lethal_trifecta"] is True
     assert entry["validated_kind"] == "semantic"
+    assert entry["prompt_version"] == "v1.6.0"
+    assert entry["voter_outputs"] == [
+        {"model": "v0", "confidence": 0.8, "evidence": []}
+    ]
 
 
-def test_bundle_says_false_and_none_before_an_evaluation(
+def test_bundle_says_the_not_computed_shape_before_an_evaluation(
     store: GraphStore,
     tmp_path,
 ) -> None:
-    """1.3c's row: no projection has run and no label exists.
+    """1.3c's row: no projection has run, no label, no provenance.
 
     The graph here *has* a trifecta reader, and the file still says
     `False` — the column is the evaluator's projection, and a row 1.3e
@@ -316,7 +329,10 @@ def test_bundle_says_false_and_none_before_an_evaluation(
     Layer 3 check has run — and the file mirrors the stored column,
     where it is NULL. (Reading the row through the model would turn that
     NULL into "existence", `from_row`'s default for a row written before
-    A.4; a row 1.3c wrote is not one of those.)
+    A.4; a row 1.3c wrote is not one of those.) B.7's two are the same
+    "not computed": the stored pair `''` / `[]`, emitted rather than
+    omitted so a consumer never has to tell "not asked" from "asked and
+    empty".
     """
     _graph(store, trifecta=True)
     group = _group(store)
@@ -327,6 +343,8 @@ def test_bundle_says_false_and_none_before_an_evaluation(
     entry = json.loads((path / "chain_groups.json").read_text())[0]
     assert entry["lethal_trifecta"] is False
     assert entry["validated_kind"] is None
+    assert entry["prompt_version"] == ""
+    assert entry["voter_outputs"] == []
 
 
 def test_bundle_writes_an_empty_array_without_groups(
