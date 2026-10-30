@@ -1,21 +1,23 @@
-"""UntrustedSourceWriterStage: `writes_to` into a store, or a source.
+"""UntrustedSourceWriterStage: `writes_to` into a store.
 
 The stage is the write half of ADR-0010's channel: 1.3a's
 `untrusted_sources` emits `source → reader`, and this one emits
-`mcp_server → writes_to → source` so `find_chain_groups` has an
-incoming edge to walk. These tests cover the four ways a server is
-visible from a source — `parent_server`, the same file, the
-`mcp/servers/<name>/` directory, and a literal factory module path
-(1.3a.1.2 in the source's own file, project-wide in 1.3a.1.3) — plus the
-source-family gate, the flow attributes, the emission cap, and the
-absences.
+`writer → writes_to → store` plus `store → reads_from → source`, so
+`find_chain_groups` has an incoming edge to walk and a place to join on.
+These tests cover the four ways a server is visible from a source —
+`parent_server`, the same file, the `mcp/servers/<name>/` directory, and
+a literal factory module path (1.3a.1.2 in the source's own file,
+project-wide in 1.3a.1.3) — plus the source-family gate, the flow
+attributes, the emission cap, and the absences.
 
 B.3c (ADR-0021 §2–§3, §5, §8): a **call-written** family's `writes_to`
-targets a `store` the stage creates, with one `reads_from` from that
-store back to the read site, and both edges carry §8's
-`identity_confidence`. The declaration-written family is **not**
-migrated: its tests still pin `writes_to → untrusted_source`, no store
-and no identity confidence.
+targets a `store` the stage creates, named by the *read site* — the
+source type and the call target — with one `reads_from` from that store
+back to the read site, and both edges carry §8's `identity_confidence`.
+
+B.3b-mcp-catalogue: the **declaration-written** family is migrated the
+same way, named by its *writer* instead — `mcp_catalogue` and the
+server's name — so every write-side family now ends at a store.
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ from aicorellator.parsing.normalizer_stages import (
     UntrustedSourceWriterStage,
 )
 from aicorellator.parsing.normalizer_stages.untrusted_source_writers import (
+    CATALOGUE_FAMILY,
+    CATALOGUE_WRITER_BASE,
     WRITER_SOURCE_TYPES,
     declared_server_names,
 )
@@ -155,24 +159,37 @@ def _imports(**by_file: list[str]) -> EntryPointOutput:
 
 
 def test_a_server_in_the_same_file_writes_the_catalogue(project) -> None:
-    """The detector-server shape: server and read in one module."""
+    """A2 — the detector-server shape: server and read in one module.
+
+    B.3b-mcp-catalogue: the server writes the catalogue *store* its own
+    name fixes, and one `reads_from` points back at the read site.
+    """
     p = project(files={"app.py": ""})
-    p.delta.nodes.append(_server("knowledge", "app.py", node_id="mcp_server:k"))
+    p.delta.nodes.append(_server(
+        "knowledge", "app.py", node_id="mcp_server:k",
+    ))
     p.delta.nodes.append(_source(file_path="app.py"))
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
+    store = _named_store(p, "mcp_catalogue", "knowledge")
     assert [
         (e.kind, e.source_id, e.target_id) for e in delta.edges
-    ] == [("writes_to", "mcp_server:k", "untrusted_source:1")]
-    assert delta.edges[0].data_flow_confirmed is None
+    ] == [
+        ("writes_to", "mcp_server:k", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
+    assert {e.data_flow_confirmed for e in delta.edges} == {None}
 
 
-def test_flow_kind_is_control_once_the_deriving_stage_runs(project) -> None:
-    """`FlowKindStage` pins `control`; the writer stage draws no verdict.
+def test_the_stage_states_a_structural_kind_for_both_edges(project) -> None:
+    """`FlowKindStage` leaves them alone; the writer stage states the kind.
 
-    `control`, not `data`: the edge is a declaration, and the producer
-    traced no value into the source (ADR-0016, decision 3).
+    `structural`, not `control`: the edges are declarations about a place,
+    and the producer traced no value into the source (ADR-0021 §4;
+    ADR-0016, decision 3). The stage that emits them states the kind —
+    `find_chains` never traverses them — so stage 12 skips them rather
+    than pinning a kind of its own on them.
     """
     p = project(files={"app.py": ""})
     p.delta.nodes.append(_server("knowledge", "app.py"))
@@ -181,7 +198,9 @@ def test_flow_kind_is_control_once_the_deriving_stage_runs(project) -> None:
     UntrustedSourceWriterStage().apply(p.delta, p.ctx)
     FlowKindStage().apply(p.delta, p.ctx)
 
-    assert [e.flow_kind for e in p.delta.edges] == ["control"]
+    assert [e.flow_kind for e in p.delta.edges] == [
+        "structural", "structural",
+    ]
 
 
 def test_a_server_in_another_file_writes_nothing(project) -> None:
@@ -200,11 +219,16 @@ def test_a_server_in_another_file_writes_nothing(project) -> None:
 
 
 def test_a_path_heuristic_server_covers_its_whole_directory(project) -> None:
-    """The server *is* the `mcp/servers/<name>/` directory (stage 1).
+    """A3 — the server *is* the `mcp/servers/<name>/` directory (stage 1).
 
     A path-heuristic node carries no file of its own, so the source's
     file is matched against the directory the path names — the same rule
-    `McpServerNodeStage` used to create the node.
+    `McpServerNodeStage` used to create the node — and the store's hint is
+    the directory name that created it.
+
+    The pair carries no code-context signal, because the server names no
+    file: `_link_confidence` combines only the base and the literal, so
+    the link is `1 − 0.5 × 0.4 = 0.8` rather than the same-module 0.84.
     """
     p = project(files={"mcp/servers/knowledge/tools.py": ""})
     p.delta.nodes.append(_server("knowledge", server_name="knowledge"))
@@ -214,8 +238,16 @@ def test_a_path_heuristic_server_covers_its_whole_directory(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.kind for e in delta.edges] == ["writes_to"]
-    assert delta.edges[0].source_id == "mcp_server:knowledge"
+    store = _named_store(p, "mcp_catalogue", "knowledge")
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:knowledge", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+    ]
+    assert [e.identity_confidence for e in delta.edges] == [
+        combine_signals(CATALOGUE_WRITER_BASE, [LITERAL_EQUAL]),
+    ] * 2
 
 
 def test_a_source_outside_the_server_directory_gets_no_edge(project) -> None:
@@ -235,12 +267,14 @@ def test_a_source_outside_the_server_directory_gets_no_edge(project) -> None:
 
 
 def test_a_parent_server_attribute_is_the_precise_anchor(project) -> None:
-    """`parent_server` names the server, whatever file the source is in.
+    """A1 — `parent_server` names the server, whatever file the source is in.
 
     The convention is `mcp_entry_synthesis`'s: a detector that reads a
     declaration records the server it belongs to. No producer sets it on
     an `untrusted_source` yet — 1.3a anchors at the read site — so this
-    pins the hook, not a current corpus shape.
+    pins the hook, not a current corpus shape. The store the server
+    writes is its own name, and the anchor *replaces* the file rules, so
+    the server being in another file changes nothing.
     """
     p = project(files={"app.py": "", "other.py": ""})
     p.delta.nodes.append(_server("knowledge", "other.py"))
@@ -250,7 +284,10 @@ def test_a_parent_server_attribute_is_the_precise_anchor(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["mcp_server:knowledge"]
+    store = _named_store(p, "mcp_catalogue", "knowledge")
+    assert [e.source_id for e in delta.edges] == [
+        "mcp_server:knowledge", store.id,
+    ]
 
 
 def test_a_parent_server_that_names_no_server_writes_nothing(project) -> None:
@@ -289,7 +326,11 @@ def test_a_server_is_not_a_writer_of_a_corpus(project) -> None:
 
 
 def test_only_the_matching_server_writes(project) -> None:
-    """Two servers, one file each; only the visible one writes."""
+    """Two servers, one file each; only the visible one writes.
+
+    One store, because one server is the writer: the invisible server
+    names no catalogue this source reads, so §5 gives it no store either.
+    """
     p = project(files={"app.py": "", "other.py": ""})
     p.delta.nodes.append(_server("one", "app.py", node_id="mcp_server:1"))
     p.delta.nodes.append(_server("two", "other.py", node_id="mcp_server:2"))
@@ -297,11 +338,20 @@ def test_only_the_matching_server_writes(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["mcp_server:1"]
+    writes = [e for e in delta.edges if e.kind == "writes_to"]
+    assert [e.source_id for e in writes] == ["mcp_server:1"]
+    assert [n.name for n in p.nodes("store")] == [
+        "mcp_catalogue:one",
+    ]
 
 
 def test_two_servers_in_one_file_both_write(project) -> None:
-    """Two declarations in one module are two writers, in id order."""
+    """M1 — two declarations in one module are two writers, two stores.
+
+    The writers come in id order, each one writes the store its own name
+    fixes, and *both* stores get a `reads_from` back to the one source —
+    the multi-anchor union B.2 already had, multiplied by the store model.
+    """
     p = project(files={"app.py": ""})
     p.delta.nodes.append(_server("one", "app.py", node_id="mcp_server:1"))
     p.delta.nodes.append(_server("two", "app.py", node_id="mcp_server:2"))
@@ -309,13 +359,25 @@ def test_two_servers_in_one_file_both_write(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == [
-        "mcp_server:1", "mcp_server:2",
+    one = _named_store(p, "mcp_catalogue", "one")
+    two = _named_store(p, "mcp_catalogue", "two")
+    assert one.id != two.id
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:1", one.id),
+        ("reads_from", one.id, "untrusted_source:1"),
+        ("writes_to", "mcp_server:2", two.id),
+        ("reads_from", two.id, "untrusted_source:1"),
     ]
 
 
 def test_one_edge_per_pair_even_for_repeated_sources(project) -> None:
-    """The edge id is content-derived, so a repeat is not a second edge."""
+    """The edge ids are content-derived, so a repeat is not a second edge.
+
+    Two source nodes with one id are one read site twice over: one
+    `writes_to` and one `reads_from`, not two of either.
+    """
     p = project(files={"app.py": ""})
     p.delta.nodes.append(_server("knowledge", "app.py"))
     p.delta.nodes.append(_source(file_path="app.py"))
@@ -323,7 +385,7 @@ def test_one_edge_per_pair_even_for_repeated_sources(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert len(delta.edges) == 1
+    assert [e.kind for e in delta.edges] == ["writes_to", "reads_from"]
 
 
 def test_no_server_nodes_means_no_work(project) -> None:
@@ -364,11 +426,15 @@ def _server_modules(*names: str) -> dict[str, str]:
 
 
 def test_a_literal_factory_path_names_its_server(project) -> None:
-    """FinBot's `_SERVER_INTROSPECTORS`: the route file names its servers.
+    """A4 — FinBot's `_SERVER_INTROSPECTORS`: the route file names its servers.
 
     No server is visible from the route file — none is in it, and its
     path is not under `mcp/servers/` — so the literal is the anchor. The
-    named server's own module lives elsewhere, which is the point.
+    named server's own module lives elsewhere, which is the point, and
+    each named server gets the store its name fixes.
+
+    Neither server node names a file, so neither pair carries a
+    code-context signal: `1 − 0.5 × 0.4 = 0.8` on all four edges.
     """
     p = project(files={
         "apps/routes/api.py": INTROSPECTORS,
@@ -380,14 +446,21 @@ def test_a_literal_factory_path_names_its_server(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
+    finmail = _named_store(p, "mcp_catalogue", "finmail")
+    findrive = _named_store(p, "mcp_catalogue", "findrive")
     assert [
         (e.kind, e.source_id, e.target_id) for e in delta.edges
     ] == [
-        ("writes_to", "mcp_server:findrive", "untrusted_source:1"),
-        ("writes_to", "mcp_server:finmail", "untrusted_source:1"),
+        ("writes_to", "mcp_server:findrive", findrive.id),
+        ("reads_from", findrive.id, "untrusted_source:1"),
+        ("writes_to", "mcp_server:finmail", finmail.id),
+        ("reads_from", finmail.id, "untrusted_source:1"),
     ]
-    assert {e.flow_kind for e in delta.edges} == {"control"}
+    assert {e.flow_kind for e in delta.edges} == {"structural"}
     assert {e.data_flow_confirmed for e in delta.edges} == {None}
+    assert {e.identity_confidence for e in delta.edges} == {
+        combine_signals(CATALOGUE_WRITER_BASE, [LITERAL_EQUAL]),
+    }
 
 
 def test_a_literal_whose_module_is_not_in_the_manifest_writes_nothing(
@@ -404,7 +477,10 @@ def test_a_literal_whose_module_is_not_in_the_manifest_writes_nothing(
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["mcp_server:finmail"]
+    assert [
+        e.source_id for e in delta.edges if e.kind == "writes_to"
+    ] == ["mcp_server:finmail"]
+    assert [n.name for n in p.nodes("store")] == ["mcp_catalogue:finmail"]
 
 
 def test_a_literal_that_names_no_server_node_writes_nothing(project) -> None:
@@ -419,6 +495,7 @@ def test_a_literal_that_names_no_server_node_writes_nothing(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert delta.edges == []
+    assert p.nodes("store") == []
 
 
 
@@ -442,7 +519,9 @@ def test_a_literal_path_naming_a_different_factory_is_ignored(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == ["mcp_server:findrive"]
+    assert [
+        e.source_id for e in delta.edges if e.kind == "writes_to"
+    ] == ["mcp_server:findrive"]
 
 
 def test_a_path_quoted_in_a_docstring_is_not_evidence(project) -> None:
@@ -488,8 +567,9 @@ def test_the_literal_writers_join_the_structurally_visible_one(
 ) -> None:
     """A file inside a server directory that also names another server.
 
-    The anchors are independent pieces of evidence, so the edges are a
+    The anchors are independent pieces of evidence, so the writers are a
     union: `knowledge` owns the file, and the literal names `finmail`.
+    Two writers, two stores, one source.
     """
     p = project(files={
         "mcp/servers/knowledge/server.py": INTROSPECTORS,
@@ -503,8 +583,11 @@ def test_the_literal_writers_join_the_structurally_visible_one(
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == [
-        "mcp_server:finmail", "mcp_server:knowledge",
+    assert [
+        e.source_id for e in delta.edges if e.kind == "writes_to"
+    ] == ["mcp_server:finmail", "mcp_server:knowledge"]
+    assert [n.name for n in p.nodes("store")] == [
+        "mcp_catalogue:finmail", "mcp_catalogue:knowledge",
     ]
 
 
@@ -530,21 +613,18 @@ def test_a_literal_in_another_file_names_the_writer(project) -> None:
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
     assert [
-        (e.kind, e.source_id, e.target_id) for e in delta.edges
-    ] == [
-        ("writes_to", "mcp_server:findrive", "untrusted_source:1"),
-        ("writes_to", "mcp_server:finmail", "untrusted_source:1"),
-    ]
-    assert {e.flow_kind for e in delta.edges} == {"control"}
+        e.source_id for e in delta.edges if e.kind == "writes_to"
+    ] == ["mcp_server:findrive", "mcp_server:finmail"]
+    assert {e.flow_kind for e in delta.edges} == {"structural"}
     assert {e.data_flow_confirmed for e in delta.edges} == {None}
 
 
 def test_a_literal_in_the_same_file_is_one_edge_not_two(project) -> None:
     """The project-wide anchor contains the same-file case (1.3a.1.2).
 
-    One literal is one piece of evidence however many anchors see it,
-    and the edge id is content-derived, so the same-file case emits one
-    edge — not one per anchor.
+    One literal is one piece of evidence however many anchors see it, and
+    the edge ids are content-derived, so the same-file case emits one pair
+    — not one per anchor.
     """
     p = project(files={
         "apps/routes/api.py": INTROSPECTORS,
@@ -556,8 +636,8 @@ def test_a_literal_in_the_same_file_is_one_edge_not_two(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert len(delta.edges) == 2
-    assert len({e.id for e in delta.edges}) == 2
+    assert len(delta.edges) == 4
+    assert len({e.id for e in delta.edges}) == 4
 
 
 def test_two_files_naming_one_server_are_still_one_edge(project) -> None:
@@ -574,10 +654,10 @@ def test_two_files_naming_one_server_are_still_one_edge(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert len(delta.edges) == 2
-    assert [e.source_id for e in delta.edges] == [
-        "mcp_server:findrive", "mcp_server:finmail",
-    ]
+    assert len(delta.edges) == 4
+    assert [
+        e.source_id for e in delta.edges if e.kind == "writes_to"
+    ] == ["mcp_server:findrive", "mcp_server:finmail"]
 
 
 def test_a_project_literal_and_a_structural_anchor_are_unioned(
@@ -597,16 +677,19 @@ def test_a_project_literal_and_a_structural_anchor_are_unioned(
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [e.source_id for e in delta.edges] == [
-        "mcp_server:finmail", "mcp_server:k",
-    ]
+    assert [
+        e.source_id for e in delta.edges if e.kind == "writes_to"
+    ] == ["mcp_server:finmail", "mcp_server:k"]
 
 
 def test_max_writer_edges_caps_the_emission(project, caplog) -> None:
     """The bound is on emission, and hitting it is visible at DEBUG.
 
-    Six pairs (two servers × three sources) with a cap of two: the stage
-    stops at the cap rather than walking the rest of the product.
+    Two servers × three sources is six pairs and twelve edges, and the cap
+    is two: the stage stops in the middle of the first source rather than
+    walking the rest of the product. The pair's two edges are emitted
+    together, so a cap of two always leaves a `writes_to` and its
+    `reads_from`.
     """
     p = project(files={
         "apps/a.py": "def read():\n    return client.list_tools()\n",
@@ -627,10 +710,8 @@ def test_max_writer_edges_caps_the_emission(project, caplog) -> None:
             p.delta, p.ctx
         )
 
-    assert len(delta.edges) == 2
-    assert [e.source_id for e in delta.edges] == [
-        "mcp_server:findrive", "mcp_server:finmail",
-    ]
+    assert [e.kind for e in delta.edges] == ["writes_to", "reads_from"]
+    assert delta.edges[0].source_id == "mcp_server:findrive"
     assert "max_writer_edges" in caplog.text
 
 
@@ -698,20 +779,22 @@ def _mail_source(file_path: str, **kwargs) -> Node:
 
 def _named_store(
     p,
-    source_type: str = "rag_corpus",
-    call_target: str = CORPUS_READ,
+    family: str = "rag_corpus",
+    hint: str = CORPUS_READ,
 ) -> Node:
-    """The `store` node the stage built for one migrated source.
+    """The `store` node the stage built for one identity.
 
     Looked up by the name a store carries (`<family>:<identity_hint>`,
     ADR-0021 §1) rather than by position, so the assertions below are
     about the identity the graph holds. The kind is part of the lookup
-    because the two names collide: a source is named
-    `<source_type>:<call_target>` (1.3a) and the store's two halves *are*
-    the source type and the call target, so the two nodes render the same
-    string while their ids differ. `p.named` alone would find the source.
+    because the two names collide for a call-written family: a source is
+    named `<source_type>:<call_target>` (1.3a) and the store's two halves
+    *are* the source type and the call target, so the two nodes render the
+    same string while their ids differ. `p.named` alone would find the
+    source. For the declaration-written family the name is
+    `mcp_catalogue:<server name>`, which no source renders.
     """
-    name = f"{source_type}:{call_target}"
+    name = f"{family}:{hint}"
     return next(
         node for node in p.delta.nodes
         if node.kind == "store" and node.name == name
@@ -1430,14 +1513,123 @@ def test_a_store_the_delta_already_holds_is_reused(project) -> None:
     ]
 
 
-def test_the_declared_family_is_not_migrated(project) -> None:
-    """M1/M2 — `mcp_tool_description` keeps the B.2 target (B.3c).
+# ============================================================
+# B.3b-mcp-catalogue — the catalogue store (ADR-0021)
+# ============================================================
 
-    Its writer is a declaration and its store is the catalogue
-    (`mcp_catalogue`, B.3b-mcp-catalogue), so the source is still what
-    the write edge ends at: no `store` node, no `reads_from`, and no
-    `identity_confidence` — §7's field belongs to the two store links,
-    and this edge is not one of them.
+def test_two_reads_of_one_catalogue_share_one_store(project) -> None:
+    """M2's N:1: one store, two read sites, one `writes_to`.
+
+    Two catalogue sources written by one server are two read sites (1.3a)
+    and one place: the store is created once (§1), the `writes_to` edge
+    onto it is one — the id is `(server, store)`, so the second source
+    does not emit a second one — and each source keeps its own
+    `reads_from`.
+    """
+    p = project(files={"app.py": ""})
+    p.delta.nodes.append(_server("knowledge", "app.py"))
+    p.delta.nodes.append(_source(
+        file_path="app.py", node_id="untrusted_source:1",
+    ))
+    p.delta.nodes.append(_source(
+        file_path="app.py", node_id="untrusted_source:2",
+        call_target="client.list_tools_async",
+    ))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    store = _named_store(p, "mcp_catalogue", "knowledge")
+    assert len(p.nodes("store")) == 1
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:knowledge", store.id),
+        ("reads_from", store.id, "untrusted_source:1"),
+        ("reads_from", store.id, "untrusted_source:2"),
+    ]
+
+
+def test_the_catalogue_store_identity_is_the_family_and_the_server(
+    project,
+) -> None:
+    """M2 — `family` is `mcp_catalogue`, `identity_hint` the server's name.
+
+    ADR-0021 §1: a family is the technology, and an MCP tool catalogue is
+    one — the source type stays the *semantic role* on the read site. The
+    hint is the writer's name, because the read site (`client.list_tools`)
+    names no place at all, and the id is `store.resolver.store_node_id`'s,
+    so a store this stage builds and a store the resolver would build for
+    one identity are one node.
+    """
+    p = project(files={"app.py": ""})
+    p.delta.nodes.append(_server(
+        "finmail", "app.py", node_id="mcp_server:f",
+    ))
+    p.delta.nodes.append(_source(file_path="app.py"))
+
+    UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert len(p.nodes("store")) == 1
+    store = p.nodes("store")[0]
+    assert store.attributes == {
+        "family": CATALOGUE_FAMILY, "identity_hint": "finmail",
+    }
+    assert store.name == f"{CATALOGUE_FAMILY}:finmail"
+    assert store.id == store_node_id(CATALOGUE_FAMILY, "finmail")
+
+
+def test_the_server_name_attribute_wins_over_the_node_name(project) -> None:
+    """`server_name` first, `name` second (`_server_identity`).
+
+    A path-heuristic server carries the directory name in both spellings
+    (stage 1), so the order is unobservable on a real scan; a
+    detector-created one carries the constructor's argument as its `name`
+    and no `server_name` at all. This pins the order for the hand-built
+    delta where the two disagree.
+    """
+    p = project(files={"app.py": ""})
+    p.delta.nodes.append(_server(
+        "knowledge", "app.py", node_id="mcp_server:d",
+        server_name="finmail",
+    ))
+    p.delta.nodes.append(_source(file_path="app.py"))
+
+    UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert [n.name for n in p.nodes("store")] == [
+        f"{CATALOGUE_FAMILY}:finmail",
+    ]
+
+
+def test_a_server_with_no_name_writes_no_store_and_no_edge(project) -> None:
+    """§5 — an identity nothing can name produces no store.
+
+    A real scan cannot reach this: the anchor returned a server node, so
+    something named it. It is pinned because the failure it prevents — a
+    store per unnamed server, joining every catalogue read of the family —
+    is the one §5 exists for.
+    """
+    p = project(files={"app.py": ""})
+    p.delta.nodes.append(_server("", "app.py", node_id="mcp_server:x"))
+    p.delta.nodes.append(_source(file_path="app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert delta.edges == []
+    assert p.nodes("store") == []
+
+
+def test_the_catalogue_confidence_is_the_declared_anchor_number(
+    project,
+) -> None:
+    """C1/C3 — §8's same-module number, on both edges of the pair.
+
+    `combine_signals(CATALOGUE_WRITER_BASE, [LITERAL_EQUAL,
+    CODE_CONTEXT_SAME_MODULE])` is `1 − 0.5 × 0.4 × 0.8 = 0.84`: the anchor
+    names the server explicitly (the 0.5 base, not a call-written family's
+    0.3), the store's hint *is* the server's name (the equal literal), and
+    the declaration is in the source's file. The expected value is
+    computed from `confidence`'s constants rather than restated.
     """
     p = project(files={"app.py": ""})
     p.delta.nodes.append(_server("knowledge", "app.py"))
@@ -1445,11 +1637,76 @@ def test_the_declared_family_is_not_migrated(project) -> None:
 
     delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
 
-    assert [
-        (e.kind, e.source_id, e.target_id, e.identity_confidence)
-        for e in delta.edges
-    ] == [
-        ("writes_to", "mcp_server:knowledge", "untrusted_source:1", None),
+    expected = combine_signals(
+        CATALOGUE_WRITER_BASE,
+        [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE],
+    )
+    assert round(expected, 4) == 0.84
+    assert [e.identity_confidence for e in delta.edges] == [
+        expected, expected,
     ]
-    assert p.nodes("store") == []
+
+
+def test_a_shared_import_confidence_is_the_catalogue_pair(project) -> None:
+    """C2 — §8's shared-import number, on both edges.
+
+    The server's module is one the read's file imports, which is §8's
+    weakest code-context row: `1 − 0.5 × 0.4 × 0.9 = 0.82`. Above the
+    call-written families' 0.776 / 0.748, which is the point of the 0.5
+    base — the declaration names the server, and the anchor is explicit.
+    """
+    p = project(
+        files={"apps/routes.py": "", "services/server.py": ""},
+        entry_points=_imports(**{"services/server.py": ["apps.routes"]}),
+    )
+    p.delta.nodes.append(_server(
+        "finmail", "services/server.py", node_id="mcp_server:f",
+    ))
+    p.delta.nodes.append(_source(
+        file_path="apps/routes.py", parent_server="finmail",
+    ))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    expected = combine_signals(
+        CATALOGUE_WRITER_BASE,
+        [LITERAL_EQUAL, CODE_CONTEXT_SHARED_IMPORT],
+    )
+    assert round(expected, 4) == 0.82
+    assert [e.identity_confidence for e in delta.edges] == [
+        expected, expected,
+    ]
+
+
+def test_a_catalogue_store_the_delta_already_holds_is_reused(project) -> None:
+    """S6's rule for this family: the delta's store wins over a new node.
+
+    `_store_index` reads the delta first, the way the upload writer's index
+    does: a store is one node per identity (§1) and the id is the graph's
+    primary key, so a delta that already holds the node gets it reused
+    rather than a duplicate row.
+    """
+    p = project(files={"app.py": ""})
+    existing = Node(
+        id=store_node_id(CATALOGUE_FAMILY, "finmail"),
+        kind="store",
+        name=f"{CATALOGUE_FAMILY}:finmail",
+        host_id="localhost",
+        attributes={
+            "family": CATALOGUE_FAMILY, "identity_hint": "finmail",
+        },
+    )
+    p.delta.nodes.append(_server("finmail", "app.py", node_id="mcp_server:f"))
+    p.delta.nodes.append(existing)
+    p.delta.nodes.append(_source(file_path="app.py"))
+
+    delta = UntrustedSourceWriterStage().apply(p.delta, p.ctx)
+
+    assert p.nodes("store") == [existing]
+    assert [
+        (e.kind, e.source_id, e.target_id) for e in delta.edges
+    ] == [
+        ("writes_to", "mcp_server:f", existing.id),
+        ("reads_from", existing.id, "untrusted_source:1"),
+    ]
 

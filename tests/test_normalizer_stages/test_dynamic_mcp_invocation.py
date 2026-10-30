@@ -10,6 +10,11 @@ tests pin it, the gates around it, and the flow attributes:
     server → source           the writer's declaration (1.3a.1)
     server → tool             what the catalogue contains
 
+Since B.3b-mcp-catalogue the write side has a store in it — the server
+writes `store('mcp_catalogue', <name>)` and the store `reads_from` the
+catalogue — so the tests cover both shapes: the scanned one, and the
+pre-migration one a hand-built delta may still carry.
+
 The two absences that matter are both checked: a catalogue no server
 writes, and a server that exposes no tool.
 """
@@ -70,6 +75,16 @@ def _server(name: str) -> Node:
     )
 
 
+def _store(name: str) -> Node:
+    return Node(
+        id=f"store:{name}",
+        kind="store",
+        name=f"mcp_catalogue:{name}",
+        host_id="localhost",
+        attributes={"family": "mcp_catalogue", "identity_hint": name},
+    )
+
+
 def _edge(source: str, target: str, kind: str) -> Edge:
     return Edge(
         id=f"edge:{source}:{target}:{kind}",
@@ -113,6 +128,66 @@ def test_a_reader_invokes_every_tool_of_the_servers_that_write_it(
         ("agent:MCPToolProvider", "tool:delete_file"),
         ("agent:MCPToolProvider", "tool:read_file"),
     ]
+
+
+def test_a_reader_invokes_the_tools_of_the_store_writer(project) -> None:
+    """B.3b-mcp-catalogue: the write side goes through a store.
+
+    `mcp_server → writes_to → store → reads_from → catalogue` is what
+    stage 11 emits since the migration, and the rule is unchanged: the
+    agent that reads the catalogue can invoke the tools of the server
+    that writes it — the store is the hop that names the server now.
+    """
+    p = _graph(project)
+    p.delta.nodes.extend([
+        _agent(), _catalogue(), _server("knowledge"), _store("knowledge"),
+        _tool("read_file"), _tool("delete_file"),
+    ])
+    p.delta.edges.extend([
+        _edge("untrusted_source:1", "agent:MCPToolProvider", "has_access_to"),
+        _edge("mcp_server:knowledge", "store:knowledge", "writes_to"),
+        _edge("store:knowledge", "untrusted_source:1", "reads_from"),
+        _edge("mcp_server:knowledge", "tool:read_file", "provides_tool"),
+        _edge("mcp_server:knowledge", "tool:delete_file", "provides_tool"),
+    ])
+
+    delta = DynamicMcpInvocationStage().apply(p.delta, p.ctx)
+
+    assert [
+        (e.source_id, e.target_id) for e in _uses_tool(delta)
+    ] == [
+        ("agent:MCPToolProvider", "tool:delete_file"),
+        ("agent:MCPToolProvider", "tool:read_file"),
+    ]
+
+
+def test_a_store_that_reads_another_catalogue_is_not_this_reader(
+    project,
+) -> None:
+    """The `reads_from` target is what ties a store to *this* catalogue.
+
+    A `writes_to` onto any store is not evidence about this reader: the
+    store has to be one the reader's catalogue reads from, which is the
+    edge `reads_from` carries. Here the server writes a store that reads
+    a *different* catalogue, so nothing is invocable.
+    """
+    p = _graph(project)
+    p.delta.nodes.extend([
+        _agent(), _catalogue(), _server("knowledge"), _store("finmail"),
+        _tool("read_file"),
+    ])
+    p.delta.edges.extend([
+        _edge("untrusted_source:1", "agent:MCPToolProvider", "has_access_to"),
+        _edge("mcp_server:knowledge", "store:finmail", "writes_to"),
+        _edge(
+            "store:finmail", "untrusted_source:2", "reads_from",
+        ),
+        _edge("mcp_server:knowledge", "tool:read_file", "provides_tool"),
+    ])
+
+    delta = DynamicMcpInvocationStage().apply(p.delta, p.ctx)
+
+    assert _uses_tool(delta) == []
 
 
 def test_every_emitted_edge_is_control_with_unconfirmed_data_flow(

@@ -32,17 +32,17 @@ writer:
 
   - **A declaration** — `mcp_tool_description`. The MCP server declares
     its tool catalogue (`@mcp.tool()`) and the client reads it back
-    (`list_tools`), so the write edge is `mcp_server →
-    untrusted_source` and the writer is a `mcp_server` node (1.3a.1).
+    (`list_tools`), so the writer is a `mcp_server` node (1.3a.1). Its
+    store is the catalogue itself (`mcp_catalogue`), and the server — the
+    writer — is what names it; see the migration section below.
   - **A call** — `rag_corpus` and `email_inbox` (B.2). A corpus and a
     mailbox are declared by nobody: they are written by a component
     that calls the store (`vectorstore.add_documents`,
     `smtp.sendmail`). The call is credited by a `CapabilityRule`
     (`patterns.WRITER_RULES`) exactly the way a read is credited by
     `READS_UNTRUSTED_*` (ADR-0009), and the writer is the node the
-    delta already holds for the symbol that credited it. B.3c: this is
-    the write side that now targets a **store**, and the one that
-    creates a node — see the migration section below.
+    delta already holds for the symbol that credited it. Their store is
+    named by the read site instead; see the migration section below.
 
 The second mechanism is why `WRITER_RULES` exists and why it has no
 `mcp_tool_description` entry: a rule for that family would be a call
@@ -60,39 +60,49 @@ that is not in the graph cannot be the first hop of a write chain
 either, and inventing a node for it here would put a component in the
 graph that no other stage knows about.
 
-**The migration (B.3c): a call-written family's write targets a store.**
-ADR-0021 §2 changes `writes_to`'s target for every family, and this
-stage owns the two call-written ones. For `rag_corpus` and
-`email_inbox` it now emits
+**The migration (B.3c, B.3b-mcp-catalogue): every write targets a
+store.** ADR-0021 §2 changes `writes_to`'s target for every family, and
+this stage owns all three write-side ones. It emits
 
-    writer   --writes_to-->  store('<source_type>', '<call_target>')
+    writer   --writes_to-->  store(<family>, <identity_hint>)
     store    --reads_from--> untrusted_source
 
 in place of `writer → source`. The source node, its `source_type` and
 `has_access_to` (1.3a) are untouched: the store is the place the two
-call sites point at, and the source is still the read site.
+halves of the channel point at, and the source is still the read site.
+Where the store's two halves come from is the one thing the two
+mechanisms do differently:
+
+  - a **call-written** family (`rag_corpus` / `email_inbox`, B.3c) is
+    named by the *read site*: the family is the source type, and the hint
+    is `untrusted_source.call_target`, the dotted call the read spells;
+  - the **declaration-written** family (`mcp_tool_description`,
+    B.3b-mcp-catalogue) is named by the *writer*: the family is
+    `mcp_catalogue`, the technology (ADR-0021 §1), and the hint is the
+    server's name — the read site names no place at all, because
+    `client.list_tools` is the same call at every server.
 
 Three things this stage now owns, and why they are here rather than in
 `store_resolver` (stage 19):
 
   - **The store node.** `StoreResolver` pairs a family's *write* call
-    site with its *read* call site, and these two families have no such
-    pair: the write is a writer call (`vectorstore.add_documents`) and
-    the read is the source node, which no family reports — the source is
-    this stage's input. Creating the store where the source is in hand
-    keeps one owner, and the resolver never sees these two families
-    (`store.families` registers `fs`, `s3` and `db` today), so nothing
-    else builds one.
-  - **The store's identity.** `family` is the **source type** and
-    `identity_hint` is the source's `call_target` — the dotted call the
-    read site spells (`vectorstore.similarity_search`). ADR-0021 §1 makes
-    a family the *technology*, and for these two the source type is the
-    only technology the code names: the corpus is a Chroma or a FAISS
-    collection and neither call site says which, so a technology-specific
-    family (`chroma`, `faiss`, `imap`) would need a detector that names
-    one, and is a later step. One node per `(family, identity_hint)`:
-    two read sites that spell one target share one store, two spellings
-    are two stores.
+    site with its *read* call site, and these three families have no such
+    pair: the write is a writer call (`vectorstore.add_documents`) or a
+    declaration no call site spells, and the read is the source node,
+    which no family reports — the source is this stage's input. Creating
+    the store where the writer is in hand keeps one owner, and the
+    resolver never sees these three families (`store.families` registers
+    `fs`, `s3` and `db` today), so nothing else builds one.
+  - **The store's identity.** One node per `(family, identity_hint)`
+    (ADR-0021 §1), from the read site for a call-written family
+    (`_store_for_source`) and from the writer for the declaration-written
+    one (`_store_for_server`). ADR-0021 §1 makes a family the
+    *technology*, and `mcp_catalogue` is exactly that — an MCP tool
+    catalogue, as a place. For `rag_corpus` / `email_inbox` the source
+    type is the only technology the code names: the corpus is a Chroma or
+    a FAISS collection and neither call site says which, so a
+    technology-specific family (`chroma`, `faiss`, `imap`) would need a
+    detector that names one, and is a later step.
   - **`reads_from`.** One edge per source, from the store to the read
     site that reads from it — N:1, the direction ADR-0021 §3 fixes. Its
     `identity_confidence` is the pair's, the same number the `writes_to`
@@ -106,11 +116,8 @@ store) with this stage's anchor as the resolution.
 Both edges are `structural` (ADR-0021 §4), `observed_by=["ast"]` and
 `data_flow_confirmed=NULL` (ADR-0016, decision 3), and both carry §8's
 `identity_confidence` — `_link_confidence` states the three signals and
-the two numbers they produce. `mcp_tool_description` is **not**
-migrated: its writer is a declaration, its store is the catalogue
-(`mcp_catalogue`, B.3b-mcp-catalogue), and its `writes_to` still targets
-the source, so the two mechanisms now differ in their target as well as
-in how the writer is found.
+the two bases they are combined with, and the numbers they produce for
+each family.
 
 **Anchoring** is 1.3a's: the source node is one *read site*, so a writer
 cannot name it by what it writes. It can only be matched to a source
@@ -152,11 +159,11 @@ catalogue read in another — so it over-matches by construction.
 `max_writer_edges` bounds the `servers × sources` product, and ADR-0012's
 prioritization (1.3c) is what prunes a wide group set.
 
-Side effects: the stage reads the delta and, for a call-written source
-with a visible writer, appends the `store` node that source's identity
-names (one per `(family, identity_hint)`, reused across sources). Every
-other node is one another stage created, and every edge is between
-nodes the delta already holds.
+Side effects: the stage reads the delta and, for a source with a visible
+writer, appends the `store` node that writer and source name (one per
+`(family, identity_hint)`, reused across sources). Every other node is
+one another stage created, and every edge is between nodes the delta
+already holds.
 """
 
 from __future__ import annotations
@@ -203,6 +210,24 @@ MAX_WRITER_EDGES: int = 1000
 SERVER_DECLARED_SOURCE_TYPE: str = "mcp_tool_description"
 
 
+# The store family the declaration-written catalogue is a place in
+# (B.3b-mcp-catalogue, ADR-0021 §2): the *technology* is an MCP tool
+# catalogue (§1's correction), while the semantic role stays on the read
+# site as `source_type`. Named here rather than derived, because the
+# store's family is not the source type for this one family.
+CATALOGUE_FAMILY: str = "mcp_catalogue"
+
+
+# §8's base for the declaration-written family: 0.5, not
+# `confidence.BASE`'s 0.3. The base measures how explicit the anchor is,
+# and this family's anchor *is* the server's name — a literal the
+# constructor argument or the directory declared — where a call-written
+# family's anchor is a call shape the analysis inferred. §8's "the base
+# reflects the evidence", and the same revision `store.context.upload.
+# writer` makes for a context-based write (its `UPLOAD_WRITER_BASE`).
+CATALOGUE_WRITER_BASE: float = 0.5
+
+
 # The source families this stage writes edges for. The
 # declaration-written family plus every family `patterns.WRITER_RULES`
 # has a call rule for (B.2), derived rather than listed: a family with a
@@ -239,10 +264,10 @@ class UntrustedSourceWriterStage:
     Two ways a writer is found, one per family mechanism: an
     `mcp_server` for the declaration-written catalogue (1.3a.1), and the
     node of the component that calls the store for the call-written
-    corpus and mailbox (B.2). Two targets, since B.3c: the declaration's
-    `writes_to` still ends at the source, and the call's ends at a
-    `store` the stage creates, with a `reads_from` back to the source
-    (ADR-0021 §2–§3).
+    corpus and mailbox (B.2). One target for all three, since
+    B.3b-mcp-catalogue: a `store` the stage creates, with a `reads_from`
+    back to the source (ADR-0021 §2–§3). What differs is who names the
+    store — the read site for a call, the writer for a declaration.
     """
 
     name = "untrusted_source_writers"
@@ -303,11 +328,24 @@ class UntrustedSourceWriterStage:
         for source in sources:
             rule = component_rules.get(_source_type(source))
             if rule is None:
-                # The declaration-written family: the writers the server
-                # anchors name, and the source itself as the target.
+                # The declaration-written family (B.3b-mcp-catalogue):
+                # every server the anchors name writes the catalogue
+                # store its own name fixes, and one `reads_from` points
+                # back at the source. The store is per *writer* here, not
+                # per source — the writer is what names the place, while
+                # every catalogue read names the same call.
                 writers = _writers_for(source, by_file, by_name, declared)
                 for writer in writers:
-                    edge = _write_edge(writer, source, ctx)
+                    store = _store_for_server(delta, writer, stores)
+                    if store is None:
+                        continue
+                    confidence = _link_confidence(
+                        writer, source, ctx, base=CATALOGUE_WRITER_BASE
+                    )
+                    edge = _store_write_edge(writer, store, confidence, ctx)
+                    if not self._emit(delta, edge, emitted):
+                        return delta
+                    edge = _reads_from_edge(store, source, confidence, ctx)
                     if not self._emit(delta, edge, emitted):
                         return delta
                 continue
@@ -632,15 +670,56 @@ def _shares_an_import(
 
 
 # ------------------------------------------------------------------
-# The store a call-written source reads from (B.3c)
+# The store the write target is (B.3c, B.3b-mcp-catalogue)
 # ------------------------------------------------------------------
+
+def _store_for_identity(
+    delta: "GraphDelta",
+    family: str,
+    hint: str,
+    stores: dict[tuple[str, str], Node],
+) -> Node:
+    """The `store` node for one `(family, identity_hint)`, created once.
+
+    ADR-0021 §1: one node per identity, so two ends of a channel that
+    name one place share one node. The creation belongs to both callers —
+    `_store_for_source` and `_store_for_server` — and lives here rather
+    than in either because the node's shape is the identity's, not the
+    mechanism's: only *which* two halves an identity has differs.
+
+    The node is `store.resolver._store_node`'s, field for field: the id
+    is that module's public `store_node_id`, the name is
+    `<family>:<identity_hint>` — the identity rendered the way
+    `untrusted_source` renders its own — and the attributes are the two
+    halves and nothing else (§10: the role stays on the source, and a
+    store holds no view of its own). The mirror is deliberate: the store
+    subsystem does not reach into the stage package (the stage package
+    imports it), so the stage restates the shape rather than importing a
+    private helper, and `test_untrusted_source_writers` pins the id
+    against `store_node_id`.
+    """
+    key = (family, hint)
+    node = stores.get(key)
+    if node is None:
+        node = Node(
+            id=store_node_id(family, hint),
+            kind="store",
+            name=f"{family}:{hint}",
+            host_id=HOST_ID,
+            attributes={"family": family, "identity_hint": hint},
+            content_hash=None,
+        )
+        stores[key] = node
+        delta.nodes.append(node)
+    return node
+
 
 def _store_for_source(
     delta: "GraphDelta",
     source: Node,
     stores: dict[tuple[str, str], Node],
 ) -> Node | None:
-    """The `store` this source reads from, created once per identity.
+    """The `store` a call-written source reads from, created once.
 
     ADR-0021 §1: one node per `(family, identity_hint)`, and for a
     call-written family both halves come off the read site — the family
@@ -656,42 +735,66 @@ def _store_for_source(
     no visible writer never reaches this function — the caller creates
     the store after the writers are found, because a store nothing
     writes into is not evidence of a channel.
-
-    The node is `store.resolver._store_node`'s, field for field: the id
-    is that module's public `store_node_id`, the name is
-    `<family>:<identity_hint>` — the identity rendered the way
-    `untrusted_source` renders its own — and the attributes are the two
-    halves and nothing else (§10: the role stays on the source, and a
-    store holds no view of its own). The mirror is deliberate: the store
-    subsystem does not reach into the stage package (the stage package
-    imports it), so the stage restates the shape rather than importing a
-    private helper, and `test_untrusted_source_writers` pins the id
-    against `store_node_id`.
     """
     source_type = _source_type(source)
     hint = source.attributes.get("call_target")
     if source_type is None or not isinstance(hint, str):
         return None
-    key = (source_type, hint)
-    node = stores.get(key)
-    if node is None:
-        node = Node(
-            id=store_node_id(source_type, hint),
-            kind="store",
-            name=f"{source_type}:{hint}",
-            host_id=HOST_ID,
-            attributes={"family": source_type, "identity_hint": hint},
-            content_hash=None,
-        )
-        stores[key] = node
-        delta.nodes.append(node)
-    return node
+    return _store_for_identity(delta, source_type, hint, stores)
+
+
+def _store_for_server(
+    delta: "GraphDelta",
+    server: Node,
+    stores: dict[tuple[str, str], Node],
+) -> Node | None:
+    """The `store` an `mcp_server` declares its catalogue in (B.3b).
+
+    ADR-0021 §1: one node per `(family, identity_hint)`. For this family
+    the *writer* names both halves — the family is `mcp_catalogue`, the
+    technology, and the hint is the server's name — where
+    `_store_for_source` reads them off the read site: a catalogue read is
+    the same call at every server (`client.list_tools`), so the read site
+    names no place at all.
+
+    `_server_identity` states which spelling of the name wins. `None`
+    means no store, and the caller then emits no edge either: §5's rule
+    for a place nothing can name, applied to the one family whose
+    identity comes from a node rather than from a literal.
+    """
+    hint = _server_identity(server)
+    if hint is None:
+        return None
+    return _store_for_identity(delta, CATALOGUE_FAMILY, hint, stores)
+
+
+def _server_identity(server: Node) -> str | None:
+    """The catalogue name a server node carries, or None.
+
+    `server_name` first, `name` second. A path-heuristic server (stage 1)
+    is created from the `mcp/servers/<name>/` directory and carries both
+    spellings, equal by construction; a detector-created server carries
+    the name its constructor argued (`FastMCP("finmail")`) and no
+    `server_name` at all. The order is therefore unobservable on a real
+    scan, and it is pinned for the hand-built delta where it is not: the
+    two spellings name one catalogue, and the declared one — the
+    attribute the node was created for — is read first.
+
+    `None` is the honest answer for a node that names nothing, which a
+    real scan cannot produce: the anchor returned a server node, so
+    something named it.
+    """
+    declared = server.attributes.get("server_name")
+    if isinstance(declared, str) and declared:
+        return declared
+    name = server.name
+    return name if isinstance(name, str) and name else None
 
 
 def _store_index(delta: "GraphDelta") -> dict[tuple[str, str], Node]:
     """`(family, identity_hint)` → store node, for the delta's stores.
 
-    The index `_store_for_source` fills, read first from the delta: a
+    The index `_store_for_identity` fills, read first from the delta: a
     store is one node per identity (§1), so a delta that already holds
     the node — a hand-built one, or a future stage that builds stores
     earlier — gets the node reused rather than a second row for the same
@@ -714,44 +817,55 @@ def _link_confidence(
     writer: Node,
     source: Node,
     ctx: NormalizeContext,
+    base: float = BASE,
 ) -> float:
     """§8's `identity_confidence` for one (writer, source) pair.
 
     Three of ADR-0021 §8's parts, and the family match is the caller's
-    gate (`WRITER_RULES`' capability), so what is left to compute is:
+    gate (`WRITER_RULES`' capability, or the server anchors), so what is
+    left to compute is:
 
-      - **base** — `confidence.BASE` (0.3): the family matched, which
-        opens the possibility and is the floor of every link;
+      - **base** — how explicit the anchor is, which is what §8's base
+        measures. `confidence.BASE` (0.3) for a call-written family: the
+        family matched, and the write is a call shape the analysis
+        inferred. `CATALOGUE_WRITER_BASE` (0.5) for the
+        declaration-written one: its anchor *is* the server's name, a
+        literal the constructor or the directory declared;
       - **literal** — `confidence.LITERAL_EQUAL` (0.6). The store's
-        `identity_hint` *is* the source's `call_target`
-        (`_store_for_source`), so the two ends of this link name one
-        literal by construction. It is the equal row and not a
-        comparison: there is one literal here, not two that agree, which
-        is why `literal_match` is not asked to compare a value with
-        itself;
+        `identity_hint` *is* the other end's name by construction — the
+        source's `call_target` (`_store_for_source`), or the server's own
+        name (`_server_identity`) — so the two ends of this link name one
+        literal. It is the equal row and not a comparison: there is one
+        literal here, not two that agree, which is why `literal_match` is
+        not asked to compare a value with itself;
       - **code context** — `_code_context`, the anchor that made the
         writer visible, mapped onto §8's same-module / shared-import
-        weights.
+        weights. A server node with no file of its own — the
+        path-heuristic one — contributes none, and such a pair keeps its
+        base and the literal.
 
-    `combine_signals` does the arithmetic, so the numbers are §8's own:
-    **0.776** for a writer in the source's file (`1 − 0.7 × 0.4 × 0.8`)
-    and **0.748** for a shared import (`1 − 0.7 × 0.4 × 0.9`).
-    `test_untrusted_source_writers` pins both.
+    `combine_signals` does the arithmetic, so the numbers are §8's own.
+    Call-written (base 0.3): **0.776** for a writer in the source's file
+    (`1 − 0.7 × 0.4 × 0.8`) and **0.748** for a shared import
+    (`1 − 0.7 × 0.4 × 0.9`). Declaration-written (base 0.5): **0.84**
+    (`1 − 0.5 × 0.4 × 0.8`), **0.82** (`1 − 0.5 × 0.4 × 0.9`) and
+    **0.8** (`1 − 0.5 × 0.4`) for a server that names no file.
+    `test_untrusted_source_writers` pins all five.
 
     `code_context` (`store.confidence`) is not called: it reads two
     `Site`s' `facts`, and this stage holds a node and a file path — the
     read site is a node, and no family reports the write call — so the
     anchor rule is restated against the same two constants instead. The
-    shared-*wrapper* row (+0.3) is therefore unreachable for these two
-    families; `_shares_an_import` is a one-way import, not a shared
-    local module.
+    shared-*wrapper* row (+0.3) is therefore unreachable for these
+    families; `_shares_an_import` is a one-way import, not a shared local
+    module.
     """
     signals: list[float] = [LITERAL_EQUAL]
     writer_file = writer.attributes.get("source_file")
     source_file = source.attributes.get("source_file")
     if isinstance(writer_file, str) and isinstance(source_file, str):
         signals.append(_code_context(writer_file, source_file, ctx))
-    return combine_signals(BASE, signals)
+    return combine_signals(base, signals)
 
 
 def _code_context(
@@ -781,15 +895,15 @@ def _store_write_edge(
     confidence: float,
     ctx: NormalizeContext,
 ) -> Edge:
-    """`writes_to` from the writer to the store it writes into (B.3c).
+    """`writes_to` from the writer to the store it writes into.
 
     ADR-0021 §2 and §4: the target is the store, the edge is
     `structural` — a declaration about a place, not a path from entry to
     sink — and `identity_confidence` carries §8's number, which answers
     *is this the same store the other side names*, not *does this edge
-    exist*. `confidence` (existence) keeps its default: the AST parsed
-    the write call. `data_flow_confirmed` stays `NULL` (ADR-0016,
-    decision 3).
+    exist*. `confidence` (existence) keeps its default: the write site is
+    source an AST stage parsed. `data_flow_confirmed` stays `NULL`
+    (ADR-0016, decision 3).
     """
     return Edge(
         id=edge_id(writer.id, store.id, "writes_to"),
@@ -820,8 +934,9 @@ def _reads_from_edge(
     `identity_confidence` from §8, `data_flow_confirmed` `NULL`. The
     number is the pair's and not this edge's: with several writers of one
     source the link keeps the strongest pairing, which is what the caller
-    passes — `StoreResolver._keep_edge`'s rule, applied to the one edge
-    a (store, source) pair gets.
+    passes — `StoreResolver._keep_edge`'s rule, applied to the one edge a
+    (store, source) pair gets. The declaration-written family has one
+    writer per store, so its link carries that pair's number directly.
     """
     return Edge(
         id=edge_id(store.id, source.id, "reads_from"),
@@ -952,46 +1067,9 @@ def _server_module_exists(name: str, manifest_paths: list[str]) -> bool:
     )
 
 
-def _write_edge(
-    writer: Node,
-    source: Node,
-    ctx: NormalizeContext,
-) -> Edge:
-    """`writes_to` from the writer that declares the source (1.3a.1).
-
-    The declaration-written family's edge, and the one target B.3c did
-    **not** move: a `mcp_server` declares a catalogue, and the catalogue
-    is read back by the client, so the source is what the declaration is
-    about and the `mcp_catalogue` store (ADR-0021 §2's `store` for this
-    family, B.3b-mcp-catalogue) is a later step. The call-written
-    families go through `_store_write_edge`, which points at the store
-    the stage creates; both are `writes_to`, and both end at the node the
-    other half of the channel reads.
-
-    Direction is the data's, like the read edge and for the same reason:
-    the content is produced by the writer and flows into the reader, so
-    the write chain ends at the source and the read chain leaves it.
-
-    The rule is structural — a writer and a source visible from the same
-    file, or from files that import each other — and the producer never
-    traced a value into the source, so the edge makes no data-flow claim:
-    `data_flow_confirmed` stays at its schema default (`NULL`) and the
-    edge is control, like `provides_tool` — the parallel
-    server → declared-artifact edge (ADR-0015, decision 5; ADR-0016,
-    decision 3). `flow_kind` is `control` here (`Edge`'s default) and
-    `FlowKindStage` pins it, which is why this edge declares no kind of
-    its own while the migrated ones must.
-    """
-    return Edge(
-        id=edge_id(writer.id, source.id, "writes_to"),
-        source_id=writer.id,
-        target_id=source.id,
-        kind="writes_to",
-        host_id=ctx.host_id,
-    )
-
-
 __all__ = [
+    "CATALOGUE_FAMILY",
+    "CATALOGUE_WRITER_BASE",
     "MAX_WRITER_EDGES",
     "SERVER_DECLARED_SOURCE_TYPE",
     "STRUCTURAL",

@@ -3,13 +3,14 @@
 Run order: 13 of 20 (see `normalizer_stages.STAGES`).
 
 C4: no pre-1.3 row. ADR-0010's channel has two halves by now — 1.3a
-emits `source → reader` for every catalogue read, 1.3a.1 emits
-`mcp_server → writes_to → source` — and neither says *which tools the
-reader can call*. The reader's call is `client.call_tool(name)`, and
-`name` is a runtime value: no static edge exists from the agent to any
-tool, so a chain that starts at the catalogue dies at the agent and
-`find_chain_groups` stays empty on the one corpus that has the shape
-(measured: FinBot, 1.3a.1's report).
+emits `source → reader` for every catalogue read, 1.3a.1 emits the write
+side (`mcp_server → writes_to → source` before B.3b-mcp-catalogue,
+`mcp_server → writes_to → store → reads_from → source` since) — and
+neither says *which tools the reader can call*. The reader's call is
+`client.call_tool(name)`, and `name` is a runtime value: no static edge
+exists from the agent to any tool, so a chain that starts at the
+catalogue dies at the agent and `find_chain_groups` stays empty on the
+one corpus that has the shape (measured: FinBot, 1.3a.1's report).
 
 This stage closes that hop with the only evidence available: **the agent
 that reads a catalogue can invoke every tool the catalogue describes.**
@@ -133,14 +134,42 @@ def _writers_of_catalogues(
     delta: "GraphDelta",
     catalogues: set[str],
 ) -> dict[str, list[str]]:
-    """`catalogue id → [server id]`, from 1.3a.1's `writes_to` edges."""
+    """`catalogue id → [server id]`, from the write side of the channel.
+
+    Two shapes, because the graph has two (ADR-0021 §2). Since
+    B.3b-mcp-catalogue a server writes the *store* the catalogue reads
+    from — `server --writes_to--> store`, `store --reads_from-->
+    catalogue` — and before it the server wrote the catalogue itself
+    (`server --writes_to--> catalogue`). Both are read, so a scanned
+    delta in the new shape and a hand-built one in the old shape both
+    resolve; the store hop is the graph's, not a lookup, and the
+    `reads_from` target is what ties a store to *this* catalogue.
+    """
+    stores_by_catalogue = _stores_by_catalogue(delta, catalogues)
     index: dict[str, list[str]] = {}
     for edge in delta.edges:
         if edge.kind != "writes_to":
             continue
+        if edge.target_id in catalogues:
+            index.setdefault(edge.target_id, []).append(edge.source_id)
+            continue
+        for catalogue_id in stores_by_catalogue.get(edge.target_id, ()):
+            index.setdefault(catalogue_id, []).append(edge.source_id)
+    return index
+
+
+def _stores_by_catalogue(
+    delta: "GraphDelta",
+    catalogues: set[str],
+) -> dict[str, list[str]]:
+    """`store id → [catalogue id]`, from the `reads_from` edges (§3)."""
+    index: dict[str, list[str]] = {}
+    for edge in delta.edges:
+        if edge.kind != "reads_from":
+            continue
         if edge.target_id not in catalogues:
             continue
-        index.setdefault(edge.target_id, []).append(edge.source_id)
+        index.setdefault(edge.source_id, []).append(edge.target_id)
     return index
 
 
@@ -163,10 +192,11 @@ def _invocable_tools(
     """Every tool of every server that writes a catalogue this agent reads.
 
     Two hops and a set union, in the direction the graph stores: the
-    agent's own read edge names the catalogue, the writer's `writes_to`
-    edge names the server, and the server's `provides_tool` edges name
-    the tools. A catalogue no server writes contributes nothing (no
-    writer evidence exists for it), and a server that exposes no tool
+    agent's own read edge names the catalogue, the write side names the
+    server (through the catalogue's store since B.3b-mcp-catalogue, or
+    directly before it), and the server's `provides_tool` edges name the
+    tools. A catalogue no server writes contributes nothing (no writer
+    evidence exists for it), and a server that exposes no tool
     contributes nothing — both are absences, not failures.
     """
     tools: set[str] = set()

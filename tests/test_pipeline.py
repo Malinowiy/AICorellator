@@ -623,7 +623,7 @@ def test_pipeline_writer_edge_reaches_the_store(
     writer_target: Path,
     pipeline_db: Path,
 ) -> None:
-    """1.3a.1 end to end: `mcp_server → writes_to → untrusted_source`.
+    """B.3b-mcp-catalogue end to end: `mcp_server → writes_to → store`.
 
     Two writers, one per file, because the rule is "every server visible
     from the source's file":
@@ -638,6 +638,11 @@ def test_pipeline_writer_edge_reaches_the_store(
       - `fastknowledge`, detected from `FastMCP("fastknowledge")` — and
         that node only exists once `detector_merge` has run, which is
         why the writer stage runs after the merge.
+
+    Each server writes the catalogue store its own name fixes (ADR-0021
+    §2), and the store is read back by the catalogue source it belongs
+    to: `mcp_catalogue:knowledge` for `client.list_tools`,
+    `mcp_catalogue:fastknowledge` for `server.list_tools`.
 
     The `rag_corpus` read in the first file gets no writer edge: the
     server reads its store, it does not declare the corpus. That gate is
@@ -668,16 +673,33 @@ def test_pipeline_writer_edge_reaches_the_store(
 
         edges = store.edges.list(kind="writes_to")
         assert len(edges) == 2
-        # Control, with no traced dataflow (ADR-0016, decision 3).
-        assert {e.flow_kind for e in edges} == {"control"}
+        # A declaration about a place, with no traced dataflow
+        # (ADR-0021 §4; ADR-0016, decision 3).
+        assert {e.flow_kind for e in edges} == {"structural"}
         assert {e.data_flow_confirmed for e in edges} == {None}
         assert sorted(
             (nodes[e.source_id].name, nodes[e.target_id].name)
             for e in edges
         ) == [
-            ("fastknowledge", "mcp_tool_description:server.list_tools"),
-            ("knowledge", "mcp_tool_description:client.list_tools"),
+            ("fastknowledge", "mcp_catalogue:fastknowledge"),
+            ("knowledge", "mcp_catalogue:knowledge"),
         ]
+
+        # Each store is read back by the catalogue source it belongs to,
+        # and the two links carry §8's identity confidence (§7).
+        reads = store.edges.list(kind="reads_from")
+        assert sorted(
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in reads
+        ) == [
+            ("mcp_catalogue:fastknowledge",
+             "mcp_tool_description:server.list_tools"),
+            ("mcp_catalogue:knowledge",
+             "mcp_tool_description:client.list_tools"),
+        ]
+        assert all(
+            e.identity_confidence is not None for e in edges + reads
+        )
 
         # The corpus read is not a catalogue: no writer edge.
         rag = next(
@@ -872,7 +894,8 @@ def test_pipeline_chain_group_through_dynamic_invocation(
     Every hop is a rule landed in 1.3, and each one is asserted on its
     own so a failure says which rule broke:
 
-        literal factory path    knowledge → writes_to → catalogue
+        literal factory path    knowledge → writes_to → store
+                                ('mcp_catalogue', 'knowledge')
         catalogue read          catalogue → has_access_to → agent
         dynamic invocation      agent → uses_tool → get_documents
         same-file edges         knowledge → provides_tool →
@@ -884,7 +907,7 @@ def test_pipeline_chain_group_through_dynamic_invocation(
 
     The chains the enumerator pairs are then
 
-        write   GET /chat → agent → knowledge → catalogue
+        write   GET /chat → agent → knowledge → store
         read    catalogue → agent → get_documents → execute_script
 
     and a second read chain goes through the server instead of straight
@@ -892,7 +915,8 @@ def test_pipeline_chain_group_through_dynamic_invocation(
     execute_script`), because `provides_tool` is control and therefore
     traversable. Two groups, one per read chain — collapsing or ranking
     the longer path is ADR-0012's prioritization, which is 1.3c and is
-    not implemented.
+    not implemented. The pair meets at the store since
+    B.3b-mcp-catalogue, which is what the group names.
     """
     target = ingest(dynamic_target, kind="folder")
     delta = _normalized_dynamic(target)
@@ -910,15 +934,27 @@ def test_pipeline_chain_group_through_dynamic_invocation(
             if n.name == "mcp_tool_description:client.list_tools"
         )
         tool = next(n for n in nodes.values() if n.name == "get_documents")
+        store_node = next(
+            n for n in nodes.values() if n.name == "mcp_catalogue:knowledge"
+        )
 
         # The reader is the gate, and `reads_untrusted` is on it.
         assert "reads_untrusted" in agent.capabilities
 
-        # The anchor that makes the write side reachable (1.3a.1.2).
+        # The anchor that makes the write side reachable (1.3a.1.2), and
+        # its target since B.3b-mcp-catalogue: the catalogue store.
         assert [
             (nodes[e.source_id].name, nodes[e.target_id].name)
             for e in store.edges.list(kind="writes_to")
-        ] == [("knowledge", "mcp_tool_description:client.list_tools")]
+        ] == [("knowledge", "mcp_catalogue:knowledge")]
+        assert [e.flow_kind for e in store.edges.list(kind="writes_to")] == [
+            "structural"
+        ]
+        assert [
+            (nodes[e.source_id].name, nodes[e.target_id].name)
+            for e in store.edges.list(kind="reads_from")
+        ] == [("mcp_catalogue:knowledge", "mcp_tool_description:"
+               "client.list_tools")]
 
         # The rule that closes the read side (1.3a.1.2).
         invocations = store.edges.list(kind="uses_tool")
@@ -959,7 +995,7 @@ def test_pipeline_chain_group_through_dynamic_invocation(
             (c for g in groups for c in g.write_chains)
         } == {(
             "GET /chat", "ToolProviderAgent", "knowledge",
-            "mcp_tool_description:client.list_tools",
+            "mcp_catalogue:knowledge",
         )}
 
 
@@ -1105,7 +1141,7 @@ def test_pipeline_chain_group_survives_the_literal_moving_file(
         assert [
             (nodes[e.source_id].name, nodes[e.target_id].name)
             for e in store.edges.list(kind="writes_to")
-        ] == [("knowledge", "mcp_tool_description:client.list_tools")]
+        ] == [("knowledge", "mcp_catalogue:knowledge")]
 
         # The read side is what it was (1.3a.1.2): the agent invokes the
         # tool the catalogue describes.
@@ -1136,7 +1172,7 @@ def test_pipeline_chain_group_survives_the_literal_moving_file(
             (c for g in groups for c in g.write_chains)
         } == {(
             "GET /chat", "ToolProviderAgent", "knowledge",
-            "mcp_tool_description:client.list_tools",
+            "mcp_catalogue:knowledge",
         )}
 
 
@@ -1248,21 +1284,23 @@ def test_pipeline_chain_groups_evaluated_and_reported(
 # B.3a / B.3b-fs — the store mechanism, negative then positive
 # ============================================================
 
-def test_the_pipeline_produces_no_store_and_no_reads_from(
+def test_the_fs_family_leaves_a_project_without_a_store_literal_alone(
     writer_target: Path,
     pipeline_db: Path,
 ) -> None:
-    """No store literal, no store — with the `fs` family registered.
+    """No store literal, no `fs` store — the family's negative case.
 
     Neither file of this project calls `open`, `Path.write_*` or
-    `aiofiles.open`, so the family has nothing to recognize and the
-    graph is B.2's: two `writes_to` edges, every one of them ending at a
-    read site rather than at a store, no `store` node and no
-    `reads_from` edge.
+    `aiofiles.open`, so the family has nothing to recognize. What the
+    graph *does* hold is the catalogue write side: since
+    B.3b-mcp-catalogue each server writes `store('mcp_catalogue', name)`
+    (stage 11), which is a different producer and a different family. The
+    negative case here is that no `fs` store exists and that the
+    `rag_corpus` read — the one source no writer claims — gets no store,
+    no `writes_to` and no `reads_from`.
 
     The positive counterpart is right below — the same pipeline over a
-    project that *does* name a store. This one is the negative: a
-    project a store producer must leave alone.
+    project that *does* name an `fs` store.
     """
     target = ingest(writer_target, kind="folder")
     manifest = discover(target)
@@ -1283,27 +1321,41 @@ def test_the_pipeline_produces_no_store_and_no_reads_from(
     with GraphStore(pipeline_db) as store:
         write_graph(store, delta)
 
-        assert store.nodes.list(kind="store") == []
-        assert store.edges.list(kind="reads_from") == []
-
         nodes = {n.id: n for n in store.nodes.list()}
-        writes = store.edges.list(kind="writes_to")
-        assert writes, "the B.2 write side is the point of this fixture"
-        assert {
-            nodes[e.target_id].kind for e in writes
-        } == {"untrusted_source"}
+        stores = store.nodes.list(kind="store")
+        assert sorted(n.name for n in stores) == [
+            "mcp_catalogue:fastknowledge", "mcp_catalogue:knowledge",
+        ]
+        assert {n.attributes["family"] for n in stores} == {
+            "mcp_catalogue"
+        }
 
-        # Every `identity_confidence` in the graph is NULL: no kind but
-        # the two store links carries one (ADR-0021 §7).
+        # The corpus read is the source nobody writes: no store, no write
+        # edge, no read link. The server reads its store; it does not
+        # declare the corpus (1.3a.1's gate).
+        rag = next(
+            n for n in nodes.values()
+            if n.name == "rag_corpus:vectorstore.similarity_search"
+        )
+        assert store.edges.list(target_id=rag.id) == []
+        assert store.edges.list(source_id=rag.id, kind="reads_from") == []
+
+        # §7: only the two store links carry an identity confidence, and
+        # on this graph they all do — stage 11 computed one per pair.
         assert all(
             e.identity_confidence is None
             for e in store.edges.list()
+            if e.kind not in ("writes_to", "reads_from")
+        )
+        assert all(
+            e.identity_confidence is not None
+            for e in store.edges.list(kind="writes_to")
         )
 
-        for group in store.query.find_chain_groups(include_weak=True):
-            assert group.store_id is None
-            assert group.store_confidence is None
-            assert group.weak is False
+        # The write side alone is not a group (ADR-0010): no entry point
+        # reaches a server, and the project has no sink for a read chain
+        # to terminate at.
+        assert store.query.find_chain_groups(include_weak=True) == []
 
 
 # ============================================================

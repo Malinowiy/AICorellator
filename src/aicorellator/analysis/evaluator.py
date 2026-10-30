@@ -29,9 +29,9 @@ import logging
 from dataclasses import asdict
 from typing import Iterable
 
-from ..graph.models import Chain, ChainGroupRecord, Node
+from ..graph.models import Chain, ChainGroupRecord, Edge, Node
 from ..graph.store import GraphStore
-from ..graph.query import CandidateChain, ChainGroup
+from ..graph.query import ANCHOR_EDGE_KINDS, CandidateChain, ChainGroup
 from ..patterns import TRAVERSABLE_FLOW_KINDS
 from . import aggregation, judge as judge_mod, voters as voters_mod
 from .config_loader import EnsembleConfig
@@ -664,26 +664,26 @@ def _chain_edges(
     A group stores its chains as node sequences (and their ids); the
     edges are what the enumerator walked and they are not stored, so they
     are recovered here: for each consecutive pair, the active edges of
-    that pair with a traversable `flow_kind`, first by id — the same
-    query and the same order `QueryLayer._write_chains_to` /
-    `_read_chains_from` walk. On the four corpora every pair resolves to
-    exactly one edge, so the reconstruction *is* the enumeration; a pair
-    with several parallel edges would leave the choice ambiguous, which
-    is why a mismatch against the stored id is logged (the ids are
-    content-derived, so they are the only way to tell).
+    that pair a chain hop can be, first by id — the same query and the
+    same order `QueryLayer._write_chains_to` / `_read_chains_from` walk.
+    On the four corpora every pair resolves to exactly one edge, so the
+    reconstruction *is* the enumeration; a pair with several parallel
+    edges would leave the choice ambiguous, which is why a mismatch
+    against the stored id is logged (the ids are content-derived, so they
+    are the only way to tell).
+
+    `_hop_edges` states which edges those are, including the one hop the
+    traversability rule does not cover: a store-joined write chain's last
+    hop is `writes_to`, which is `structural` (ADR-0021 §4) and therefore
+    not traversable, and the enumerator crosses it anyway because it is
+    the anchor's declaration rather than a path hop (ADR-0021 §6).
 
     The ids are needed twice: the prompt's `evidence` cites edges, and
     Layer 3 checks the citations against this set.
     """
     edges: list[str] = []
     for source_id, target_id in zip(nodes, nodes[1:]):
-        candidates = [
-            edge
-            for edge in store.edges.list(
-                source_id=source_id, target_id=target_id, status="active"
-            )
-            if edge.flow_kind in TRAVERSABLE_FLOW_KINDS
-        ]
+        candidates = _hop_edges(store, source_id, target_id)
         if not candidates:
             # The graph moved under the group (a delta rescan). Leave the
             # hop out; validation will reject the group rather than the
@@ -703,6 +703,38 @@ def _chain_edges(
                 chain_id, edges, rebuilt,
             )
     return edges
+
+
+def _hop_edges(
+    store: GraphStore,
+    source_id: str,
+    target_id: str,
+) -> list[Edge]:
+    """The active edges one chain hop can be, in id order.
+
+    A traversable edge first, which is the rule `_write_chains_to` /
+    `_read_chains_from` apply to every hop along a path. When the pair
+    has none, the anchor kinds (`writes_to`) are the fallback: the write
+    chain's last hop is `writer → store` since B.3c / B.3b-mcp-catalogue
+    and that edge is `structural` — a declaration about a place, not a
+    path hop (ADR-0021 §4, §6) — so the enumerator crosses it while the
+    traversability rule refuses it. Without the fallback every
+    store-joined chain is rejected by Layer 3 for an edge the enumerator
+    really did walk.
+
+    `reads_from` is deliberately not a fallback: it joins the write chain
+    to the read chain at the store (ADR-0021 §6); it is not a hop of
+    either one.
+    """
+    rows = store.edges.list(
+        source_id=source_id, target_id=target_id, status="active"
+    )
+    traversable = [
+        edge for edge in rows if edge.flow_kind in TRAVERSABLE_FLOW_KINDS
+    ]
+    if traversable:
+        return traversable
+    return [edge for edge in rows if edge.kind in ANCHOR_EDGE_KINDS]
 
 
 def _lethal_trifecta_flag(store: GraphStore, node_id: str) -> bool:

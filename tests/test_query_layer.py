@@ -678,30 +678,40 @@ def test_find_chain_groups_pairs_one_write_with_one_read(
     assert len(group.read_chain_ids) == 1
 
 
-def test_find_chain_groups_traverses_a_control_write_edge(
+def test_find_chain_groups_joins_a_catalogue_at_its_store(
     store: GraphStore,
 ) -> None:
-    """The 1.3a.1 shape: `mcp_server → writes_to → source`, control.
+    """The B.3b-mcp-catalogue shape: `server → writes_to → store`.
 
-    The edge the writer stage emits is `control` with
-    `data_flow_confirmed = "unknown"` (ADR-0015 decision 5 — a
-    declaration, not a traced dataflow). It must still be traversable:
-    a group is a pair, and a control write edge is the only kind the
-    graph can produce for this side today.
+    The write edge is `structural` — a declaration about a place, not a
+    traced dataflow (ADR-0021 §4) — and the enumerator still crosses it:
+    a structural edge is refused as a *path* hop and accepted as the
+    chain's last hop, because there it names the anchor (ADR-0021 §6).
+    The group then joins by the store's id rather than by the source:
+
+        entry --has_access_to--> server --writes_to--> store
+        store --reads_from--> source --has_access_to--> reader
+              --has_access_to--> sink
+
+    The two store links carry §8's `identity_confidence`, and the group's
+    confidence is the weaker of them (ADR-0021 §7).
     """
     ids = {
         "entry": "entry_point:" + "e" * 16,
         "server": "mcp_server:" + "m" * 16,
+        "store": "store:" + "d" * 16,
         "source": "untrusted_source:" + "u" * 16,
         "reader": "tool:" + "r" * 16,
         "sink": "sink:" + "s" * 16,
         "e_m": "edge:" + "1" * 16,
-        "m_u": "edge:" + "2" * 16,
-        "u_r": "edge:" + "3" * 16,
-        "r_k": "edge:" + "4" * 16,
+        "m_s": "edge:" + "2" * 16,
+        "s_u": "edge:" + "3" * 16,
+        "u_r": "edge:" + "4" * 16,
+        "r_k": "edge:" + "5" * 16,
     }
     _put(store, ids["entry"], "entry_point", "GET /tools")
     _put(store, ids["server"], "mcp_server", "knowledge")
+    _put(store, ids["store"], "store", "mcp_catalogue:knowledge")
     _put(
         store, ids["source"], "untrusted_source",
         "mcp_tool_description:client.list_tools",
@@ -709,19 +719,28 @@ def test_find_chain_groups_traverses_a_control_write_edge(
     _put(store, ids["reader"], "tool", "get_documents")
     _put(store, ids["sink"], "sink", "run_shell")
     _link(store, ids["e_m"], ids["entry"], ids["server"])
-    _link(
-        store, ids["m_u"], ids["server"], ids["source"],
-        kind="writes_to",
-    )
+    store.edges.upsert(Edge(
+        id=ids["m_s"], source_id=ids["server"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.84,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_u"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.82,
+    ))
     _link(store, ids["u_r"], ids["source"], ids["reader"], flow_kind="data")
     _link(store, ids["r_k"], ids["reader"], ids["sink"])
 
     groups = store.query.find_chain_groups()
 
     assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_name == "mcp_catalogue:knowledge"
+    assert groups[0].store_confidence == 0.82
     assert groups[0].untrusted_source_id == ids["source"]
     assert groups[0].write_chains == [
-        [ids["entry"], ids["server"], ids["source"]]
+        [ids["entry"], ids["server"], ids["store"]]
     ]
     assert groups[0].read_chains == [
         [ids["source"], ids["reader"], ids["sink"]]
@@ -734,10 +753,11 @@ def test_find_chain_groups_with_the_dynamic_invocation_edge(
     """The 1.3a.1.2 shape: the reader reaches the tools it can invoke.
 
     Both sides of ADR-0010's channel, with the edge the dynamic
-    invocation stage adds:
+    invocation stage adds and the store the write side ends at since
+    B.3b-mcp-catalogue:
 
         entry --delegates_to--> agent --has_access_to--> server
-              --writes_to--> source
+              --writes_to--> store --reads_from--> source
         source --has_access_to(data)--> agent --uses_tool--> tool
               --has_access_to--> sink
 
@@ -746,20 +766,26 @@ def test_find_chain_groups_with_the_dynamic_invocation_edge(
     first had an edge. Here the agent is on both sides of the anchor,
     which is the FinBot shape — the component that reads the catalogue
     is the component that can invoke what it describes.
+
+    The chain the write side produces ends at the store, and the two
+    chains meet there: the agent is the reader, and the server it reached
+    is the writer of the store the catalogue reads from.
     """
     ids = {
         "entry": "entry_point:" + "e" * 16,
         "agent": "agent:" + "a" * 16,
         "server": "mcp_server:" + "m" * 16,
+        "store": "store:" + "d" * 16,
         "source": "untrusted_source:" + "u" * 16,
         "tool": "tool:" + "t" * 16,
         "sink": "sink:" + "s" * 16,
         "e_a": "edge:" + "1" * 16,
         "a_m": "edge:" + "2" * 16,
-        "m_u": "edge:" + "3" * 16,
-        "u_a": "edge:" + "4" * 16,
-        "a_t": "edge:" + "5" * 16,
-        "t_k": "edge:" + "6" * 16,
+        "m_s": "edge:" + "3" * 16,
+        "s_u": "edge:" + "4" * 16,
+        "u_a": "edge:" + "5" * 16,
+        "a_t": "edge:" + "6" * 16,
+        "t_k": "edge:" + "7" * 16,
     }
     _put(store, ids["entry"], "entry_point", "POST /chat")
     _put(
@@ -767,6 +793,7 @@ def test_find_chain_groups_with_the_dynamic_invocation_edge(
         capabilities=["invokes_mcp_tool", "reads_untrusted"],
     )
     _put(store, ids["server"], "mcp_server", "finstripe")
+    _put(store, ids["store"], "store", "mcp_catalogue:finstripe")
     _put(
         store, ids["source"], "untrusted_source",
         "mcp_tool_description:client.list_tools",
@@ -778,10 +805,16 @@ def test_find_chain_groups_with_the_dynamic_invocation_edge(
         kind="delegates_to",
     )
     _link(store, ids["a_m"], ids["agent"], ids["server"])
-    _link(
-        store, ids["m_u"], ids["server"], ids["source"],
-        kind="writes_to",
-    )
+    store.edges.upsert(Edge(
+        id=ids["m_s"], source_id=ids["server"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.8,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_u"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.8,
+    ))
     _link(store, ids["u_a"], ids["source"], ids["agent"], flow_kind="data")
     _link(
         store, ids["a_t"], ids["agent"], ids["tool"], kind="uses_tool",
@@ -791,9 +824,12 @@ def test_find_chain_groups_with_the_dynamic_invocation_edge(
     groups = store.query.find_chain_groups()
 
     assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
     assert groups[0].untrusted_source_id == ids["source"]
     assert groups[0].write_chains == [
-        [ids["entry"], ids["agent"], ids["server"], ids["source"]]
+        [
+            ids["entry"], ids["agent"], ids["server"], ids["store"],
+        ]
     ]
     assert groups[0].read_chains == [
         [ids["source"], ids["agent"], ids["tool"], ids["sink"]]
@@ -808,11 +844,12 @@ def test_find_chain_groups_with_the_project_level_writer_anchor(
     The project-wide literal anchor (1.3a.1.3) links a server to a
     catalogue read in *another* file, so a group can pair a server that
     writes a catalogue with a read chain that reaches a tool a
-    **different** server provides. The anchor is the source, not the
-    writer's tools, so the pair forms either way — and the two halves
-    share no server but the source:
+    **different** server provides. The anchor is the store the source
+    reads from, not the writer's tools, so the pair forms either way —
+    and the two halves share no server but the store and the source:
 
-        entry --has_access_to--> finmail --writes_to--> source
+        entry --has_access_to--> finmail --writes_to--> store
+              --reads_from--> source
         source --has_access_to(data)--> MCPToolProvider
                --uses_tool--> get_account_balance --has_access_to--> sink
 
@@ -822,18 +859,21 @@ def test_find_chain_groups_with_the_project_level_writer_anchor(
     ids = {
         "entry": "entry_point:" + "e" * 16,
         "writer": "mcp_server:" + "w" * 16,
+        "store": "store:" + "d" * 16,
         "source": "untrusted_source:" + "u" * 16,
         "agent": "agent:" + "a" * 16,
         "tool": "tool:" + "t" * 16,
         "sink": "sink:" + "s" * 16,
         "e_w": "edge:" + "1" * 16,
         "w_s": "edge:" + "2" * 16,
-        "s_a": "edge:" + "3" * 16,
-        "a_t": "edge:" + "4" * 16,
-        "t_k": "edge:" + "5" * 16,
+        "s_u": "edge:" + "3" * 16,
+        "s_a": "edge:" + "4" * 16,
+        "a_t": "edge:" + "5" * 16,
+        "t_k": "edge:" + "6" * 16,
     }
     _put(store, ids["entry"], "entry_point", "POST /chat")
     _put(store, ids["writer"], "mcp_server", "finmail")
+    _put(store, ids["store"], "store", "mcp_catalogue:finmail")
     _put(
         store, ids["source"], "untrusted_source",
         "mcp_tool_description:client.list_tools",
@@ -845,10 +885,16 @@ def test_find_chain_groups_with_the_project_level_writer_anchor(
     _put(store, ids["tool"], "tool", "get_account_balance")
     _put(store, ids["sink"], "sink", "run_shell")
     _link(store, ids["e_w"], ids["entry"], ids["writer"])
-    _link(
-        store, ids["w_s"], ids["writer"], ids["source"],
-        kind="writes_to",
-    )
+    store.edges.upsert(Edge(
+        id=ids["w_s"], source_id=ids["writer"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.8,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_u"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=0.8,
+    ))
     _link(store, ids["s_a"], ids["source"], ids["agent"], flow_kind="data")
     _link(
         store, ids["a_t"], ids["agent"], ids["tool"], kind="uses_tool",
@@ -858,9 +904,11 @@ def test_find_chain_groups_with_the_project_level_writer_anchor(
     groups = store.query.find_chain_groups()
 
     assert len(groups) == 1
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_name == "mcp_catalogue:finmail"
     assert groups[0].untrusted_source_id == ids["source"]
     assert groups[0].write_chains == [
-        [ids["entry"], ids["writer"], ids["source"]]
+        [ids["entry"], ids["writer"], ids["store"]]
     ]
     assert groups[0].read_chains == [
         [ids["source"], ids["agent"], ids["tool"], ids["sink"]]
@@ -1392,10 +1440,14 @@ def test_prioritize_chain_groups_does_not_write(
 #
 # B.3c moves that target to a `store` for the two call-written families
 # (ADR-0021 §2–§3), so the corpus and mailbox groups below are built with
-# `_migrated_group` and join by store id. `_call_written_group` is the
-# **declaration-written** shape — `mcp_tool_description`, whose writer is
-# a server and whose store is the catalogue (B.3b-mcp-catalogue) — and
-# `find_chain_groups` still pairs it by source, unchanged.
+# `_migrated_group` and join by store id. B.3b-mcp-catalogue does the
+# same for the **declaration-written** one — `mcp_tool_description`,
+# whose store is the catalogue — so `test_..._through_a_declared_
+# catalogue` is built with `_declared_group` and joins by store id too.
+# `_call_written_group` stays for the path the enumerator still has and
+# no producer emits any more: the pairs that meet at an
+# `untrusted_source`. Q4 and the structural-anchor test are its two
+# users, and they are statements about the enumerator.
 
 
 def _call_written_group(
@@ -1407,23 +1459,26 @@ def _call_written_group(
     source_name: str,
     capability: str | None = None,
 ) -> dict[str, str]:
-    """One write chain and one read chain around a declared source.
+    """One write chain and one read chain around an untrusted source.
 
         entry --has_access_to--> writer --writes_to--> source
         source --has_access_to(data)--> reader --has_access_to--> sink
 
-    The shape `untrusted_source_writers` emits for
-    `mcp_tool_description` (1.3a.1, B.2): the write edge ends at the
-    source, so `find_chain_groups` pairs by source and the group carries
-    no `store_id`. Not migrated by B.3c, which is why this helper stays.
+    The B.2 shape, and the source-path join the enumerator keeps:
+    `find_chain_groups` still pairs the chains that meet at an
+    `untrusted_source`, with `store_id = None`. No producer emits a
+    `writes_to` onto a source any more — every write-side family targets
+    a store since B.3b-mcp-catalogue — so this helper is used by the
+    tests that are about the enumerator (Q4, and the anchor-crossing
+    rule), not about what a scan produces.
 
-    `capability` is optional because this family has no writer capability:
-    `WRITER_RULES` has no `mcp_tool_description` entry (the writer is a
-    declaration, not a call), so the writer node carries none by default
-    and a test that wants one says so.
+    `capability` is optional because the declaration-written family has
+    no writer capability: `WRITER_RULES` has no `mcp_tool_description`
+    entry (the writer is a declaration, not a call), so the writer node
+    carries none by default and a test that wants one says so.
 
     `tag` fills the ids so two groups can live in one store without
-    colliding. The write edge carries what the writer stage emits:
+    colliding. The write edge carries what that path's producer emitted:
     `writes_to`, control, `["ast"]`, and no confirmed data flow.
     """
     ids = {
@@ -1524,6 +1579,72 @@ def _migrated_group(
     return ids
 
 
+def _declared_group(
+    store: GraphStore,
+    *,
+    tag: str,
+    server_name: str,
+    confidence: float = 0.8,
+) -> dict[str, str]:
+    """One write chain into a catalogue store and one read chain (B.3b).
+
+        entry --has_access_to--> server --writes_to--> store
+        store --reads_from--> source
+        source --has_access_to(data)--> reader --has_access_to--> sink
+
+    The shape `untrusted_source_writers` emits for
+    `mcp_tool_description` since B.3b-mcp-catalogue (ADR-0021 §2–§3): the
+    server writes the catalogue store its own name fixes, the store names
+    the read site that reads from it, and the two chains meet at the
+    store. The store is `mcp_catalogue:<server>` (§1 — the family, then
+    the literal) while the source keeps `mcp_tool_description:<call>`,
+    which is the read site's own role (§10).
+
+    `confidence` defaults to the number the stage computes for a
+    declaration with no code-context signal (`1 − 0.5 × 0.4 = 0.8`,
+    above the 0.7 threshold so the group is not weak); a caller testing
+    the weak band passes its own. `tag` fills the ids so two groups can
+    live in one store without colliding.
+    """
+    ids = {
+        "entry": f"entry_point:{'e' * 15}{tag}",
+        "writer": f"mcp_server:{'w' * 15}{tag}",
+        "store": f"store:{'d' * 15}{tag}",
+        "source": f"untrusted_source:{'u' * 15}{tag}",
+        "reader": f"tool:{'r' * 15}{tag}",
+        "sink": f"sink:{'s' * 15}{tag}",
+        "e_w": f"edge:{'1' * 15}{tag}",
+        "w_s": f"edge:{'2' * 15}{tag}",
+        "s_x": f"edge:{'3' * 15}{tag}",
+        "s_r": f"edge:{'4' * 15}{tag}",
+        "r_k": f"edge:{'5' * 15}{tag}",
+    }
+    _put(store, ids["entry"], "entry_point", "GET /tools")
+    _put(store, ids["writer"], "mcp_server", server_name)
+    _put(store, ids["store"], "store", f"mcp_catalogue:{server_name}")
+    _put(
+        store, ids["source"], "untrusted_source",
+        "mcp_tool_description:client.list_tools",
+    )
+    _put(store, ids["reader"], "tool", "get_documents")
+    _put(store, ids["sink"], "sink", "run_shell")
+
+    _link(store, ids["e_w"], ids["entry"], ids["writer"])
+    store.edges.upsert(Edge(
+        id=ids["w_s"], source_id=ids["writer"], target_id=ids["store"],
+        kind="writes_to", host_id="localhost", flow_kind="structural",
+        identity_confidence=confidence,
+    ))
+    store.edges.upsert(Edge(
+        id=ids["s_x"], source_id=ids["store"], target_id=ids["source"],
+        kind="reads_from", host_id="localhost", flow_kind="structural",
+        identity_confidence=confidence,
+    ))
+    _link(store, ids["s_r"], ids["source"], ids["reader"], flow_kind="data")
+    _link(store, ids["r_k"], ids["reader"], ids["sink"])
+    return ids
+
+
 def test_find_chain_groups_through_a_corpus_write(store: GraphStore) -> None:
     """G1 — a component's `writes_to` pairs with a corpus read by store.
 
@@ -1594,29 +1715,28 @@ def test_find_chain_groups_through_a_mailbox_write(store: GraphStore) -> None:
 def test_find_chain_groups_through_a_declared_catalogue(
     store: GraphStore,
 ) -> None:
-    """G3 — the declaration-written family still pairs by source (B.3c).
+    """G3 — the declaration-written family joins by store (B.3b).
 
-    `mcp_tool_description` is not migrated: the server's `writes_to`
-    ends at the source, so the pair is by source and the group carries
-    no store. Pinned next to the two above because the difference is the
-    whole of B.3c's scope.
+    `mcp_tool_description` is migrated like the two above it: the
+    server's `writes_to` ends at `store('mcp_catalogue', 'knowledge')`,
+    the store names the catalogue that reads from it, and the group
+    carries the store. All three write-side families now enumerate the
+    same way — one edge kind, one join — which is the whole of B.3b's
+    scope.
     """
-    ids = _call_written_group(
-        store,
-        tag="k",
-        writer_kind="mcp_server",
-        writer_name="knowledge",
-        source_name="mcp_tool_description:client.list_tools",
-    )
+    ids = _declared_group(store, tag="k", server_name="knowledge")
 
     groups = store.query.find_chain_groups()
 
     assert len(groups) == 1
-    assert groups[0].store_id is None
-    assert groups[0].store_confidence is None
+    assert groups[0].store_id == ids["store"]
+    assert groups[0].store_name == "mcp_catalogue:knowledge"
     assert groups[0].untrusted_source_id == ids["source"]
+    assert groups[0].untrusted_source_name == (
+        "mcp_tool_description:client.list_tools"
+    )
     assert groups[0].write_chains == [
-        [ids["entry"], ids["writer"], ids["source"]]
+        [ids["entry"], ids["writer"], ids["store"]]
     ]
     assert groups[0].read_chains == [
         [ids["source"], ids["reader"], ids["sink"]]

@@ -20,7 +20,7 @@ order:
      8  delegation_edges       entry → agent, agent → agent, agent → server
      9  entry_to_sink          entry → same-file sink reachability
     10  detector_merge         detector nodes authoritative; id remap
-    11  untrusted_source_writers  writer → writes_to → source (1.3a.1, B.2)
+    11  untrusted_source_writers  writer → writes_to → store (B.3c, B.3b)
     12  flow_kind              flow_kind = control on every edge (ADR-0016)
     13  dynamic_mcp_invocation agent → uses_tool → tool (1.3a.1.2)
     14  cross_file_resolution  uses_tool across modules (Resolver 1)
@@ -57,9 +57,10 @@ Note on the order:
     is a node stages 2–5 created, and the merge may re-point it, so the
     edge is drawn against the node the merge settled on.
   - `dynamic_mcp_invocation` (1.3a.1.2) runs after both: it walks the
-    `writes_to` edges stage 11 emitted, and it is a resolver, so it sits
-    with the other post-`flow_kind` resolvers and passes `CONTROL_FLOW`
-    the way they do.
+    `writes_to` edges stage 11 emitted — through the store the write side
+    ends at since B.3b-mcp-catalogue, or onto the source before it — and
+    it is a resolver, so it sits with the other post-`flow_kind`
+    resolvers and passes `CONTROL_FLOW` the way they do.
   - `BodyAttributeStage` runs late, not at node construction. Its
     *position* is load-bearing for the same kind of reason: the merge can
     replace a TSA node with a detector node that arrives without the
