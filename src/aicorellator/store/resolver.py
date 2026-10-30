@@ -21,9 +21,11 @@ What it does, in order:
      `(family, identity_hint)` a literal names). No literal on either
      side means no store at all (§5).
   3. **Attach the sites.** A site with a literal attaches to its own
-     store; an unresolved site (`identity_hint is None`) attaches to
-     every store of its family, because §5 keeps the store the literal
-     side named and leaves the unnamed side pointing at it with less
+     store, and to every store whose literal *contains* its own or is
+     contained by it (`literal_match`'s prefix row, B.3b-fs-followup);
+     an unresolved site (`identity_hint is None`) attaches to every
+     store of its family, because §5 keeps the store the literal side
+     named and leaves the unnamed side pointing at it with less
      confidence.
   4. **Resolve both ends.** A write site becomes an edge only when the
      delta holds a node for the symbol the call lives in; a read site
@@ -56,6 +58,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from ..graph.models import Edge, Node
 from .confidence import (
+    LITERAL_PREFIX,
     code_context,
     combine_signals,
     literal_match,
@@ -323,17 +326,45 @@ def _store_keys(
 def _attached_keys(site: WriteSite | ReadSite, keys: list[str]) -> list[str]:
     """The stores one site can name.
 
-    A site with a literal names exactly its own store — a literal is an
-    identity, and two call sites naming different literals name
-    different stores (§8, "no link"). A site *without* one is a
-    wildcard: §5 keeps the store the literal side named and lets the
-    unnamed side point at it with a lower confidence, so an unresolved
-    site attaches to every store its family has. With no literal at all
-    on either side, `keys` is empty and this is empty too.
+    A site with a literal names its own store — a literal is an identity —
+    **and** every store whose literal contains its own or is contained by
+    it: `literal_match`'s prefix row, which is the B.3b-fs-followup
+    extension. A writer that names the directory `'/uploads/'` and a
+    reader that names the file `'/uploads/x'` are therefore attached to
+    *both* literals and produce two stores and two pairs, not one and not
+    none: containment is a real claim in both directions (the store the
+    directory names and the store the file names both exist), and the
+    pairs they make carry different literal signals — `LITERAL_EQUAL` at
+    the key a site's hint equals, `LITERAL_PREFIX` at the key it merely
+    contains or is contained by.
+
+    A site *without* a literal is a wildcard: §5 keeps the store the
+    literal side named and lets the unnamed side point at it with a
+    lower confidence, so an unresolved site attaches to every store its
+    family has. With no literal at all on either side, `keys` is empty
+    and this is empty too.
+
+    The two branches are disjoint, so no key is attached twice: `key ==
+    site.identity_hint` is checked first, and `literal_match` answers
+    `LITERAL_EQUAL` before it tests containment — a hint equal to a key
+    never reaches the `elif`. `LITERAL_ONE_SIDE` does **not** attach
+    anything here: it is the answer for the `None` hint, whose
+    attachment is the wildcard above, and §5 says an unnamed site names
+    no store of its own.
+
+    The keys keep `_store_keys`'s sorted order, so the attachment — and
+    therefore the edges, in the order `resolve` emits them — is a
+    property of the literals and not of the walk.
     """
     if site.identity_hint is None:
         return list(keys)
-    return [site.identity_hint] if site.identity_hint in keys else []
+    attached: list[str] = []
+    for key in keys:
+        if key == site.identity_hint:
+            attached.append(key)
+        elif literal_match(site.identity_hint, key) == LITERAL_PREFIX:
+            attached.append(key)
+    return attached
 
 
 def _link_confidence(

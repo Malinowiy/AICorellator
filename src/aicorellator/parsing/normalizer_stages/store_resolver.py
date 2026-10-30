@@ -82,6 +82,7 @@ from ...store.context.upload.writer import FS_FAMILY, find_upload_stores
 from ...store.families.base import ReadSite, WriteSite
 from ...store.registry import resolve as resolve_families
 from ...store.resolver import StoreResolver
+from ..framework_detectors.cross_file import _module_matches_file
 from ..normalizer_context import NormalizeContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -331,14 +332,18 @@ def _modules_for(
     """The parsed modules the writer and the attribution need, by path.
 
     The writer reads one thing out of a file: which function a write call
-    lives in (`writer._enclosing_functions`). The attribution reads one
-    thing out of a file: which definition a read call lives in
-    (`attribution._enclosing_symbol`, and therefore the source node's
-    `reader_kind` and its reader). The files they need are therefore the
-    entry points' files and the sites' files — all already parsed in this
-    scan, by the identify pass and by `_fs_sites` — and nothing else is
-    offered, so a scan with an upload in one file does not hand over the
-    whole target.
+    lives in (`writer._enclosing_functions`). The attribution reads two:
+    which definition a read call lives in (`attribution._enclosing_symbol`,
+    and therefore the source node's `reader_kind` and its reader), and
+    whether a module both files reach defines the client the store is
+    reached through (`attribution._defines_a_client`, §8's shared-wrapper
+    row). The files they need are therefore the entry points' files, the
+    sites' files — all already parsed in this scan, by the identify pass
+    and by `_fs_sites` — and, since B.3b-user_upload-attribution-followup-2,
+    **the modules those files import** (`_imported_modules`): a wrapper in
+    a third file is the shape §8's row exists for, and it has no body to
+    read until this parses it. Nothing else is offered, so a scan with an
+    upload in one file does not hand over the whole target.
     """
     needed = {site.file_path for site in sites}
     needed.update(write.file_path for write in fs_writes)
@@ -348,7 +353,60 @@ def _modules_for(
         module = ctx.module_for(file_path)
         if module is not None:
             modules[file_path] = module
+    for file_path in _imported_modules(ctx, modules):
+        module = ctx.module_for(file_path)
+        if module is not None:
+            modules[file_path] = module
     return modules
+
+
+def _imported_modules(
+    ctx: NormalizeContext, known: dict[str, ast.Module]
+) -> list[str]:
+    """The manifest files the `known` files import, one hop out (§8).
+
+    The import table is the entry-point pass's (`entry_points.run`
+    records the dotted names each file imports, relative imports
+    skipped), and a name is resolved with
+    `cross_file._module_matches_file` — the trailing-segment match the
+    cross-file detectors already use, so a name that resolves to a file
+    for them resolves to it here. No new import resolution is introduced,
+    and the parse is `ctx.module_for`'s cache, which the resolver has
+    already filled for every file it visited.
+
+    **One hop.** A module imported by an imported module is not parsed:
+    the wrapper §8's row is about is the module the *sites* name, and a
+    two-hop chain (a module that imports the client from a third one) is
+    a longer walk with its own false-positive surface, so it is a
+    separate step.
+
+    **Ambiguity is skipped.** A dotted name matches by trailing path
+    segments, so `storage` matches `storage.py` and `pkg/storage.py`
+    alike. When more than one manifest file matches, the name is dropped
+    and **neither** file is parsed: the table says which *name* a file
+    imports, not which file it means, and picking one would put an
+    unrelated module's constructor in front of the attribution. The
+    wrapper row then does not fire for that pair, which is the safe
+    answer — the row is a signal, not an obligation.
+
+    The result is sorted and deduplicated, so the map is a property of
+    the imports and not of the order the files were visited in.
+    """
+    imports = ctx.entry_points.imports
+    paths = [
+        entry.path
+        for entry in ctx.manifest.files
+        if entry.language == "python"
+    ]
+    found: set[str] = set()
+    for file_path in sorted(known):
+        for module in imports.get(file_path, ()):
+            matches = [
+                path for path in paths if _module_matches_file(module, path)
+            ]
+            if len(matches) == 1:
+                found.add(matches[0])
+    return sorted(found)
 
 
 __all__ = ["StoreResolverStage"]

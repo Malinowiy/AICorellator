@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from aicorellator.graph.models import Node
+from aicorellator.graph.models import Edge, Node
 from aicorellator.parsing.normalizer_helpers import edge_id
 from aicorellator.store import registry
 from aicorellator.store.families.base import Family, ReadSite, WriteSite
@@ -476,3 +476,232 @@ def test_a_raising_family_is_logged_and_costs_only_itself(
 
     assert "failed on" in caplog.text
     assert [e.kind for e in edges] == ["reads_from"]
+
+
+# ============================================================
+# R7 — prefix containment (B.3b-fs-followup)
+# ============================================================
+#
+# `_attached_keys` attaches a site to its own literal **and** to every
+# literal that contains it or is contained by it, which is what makes
+# `literal_match`'s prefix row (+0.3) reachable through the resolver. The
+# motivating shape is the `fs` family's: a writer names a directory and a
+# reader names a file inside it. Two keys, two stores, two pairs — the
+# store the directory names and the store the file names are both real.
+
+DIRECTORY = "/uploads/"
+FILE = "/uploads/x"
+
+
+def test_a_directory_and_the_file_inside_it_are_two_stores(scene) -> None:
+    """A1 — both literals are attached to, so both become stores.
+
+    The write names the directory and the read names the file, and each
+    site attaches to both keys: the directory's store earns the write's
+    equal literal and the read's prefix row (`1 − 0.7 × 0.4 = 0.72` and
+    `1 − 0.7 × 0.7 = 0.51`), and the file's store is the mirror image.
+    Neither pair is merged into the other, and neither site loses its own
+    store: the write puts data in the directory and the read takes it out
+    of the file, and both are what the literals say.
+    """
+    built, family = scene(
+        writes=[write_site(hint=DIRECTORY)], reads=[read_site(hint=FILE)],
+    )
+    edges = StoreResolver([family]).resolve(built.delta, built.ctx)
+
+    stores = {s.name: s.id for s in built.nodes("store")}
+    assert sorted(stores) == ["fake:/uploads/", "fake:/uploads/x"]
+
+    assert [e.kind for e in edges] == [
+        "writes_to", "writes_to", "reads_from", "reads_from",
+    ]
+    # `_store_keys` sorts, so the directory's key comes first in both
+    # directions and the two edges of a pair sit in the same order.
+    assert [e.target_id for e in edges if e.kind == "writes_to"] == [
+        stores["fake:" + DIRECTORY], stores["fake:" + FILE],
+    ]
+    assert [e.source_id for e in edges if e.kind == "reads_from"] == [
+        stores["fake:" + DIRECTORY], stores["fake:" + FILE],
+    ]
+    assert [round(e.identity_confidence, 4) for e in edges] == [
+        0.72, 0.51, 0.51, 0.72,
+    ]
+
+
+def test_the_file_naming_the_directory_is_the_same_two_stores(scene) -> None:
+    """A1, the other way round — containment is symmetric.
+
+    The writer names the file and the reader the directory. The
+    attachment is the same two keys (the containment rule is `startswith`
+    in both directions), and the two pairs swap which side carries the
+    prefix row.
+    """
+    built, family = scene(
+        writes=[write_site(hint=FILE)], reads=[read_site(hint=DIRECTORY)],
+    )
+    edges = StoreResolver([family]).resolve(built.delta, built.ctx)
+
+    assert sorted(s.name for s in built.nodes("store")) == [
+        "fake:/uploads/", "fake:/uploads/x",
+    ]
+    assert [round(e.identity_confidence, 4) for e in edges] == [
+        0.51, 0.72, 0.72, 0.51,
+    ]
+
+
+def test_equal_hints_are_one_store_and_one_pair(scene) -> None:
+    """A2 — the exact case is untouched: one key, attached once.
+
+    The same literal on both sides is `LITERAL_EQUAL`, and the two
+    branches cannot both claim a key: the exact branch is tested first,
+    and `literal_match` answers `LITERAL_EQUAL` before it tests
+    containment, so a hint equal to a key never reaches the `elif`. One
+    store, two edges, and R2's number.
+    """
+    built, family = scene(
+        writes=[write_site(hint=DIRECTORY)],
+        reads=[read_site(hint=DIRECTORY)],
+    )
+    edges = StoreResolver([family]).resolve(built.delta, built.ctx)
+
+    assert [s.name for s in built.nodes("store")] == ["fake:" + DIRECTORY]
+    assert [e.kind for e in edges] == ["writes_to", "reads_from"]
+    assert [round(e.identity_confidence, 4) for e in edges] == [0.72, 0.72]
+
+
+def test_hints_that_contain_neither_way_are_two_stores_and_no_pair(
+    scene,
+) -> None:
+    """A3 — `'/uploads/a'` and `'/tmp/b'` contain neither way.
+
+    Each site attaches to its own literal only, so each store earns one
+    edge and the pairing §8 calls "no link" is not made.
+    """
+    built, family = scene(
+        writes=[write_site(hint="/uploads/a")],
+        reads=[read_site(hint="/tmp/b")],
+    )
+    edges = StoreResolver([family]).resolve(built.delta, built.ctx)
+
+    stores = {s.name: s.id for s in built.nodes("store")}
+    assert sorted(stores) == ["fake:/tmp/b", "fake:/uploads/a"]
+    assert [
+        (e.kind, e.target_id if e.kind == "writes_to" else e.source_id)
+        for e in edges
+    ] == [
+        ("writes_to", stores["fake:/uploads/a"]),
+        ("reads_from", stores["fake:/tmp/b"]),
+    ]
+    assert [round(e.identity_confidence, 4) for e in edges] == [0.72, 0.72]
+
+
+def test_an_unnamed_writer_names_no_store_of_its_own(scene) -> None:
+    """A4 — §5 stays: a `None` hint contributes no key.
+
+    The read's literal is the only store, and the unnamed write side is
+    the wildcard (§5) — it points at that store with the one-side signal,
+    `1 − 0.7 × 0.8 = 0.44`, and with no store of its own. The one-side
+    row attaches nothing: it is the answer for the `None` hint, and an
+    unnamed site names nothing.
+    """
+    built, family = scene(
+        writes=[write_site(hint=None)], reads=[read_site(hint=FILE)],
+    )
+    edges = StoreResolver([family]).resolve(built.delta, built.ctx)
+
+    assert [s.name for s in built.nodes("store")] == ["fake:" + FILE]
+    assert [e.kind for e in edges] == ["writes_to", "reads_from"]
+    assert [round(e.identity_confidence, 4) for e in edges] == [0.44, 0.72]
+
+
+def test_the_containment_shape_twice_is_the_same_edges(scene) -> None:
+    """A5 — the attachment walks the sorted keys, not a set.
+
+    `_attached_keys` returns the exact key and the containment keys in
+    `_store_keys`'s order, so the edges — and their order — are a
+    property of the literals and not of the walk.
+    """
+    first, family_a = scene(
+        writes=[write_site(hint=FILE)], reads=[read_site(hint=DIRECTORY)],
+    )
+    second, family_b = scene(
+        writes=[write_site(hint=FILE)], reads=[read_site(hint=DIRECTORY)],
+    )
+
+    edges_a = StoreResolver([family_a]).resolve(first.delta, first.ctx)
+    edges_b = StoreResolver([family_b]).resolve(second.delta, second.ctx)
+
+    assert _shape(edges_a) == _shape(edges_b)
+    assert [n.id for n in first.nodes("store")] == [
+        n.id for n in second.nodes("store")
+    ]
+    assert [e.kind for e in edges_a] == [
+        "writes_to", "writes_to", "reads_from", "reads_from",
+    ]
+
+
+def test_the_two_stores_are_two_groups(scene, store) -> None:
+    """A1's shape, as the join sees it (ADR-0021 §6).
+
+    The join is by store id, so two stores is two groups — and each store
+    has one side carrying the equal literal and the other the prefix row,
+    so the pair's confidence, `min` of the two links (§7), is the prefix
+    pair's 0.51 in both cases. Both groups are therefore **weak**: below
+    §9's default threshold, so the default enumeration reports neither and
+    `include_weak` is what reports them. Both are above
+    `WEAK_JOIN_FLOOR`, so neither is dropped as "no link at all" — this
+    is the band a containment pair lives in, and it is why the two-group
+    shape is a statement about the graph and not about the default report.
+    """
+    built, family = scene(
+        writes=[write_site(hint=DIRECTORY)], reads=[read_site(hint=FILE)],
+    )
+    edges = StoreResolver([family]).resolve(built.delta, built.ctx)
+    _persist(built, edges, store)
+
+    groups = store.query.find_chain_groups(include_weak=True)
+    assert len(groups) == 2
+    assert {group.store_name for group in groups} == {
+        "fake:" + DIRECTORY, "fake:" + FILE,
+    }
+    assert [round(group.store_confidence, 4) for group in groups] == [
+        0.51, 0.51,
+    ]
+    assert [group.weak for group in groups] == [True, True]
+    assert store.query.find_chain_groups() == []
+
+
+def _persist(built, edges, store) -> None:
+    """Put a resolver result in a graph whose chains the join can walk.
+
+    The resolver emits the store links; the chains around them are what
+    `find_chain_groups` needs before it can see a group — an entry point
+    that reaches the writer, and a reader that reaches a sink — so they
+    are hand-built here the way `tests/test_query_layer.py` builds them,
+    over the nodes the resolver has just written.
+    """
+    for node in built.delta.nodes:
+        store.nodes.upsert(node)
+    for edge in edges:
+        store.edges.upsert(edge)
+
+    store.nodes.upsert(Node(
+        id="entry_point:1", kind="entry_point", name="POST /upload",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="tool:reader", kind="tool", name="read_it", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="sink:1", kind="sink", name="run_shell", host_id="localhost",
+    ))
+    for source_id, target_id in [
+        ("entry_point:1", "tool:upload"),
+        ("untrusted_source:1", "tool:reader"),
+        ("tool:reader", "sink:1"),
+    ]:
+        store.edges.upsert(Edge(
+            id=edge_id(source_id, target_id, "has_access_to"),
+            source_id=source_id, target_id=target_id,
+            kind="has_access_to", host_id="localhost",
+        ))

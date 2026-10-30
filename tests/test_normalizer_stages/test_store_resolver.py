@@ -37,6 +37,7 @@ from aicorellator.graph.models import Node
 from aicorellator.parsing.entry_points import EntryPointOutput
 from aicorellator.parsing.normalizer_stages import STAGES, StoreResolverStage
 from aicorellator.parsing.normalizer_stages.base import NormalizerStage
+from aicorellator.parsing.normalizer_stages.store_resolver import _modules_for
 from aicorellator.store import register_family, registry
 from aicorellator.store.context.upload import registry as upload_registry
 from aicorellator.store.context.upload.base import (
@@ -472,4 +473,134 @@ def test_the_stage_creates_the_source_and_its_links(project) -> None:
     assert [(e.source_id, e.target_id) for e in access] == [
         (source.id, "tool:handle")
     ]
+
+
+# ============================================================
+# The module map (B.3b-user_upload-attribution-followup-2)
+# ============================================================
+#
+# `_modules_for` is what the writer and the attribution may read, by path.
+# It holds the sites' files — the ones the identify pass and `_fs_sites`
+# already parsed — and, since this step, the modules those files import:
+# §8's shared-wrapper row is about a client both files reach through a
+# *third* module, and that module has no body in the map until this parses
+# it. The import table is the entry-point pass's; the resolution is
+# `cross_file._module_matches_file`, the trailing-segment match the
+# cross-file detectors already use.
+
+#: The writer's file: it writes the store and imports the wrapper from a
+#: third module, which is the shape the wrapper row is about.
+MODULE_WRITER = "app/routes.py"
+MODULE_WRITER_SOURCE = '''\
+from app.storage import s3
+
+
+def handle(payload):
+    with open("/uploads/report.txt", "wb") as fh:
+        fh.write(payload)
+'''
+
+#: The wrapper: a module-level client, which is the signal §8 reads.
+MODULE_WRAPPER = "app/storage.py"
+MODULE_WRAPPER_SOURCE = '''\
+import boto3
+
+s3 = boto3.client("s3")
+'''
+
+
+def _fs_write() -> WriteSite:
+    """The write site `_fs_sites` would report for `MODULE_WRITER_SOURCE`."""
+    return WriteSite(
+        call_site=_call(), file_path=MODULE_WRITER, line=5,
+        identity_hint="/uploads/report.txt",
+    )
+
+
+def test_the_module_map_parses_an_imported_module(project) -> None:
+    """M1 — the third-file wrapper gets a body.
+
+    `app/storage.py` is nobody's site file, and it is in the map because
+    `app/routes.py` imports it. That is what lets
+    `attribution._defines_a_client` find the constructor — a module with
+    no body in the map cannot be a wrapper however it is written.
+    """
+    built = project(
+        files={
+            MODULE_WRITER: MODULE_WRITER_SOURCE,
+            MODULE_WRAPPER: MODULE_WRAPPER_SOURCE,
+        },
+        entry_points=EntryPointOutput(imports={
+            MODULE_WRITER: ["app.storage"],
+        }),
+    )
+
+    modules = _modules_for(built.ctx, [], [_fs_write()], [])
+
+    assert sorted(modules) == [MODULE_WRITER, MODULE_WRAPPER]
+    assert "boto3.client" in ast.unparse(modules[MODULE_WRAPPER])
+
+
+def test_an_import_that_matches_two_files_is_skipped(project) -> None:
+    """M2 — `storage` matches `storage.py` and `pkg/storage.py`.
+
+    A dotted name matches by trailing path segments, so one name can name
+    two manifest files. The table says which *name* a file imports and not
+    which file it means, so the name is dropped and **neither** file is
+    parsed: guessing would put an unrelated module's constructor in front
+    of the attribution, and the wrapper row then simply does not fire.
+    """
+    built = project(
+        files={
+            MODULE_WRITER: MODULE_WRITER_SOURCE,
+            "storage.py": MODULE_WRAPPER_SOURCE,
+            "pkg/storage.py": MODULE_WRAPPER_SOURCE,
+        },
+        entry_points=EntryPointOutput(imports={MODULE_WRITER: ["storage"]}),
+    )
+
+    modules = _modules_for(built.ctx, [], [_fs_write()], [])
+
+    assert sorted(modules) == [MODULE_WRITER]
+
+
+def test_an_import_that_names_no_manifest_file_is_skipped(project) -> None:
+    """The other side of the same rule: no match, nothing to parse.
+
+    A third-party module is not part of the target, so the name resolves
+    to no manifest file and the map is the sites' files alone.
+    """
+    built = project(
+        files={MODULE_WRITER: MODULE_WRITER_SOURCE},
+        entry_points=EntryPointOutput(imports={MODULE_WRITER: ["boto3"]}),
+    )
+
+    modules = _modules_for(built.ctx, [], [_fs_write()], [])
+
+    assert sorted(modules) == [MODULE_WRITER]
+
+
+def test_imports_of_imports_are_not_parsed(project) -> None:
+    """M3 — one hop only: the wrapper is the module the sites name.
+
+    `app/routes.py` imports `app.storage`, and `app.storage` imports
+    `app.client`: only the first is in the map. A two-hop chain — a
+    wrapper that imports the client from yet another module — is a longer
+    walk with its own false-positive surface, so it is a separate step.
+    """
+    built = project(
+        files={
+            MODULE_WRITER: MODULE_WRITER_SOURCE,
+            MODULE_WRAPPER: MODULE_WRAPPER_SOURCE,
+            "app/client.py": "import boto3\n",
+        },
+        entry_points=EntryPointOutput(imports={
+            MODULE_WRITER: ["app.storage"],
+            MODULE_WRAPPER: ["app.client"],
+        }),
+    )
+
+    modules = _modules_for(built.ctx, [], [_fs_write()], [])
+
+    assert sorted(modules) == [MODULE_WRITER, MODULE_WRAPPER]
 

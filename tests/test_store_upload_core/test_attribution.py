@@ -17,23 +17,37 @@ The B-tests are B.3b-user_upload-attribution's other half — the creation
 and the parsed module the read lives in. The read sites come from
 `FsFamily.detect_reads` rather than being hand-built, so what is pinned is
 the shape the pipeline actually hands over.
+
+The C-tests are B.3b-user_upload-attribution-followup: §8's code-context
+rows on the reader's `reads_from` — the shared wrapper (+0.3), the same
+module (+0.2) and the shared import (+0.1), the strongest first, one row
+per pair — read off the entry-point import table and the parsed module
+bodies. The numbers are computed from `confidence`'s constants, and the
+one case the pipeline cannot reach (no row at all, `_code_context`'s
+`0.0`) is pinned on the row itself.
 """
 
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 
 from aicorellator.graph.models import Edge, Node
 from aicorellator.parsing.ast_normalizer import GraphDelta
+from aicorellator.parsing.entry_points import EntryPointOutput
+from aicorellator.parsing.normalizer_stages.store_resolver import _modules_for
 from aicorellator.store.confidence import (
     BASE,
     CODE_CONTEXT_SAME_MODULE,
     CODE_CONTEXT_SHARED_IMPORT,
+    CODE_CONTEXT_SHARED_WRAPPER,
     LITERAL_EQUAL,
     combine_signals,
 )
 from aicorellator.store.context.upload.attribution import (
     SOURCE_TYPE,
+    WRAPPER_CALLS,
+    _code_context,
     attribute_source_type,
 )
 from aicorellator.store.context.upload.base import UploadSite
@@ -145,12 +159,12 @@ def _entry(handler: str = "handle", file_path: str = HANDLER) -> Node:
     )
 
 
-def _reader_entry(handler: str = "read_back") -> Node:
+def _reader_entry(handler: str = "read_back", file_path: str = HANDLER) -> Node:
     """The reader's entry point — a route in the writer's own file."""
     return Node(
         id=f"entry_point:{handler}", kind="entry_point",
         name=f"GET {handler}", host_id="localhost",
-        attributes={"source_file": HANDLER, "handler": handler},
+        attributes={"source_file": file_path, "handler": handler},
     )
 
 
@@ -179,15 +193,17 @@ def _build(
     entry: Node | None = None,
     imports: dict[str, list[str]] | None = None,
     nodes: list[Node] | None = None,
-    modules: bool = True,
+    modules: bool | Mapping[str, ast.Module] = True,
 ) -> tuple[GraphDelta, list[Node]]:
     """A delta with one writer, its store, and the files' `fs` read sites.
 
     The entry point and the reader's entry point are in the delta because
     both halves read it: the writer's `writes_to` edge is looked up by the
     entry point's id, and the reader of a created source is resolved
-    against the delta's nodes (`attribution._reader_index`). `modules`
-    off is the "the caller parsed nothing" mode.
+    against the delta's nodes (`attribution._reader_index`). `modules` off
+    is the "the caller parsed nothing" mode; a **mapping** is what the
+    stage parsed (`store_resolver._modules_for`), which is the third-file
+    wrapper case — the map holds a module none of the files above is.
     """
     entry = entry or _entry()
     delta = GraphDelta(nodes=[entry, _reader_entry(), *(nodes or [])], edges=[])
@@ -205,16 +221,20 @@ def _build(
         for path, source in files.items()
         for read in FsFamily().detect_reads(ast.parse(source), path)
     ]
+    if isinstance(modules, Mapping):
+        parsed: dict[str, ast.Module] | None = dict(modules)
+    else:
+        parsed = (
+            {path: ast.parse(source) for path, source in files.items()}
+            if modules else None
+        )
     created = attribute_source_type(
         delta=delta,
         upload_sites=[site],
         imports_by_file=imports or {},
         fs_reads=reads,
         stores=stores,
-        modules=(
-            {path: ast.parse(source) for path, source in files.items()}
-            if modules else None
-        ),
+        modules=parsed,
     )
     return delta, created
 
@@ -678,3 +698,495 @@ def test_the_reader_link_is_the_readers_own_base() -> None:
     assert reader_link < writer_link
     assert round(min(reader_link, writer_link), 4) == 0.776
 
+
+# ============================================================
+# C — §8's code-context rows (B.3b-user_upload-attribution-followup)
+# ============================================================
+
+#: A wrapper module: the client both files reach through it (ADR-0021
+#: §8). The body is the signal, and the name it binds is module-level.
+WRAPPER = "app/storage.py"
+WRAPPER_SOURCE = '''\
+import boto3
+
+s3 = boto3.client("s3")
+'''
+
+#: The same client, annotated: an `AnnAssign` binds a module-level name
+#: too, and `_assigned_value` reads both spellings.
+ANNOTATED = "app/annotated.py"
+ANNOTATED_SOURCE = '''\
+import boto3
+
+s3: "Client" = boto3.client("s3")
+'''
+
+#: A module that only imports the client library: no constructor in its
+#: body, so it is not a wrapper (S6).
+IMPORTER = "app/aws.py"
+IMPORTER_SOURCE = '''\
+import boto3
+'''
+
+#: A client behind a function: not a wrapper either, because the client
+#: is not a module-level name (S6's second shape).
+FACTORY = "app/factory.py"
+FACTORY_SOURCE = '''\
+import boto3
+
+
+def get_s3():
+    return boto3.client("s3")
+'''
+
+#: The writer's file when the *writer* is the wrapper: the handler, its
+#: write, and the client a reader in another file reaches through it.
+WRAPPER_WRITER_SOURCE = '''\
+import boto3
+
+s3 = boto3.client("s3")
+
+
+def handle(payload):
+    with open("/uploads/report.txt", "wb") as fh:
+        fh.write(payload)
+'''
+
+#: The writer's file when the file is its own wrapper and its own
+#: reader: the client, the write and the read in one module.
+SELF_WRAPPER_SOURCE = '''\
+import boto3
+
+s3 = boto3.client("s3")
+
+
+def handle(payload):
+    with open("/uploads/report.txt", "wb") as fh:
+        fh.write(payload)
+
+
+def read_back():
+    with open("/uploads/report.txt", "rb") as fh:
+        return fh.read()
+'''
+
+
+def _link_for(context: float) -> float:
+    """The reader's link for one code-context row (§8).
+
+    The base, one equal literal, and the row's weight — the constants,
+    so a re-tuned weight moves every number here with it.
+    """
+    return combine_signals(BASE, [LITERAL_EQUAL, context])
+
+
+# ------------------------------------------------------------
+# The rows
+# ------------------------------------------------------------
+
+def test_a_shared_wrapper_scores_the_wrapper_row() -> None:
+    """S1/O1 — both files reach the wrapper, so the row is the +0.3 one.
+
+    The pair is in scope because the writer imports the reader's file
+    (`_site_covers`), and it *also* imports `app/storage.py`, which the
+    reader imports too. Two rows apply and the strongest wins, so the
+    reader's link is `1 − 0.7 × 0.4 × 0.7 = 0.804` and not the shared
+    import's 0.748.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, created = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            WRAPPER: WRAPPER_SOURCE,
+        },
+        store=_store(),
+        imports={
+            HANDLER: ["app.tools", "app.storage"],
+            READER: ["app.storage"],
+        },
+        nodes=[reader_entry],
+    )
+
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+    assert round(link, 4) == 0.804
+    assert link > _link_for(CODE_CONTEXT_SHARED_IMPORT)
+    assert _edges(delta, "has_access_to")[0].target_id == reader_entry.id
+
+
+def test_the_row_weights_are_ranked_as_the_adr_lists_them() -> None:
+    """O1 — shared-wrapper > same-module > shared-import.
+
+    One row per pair, the strongest, and the ranking is ADR-0021 §8's:
+    the wrapper is the strongest code-context signal, the import the
+    weakest. The numbers are the constants', and they are the three the
+    pipeline reaches (S1, S2, S3).
+    """
+    assert (
+        CODE_CONTEXT_SHARED_WRAPPER
+        > CODE_CONTEXT_SAME_MODULE
+        > CODE_CONTEXT_SHARED_IMPORT
+        > 0.0
+    )
+    assert _link_for(CODE_CONTEXT_SHARED_WRAPPER) > _link_for(
+        CODE_CONTEXT_SAME_MODULE
+    ) > _link_for(CODE_CONTEXT_SHARED_IMPORT)
+    assert round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4) == 0.804
+    assert round(_link_for(CODE_CONTEXT_SAME_MODULE), 4) == 0.776
+    assert round(_link_for(CODE_CONTEXT_SHARED_IMPORT), 4) == 0.748
+
+
+def test_a_same_file_pair_with_a_wrapper_scores_the_wrapper_row() -> None:
+    """O2 — the same file *and* a wrapper: +0.3, not +0.2 and not +0.5.
+
+    `SOURCE` holds the write and the read, so the same-module row applies
+    by itself; the file also imports `app/storage.py`, whose body defines
+    the client. The wrapper is the stronger row, and the rows do not add:
+    the reader's link is the wrapper's 0.804 — not the same module's
+    0.776, and not a pair with `0.2 + 0.3` in it.
+    """
+    delta, created = _build(
+        files={HANDLER: SOURCE, WRAPPER: WRAPPER_SOURCE},
+        store=_store(),
+        imports={HANDLER: ["app.storage"]},
+    )
+
+    assert created[0].attributes["source_file"] == HANDLER
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+    combined = combine_signals(
+        BASE,
+        [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE + CODE_CONTEXT_SHARED_WRAPPER],
+    )
+    assert round(link, 4) != round(combined, 4)
+
+
+def test_the_writers_own_file_can_be_the_wrapper() -> None:
+    """S7 — the wrapper is one of the pair, not a third module.
+
+    The handler's module defines `s3 = boto3.client("s3")`, and the
+    reader's file imports it: the writer reaches the wrapper by *being*
+    it and the reader by importing it. §8's "both files import the module
+    the store is reached through" reads this way when the module is one
+    of the two.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, created = _build(
+        files={HANDLER: WRAPPER_WRITER_SOURCE, READER: OTHER_SOURCE},
+        store=_store(),
+        imports={READER: ["app.routes"]},
+        nodes=[reader_entry],
+    )
+
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+    assert _edges(delta, "has_access_to")[0].target_id == reader_entry.id
+
+
+def test_a_same_file_pair_shares_the_client_it_defines() -> None:
+    """O2/S7 — the file is its own wrapper, with no import at all.
+
+    `SELF_WRAPPER_SOURCE` defines the client and reads the store in one
+    module, and the scan's import table is empty: this is
+    `_reaches_file`'s "a file is itself" clause, and the row is the
+    wrapper's rather than the same module's.
+    """
+    delta, created = _build(
+        files={HANDLER: SELF_WRAPPER_SOURCE}, store=_store(),
+    )
+
+    assert created[0].attributes["reader"] == "read_back"
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+    assert link != _link_for(CODE_CONTEXT_SAME_MODULE)
+
+
+# ------------------------------------------------------------
+# The rows' negatives
+# ------------------------------------------------------------
+
+def test_a_shared_import_without_a_wrapper_scores_its_own_row() -> None:
+    """S6/S3 — both files import a module, and it is not a wrapper.
+
+    `app/aws.py` only imports `boto3`: it defines no client, so the
+    wrapper row does not fire even though both files import it. The pair
+    is in scope through the writer's import of the reader's file, and the
+    row is the shared import's +0.1.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, created = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            IMPORTER: IMPORTER_SOURCE,
+        },
+        store=_store(),
+        imports={HANDLER: ["app.tools", "app.aws"], READER: ["app.aws"]},
+        nodes=[reader_entry],
+    )
+
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_IMPORT), 4)
+    assert round(link, 4) == 0.748
+
+
+def test_a_client_behind_a_function_is_not_a_wrapper() -> None:
+    """S6 — the client has to be a module-level *name*.
+
+    `app/factory.py` defines `def get_s3(): return boto3.client("s3")`:
+    the constructor is in the body and not at module level, so the module
+    is not a wrapper and the row is the shared import's.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, created = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            FACTORY: FACTORY_SOURCE,
+        },
+        store=_store(),
+        imports={
+            HANDLER: ["app.tools", "app.factory"],
+            READER: ["app.factory"],
+        },
+        nodes=[reader_entry],
+    )
+
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_IMPORT), 4)
+
+
+def test_an_annotated_client_assignment_is_a_wrapper() -> None:
+    """S6's positive twin — `s3: Client = boto3.client("s3")` binds a name.
+
+    `_assigned_value` reads `AnnAssign` as well as `Assign`: the rule is a
+    module-level *name*, and an annotation does not make the binding any
+    less one.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, created = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            ANNOTATED: ANNOTATED_SOURCE,
+        },
+        store=_store(),
+        imports={
+            HANDLER: ["app.tools", "app.annotated"],
+            READER: ["app.annotated"],
+        },
+        nodes=[reader_entry],
+    )
+
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+
+
+def test_a_wrapper_only_one_file_reaches_is_not_shared() -> None:
+    """S5 — the wrapper has to be reached by *both* files.
+
+    The writer imports the wrapper and the reader's file; the reader
+    imports neither. The pair is in scope (the writer's import) and the
+    row is the import's +0.1: a wrapper one of the two files reaches is
+    not shared.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, created = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            WRAPPER: WRAPPER_SOURCE,
+        },
+        store=_store(),
+        imports={HANDLER: ["app.tools", "app.storage"], READER: []},
+        nodes=[reader_entry],
+    )
+
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_IMPORT), 4)
+    assert round(link, 4) != round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+
+
+def test_an_unrelated_pair_scores_no_row() -> None:
+    """S4 — neither file is the other, and no wrapper is shared: 0.
+
+    Unreachable through `attribute_source_type` — a read site out of
+    scope is skipped before the row is read (`_site_covers`) — so it is
+    pinned on `_code_context`, the function this step changed, with the
+    modules present and absent. The literal alone is
+    `1 − 0.7 × 0.4 = 0.72`.
+    """
+    imports = {UNRELATED: ["app.storage"]}
+
+    assert _code_context(HANDLER, UNRELATED, imports) == 0.0
+    assert _code_context(
+        HANDLER, UNRELATED, imports, {WRAPPER: ast.parse(WRAPPER_SOURCE)}
+    ) == 0.0
+    assert round(combine_signals(BASE, [LITERAL_EQUAL]), 4) == 0.72
+
+
+def test_the_wrapper_calls_are_the_closed_set() -> None:
+    """§8's wrapper shapes: six spellings, and adding one is a decision.
+
+    The set is *spellings*, read by `_call_target`, so an aliased import
+    or a class the list does not name is not a wrapper — and it is closed
+    on purpose, which is why this test exists: a new shape is a change to
+    the ADR's table and not a name a helper learns.
+    """
+    assert WRAPPER_CALLS == frozenset({
+        "boto3.client", "boto3.resource",
+        "Storage", "Chroma", "Client", "connect",
+    })
+    assert "Minio" not in WRAPPER_CALLS
+
+
+# ------------------------------------------------------------
+# The pair, and the scope the row does not widen
+# ------------------------------------------------------------
+
+def test_the_pair_is_the_weaker_link_with_a_wrapper() -> None:
+    """P1 — `min(writer, reader)`, from the constants.
+
+    The writer's `writes_to` carries the context-based writer's 0.5 base
+    (ADR-0021 §8, revision 2) and the reader's `reads_from` the family's
+    0.3; a wrapper pair is 0.804 on the reader's side, so the pair is the
+    reader's number — the weaker side, the same answer as without a
+    wrapper, one row higher.
+    """
+    reader_entry = _reader_entry("read_it", READER)
+    delta, _ = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            WRAPPER: WRAPPER_SOURCE,
+        },
+        store=_store(),
+        imports={
+            HANDLER: ["app.tools", "app.storage"],
+            READER: ["app.storage"],
+        },
+        nodes=[reader_entry],
+    )
+
+    reader_link = _edges(delta, "reads_from")[0].identity_confidence
+    writer_link = _edges(delta, "writes_to")[0].identity_confidence
+    assert round(reader_link, 4) == round(
+        _link_for(CODE_CONTEXT_SHARED_WRAPPER), 4
+    )
+    assert reader_link < writer_link
+    assert round(min(reader_link, writer_link), 4) == round(reader_link, 4)
+
+
+def test_a_pair_related_only_through_a_wrapper_is_out_of_scope() -> None:
+    """The scope rule is unchanged: the wrapper is a *row*, not a scope.
+
+    Both files import `app/storage.py` and neither imports the other, so
+    the pair shares a wrapper and is still out of scope (`_site_covers`):
+    the read site earns no source, no `reads_from` and no `has_access_to`.
+    Widening the scope to a shared wrapper is a different decision, and
+    this step does not take it.
+    """
+    delta, created = _build(
+        files={
+            HANDLER: WRITER_ONLY_SOURCE,
+            READER: OTHER_SOURCE,
+            WRAPPER: WRAPPER_SOURCE,
+        },
+        store=_store(),
+        imports={HANDLER: ["app.storage"], READER: ["app.storage"]},
+        nodes=[_reader_entry("read_it", READER)],
+    )
+
+    assert created == []
+    assert _edges(delta, "reads_from") == []
+    assert _edges(delta, "has_access_to") == []
+
+
+# ============================================================
+# C2 — the third-file wrapper (B.3b-user_upload-attribution-followup-2)
+# ============================================================
+#
+# S1's wrapper is a file the stage already parsed, because it is a site's
+# file. A wrapper in a *third* module — nobody's site file, imported by
+# both — has no body in the map until `store_resolver._modules_for` parses
+# it, so the row cannot fire however the wrapper is written. These tests
+# take the map from the stage itself.
+
+
+def _fs_sites(files: dict[str, str]):
+    """The `fs` family's sites over a set of sources, as `_fs_sites` sees
+    them — one write and one read per call site, by file."""
+    writes = [
+        write
+        for path, source in files.items()
+        for write in FsFamily().detect_writes(ast.parse(source), path)
+    ]
+    reads = [
+        read
+        for path, source in files.items()
+        for read in FsFamily().detect_reads(ast.parse(source), path)
+    ]
+    return writes, reads
+
+
+def test_the_stage_parses_the_third_file_and_the_wrapper_row_fires(
+    project,
+) -> None:
+    """S1's row, with the wrapper where it belongs: in a third module.
+
+    The writer's file imports the reader's file (so the pair is in scope)
+    and `app/storage.py`, and so does the reader's file. `app/storage.py`
+    is neither site's file, so it is in the stage's map only because
+    `_modules_for` parsed the modules the sites' files import.
+
+    With the map the stage builds, the reader's link is the wrapper row,
+    `1 − 0.7 × 0.4 × 0.7 = 0.804`. Without the wrapper's body — the map
+    the stage handed over before this step, the sites' files and nothing
+    else — the same pair is still in scope and the row that wins is the
+    shared import's, which is the 0.748 the S2 test pins. The number the
+    pair's `min` takes is therefore what the parse changed.
+    """
+    files = {
+        HANDLER: WRITER_ONLY_SOURCE,
+        READER: OTHER_SOURCE,
+        WRAPPER: WRAPPER_SOURCE,
+    }
+    imports = {HANDLER: ["app.tools", "app.storage"], READER: ["app.storage"]}
+    built = project(
+        files=files, entry_points=EntryPointOutput(imports=imports),
+    )
+    fs_writes, fs_reads = _fs_sites(files)
+    modules = _modules_for(built.ctx, [], fs_writes, fs_reads)
+
+    assert sorted(modules) == sorted([HANDLER, READER, WRAPPER])
+
+    reader_entry = _reader_entry("read_it", READER)
+    without, _ = _build(
+        files=files,
+        store=_store(),
+        imports=imports,
+        nodes=[reader_entry],
+        modules={path: ast.parse(files[path]) for path in (HANDLER, READER)},
+    )
+    assert round(
+        _edges(without, "reads_from")[0].identity_confidence, 4
+    ) == round(_link_for(CODE_CONTEXT_SHARED_IMPORT), 4)
+
+    delta, created = _build(
+        files=files,
+        store=_store(),
+        imports=imports,
+        nodes=[reader_entry],
+        modules=modules,
+    )
+    assert [node.attributes["source_file"] for node in created] == [READER]
+    link = _edges(delta, "reads_from")[0].identity_confidence
+    assert round(link, 4) == round(_link_for(CODE_CONTEXT_SHARED_WRAPPER), 4)
+    assert round(link, 4) == 0.804

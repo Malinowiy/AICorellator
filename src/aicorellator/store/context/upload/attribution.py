@@ -75,12 +75,15 @@ to do with. A false negative, stated.
 *writer-side* signal; the reader is a plain `fs` read, so the `reads_from`
 link starts from the read site's own `confidence_base` (0.3, the family's)
 and takes the literal signal plus the code-context row this pass can
-read — the same module (+0.2) or the one-way import (+0.1), which is
-`confidence.code_context`'s first and third rows. A same-module pair is
-`1 − 0.7 × 0.4 × 0.8 = 0.776` and a shared-import pair is
-`1 − 0.7 × 0.4 × 0.9 = 0.748`; `find_chain_groups` takes the `min` of the
-two links, which is the reader's number here because the writer's is
-higher (0.84–0.872).
+read — the shared wrapper (+0.3), the same module (+0.2) or the one-way
+import (+0.1), which are `confidence.code_context`'s three rows, ranked
+the ADR's way (`_code_context`). A same-module pair is
+`1 − 0.7 × 0.4 × 0.8 = 0.776`, a shared-import pair is
+`1 − 0.7 × 0.4 × 0.9 = 0.748`, and a pair that shares a wrapper is
+`1 − 0.7 × 0.4 × 0.7 = 0.804` (B.3b-user_upload-attribution-followup:
+the row reads the parsed module bodies, `_defines_a_client`);
+`find_chain_groups` takes the `min` of the two links, which is the
+reader's number here because the writer's is higher (0.84–0.872).
 
 Four rules are restated rather than imported, because the store subsystem
 does not reach into the parsing stage package (the stage package imports
@@ -101,6 +104,7 @@ from ....graph.models import Edge, Node
 from ...confidence import (
     CODE_CONTEXT_SAME_MODULE,
     CODE_CONTEXT_SHARED_IMPORT,
+    CODE_CONTEXT_SHARED_WRAPPER,
     combine_signals,
     literal_match,
 )
@@ -118,6 +122,22 @@ SOURCE_TYPE = "user_upload"
 
 #: The node kind a read site is (ADR-0021 §10, 1.3a).
 SOURCE_KIND = "untrusted_source"
+
+#: The wrapper-constructor spellings the shared-wrapper row accepts
+#: (ADR-0021 §8's "a module that defines the client the store is
+#: reached through"). A closed set of **spellings**, read as a dotted
+#: call name (`_call_target`), and deliberately not a name table: an
+#: aliased import, a class the list does not name and a client returned
+#: by a function are all outside it, because the spelling is the test
+#: (B.3b-user_upload-attribution-followup).
+WRAPPER_CALLS = frozenset({
+    "boto3.client",
+    "boto3.resource",
+    "Storage",
+    "Chroma",
+    "Client",
+    "connect",
+})
 
 
 def attribute_source_type(
@@ -143,15 +163,20 @@ def attribute_source_type(
     `has_access_to source → reader`, one each per created source.
 
     `fs_reads` is the `fs` family's read sites and `stores` the store
-    nodes the resolver built; `modules` is the parsed module of each file
-    a read site lives in, which is where the reader's enclosing symbol
-    comes from (`untrusted_sources._reads_in`'s attribution rule,
-    restated). The three are what the creating half needs and the
-    stamping half does not, so a caller that passes none of them gets the
-    stamping behaviour alone — the mode B.3b-user_upload-core shipped. A
-    read site whose file is not in `modules` earns no source: its
-    `reader_kind` is not knowable, and `writer.find_upload_stores`'s "no
-    modules, no edge" is the same answer to the same question.
+    nodes the resolver built. `modules` is the parsed modules the stage
+    offers — the entry points' files, the write sites' files and the
+    read sites' files — and the pass reads two things out of them: the
+    reader's enclosing symbol, which is where the created source's
+    `reader_kind` and its reader come from
+    (`untrusted_sources._reads_in`'s attribution rule, restated), and
+    the body of a module both files reach, which is §8's shared-wrapper
+    row (`_defines_a_client`). The three are what the creating half
+    needs and the stamping half does not, so a caller that passes none
+    of them gets the stamping behaviour alone — the mode
+    B.3b-user_upload-core shipped. A read site whose file is not in
+    `modules` earns no source: its `reader_kind` is not knowable, and
+    `writer.find_upload_stores`'s "no modules, no edge" is the same
+    answer to the same question.
 
     `imports_by_file` is the scan's per-file import table
     (`ctx.entry_points.imports`): a dotted module name per file, which is
@@ -246,7 +271,7 @@ def _create_sources(
                 continue
             for store in linked:
                 confidence = _reader_link_confidence(
-                    read, store, site, imports_by_file
+                    read, store, site, imports_by_file, modules
                 )
                 if confidence is None:
                     continue
@@ -337,6 +362,7 @@ def _reader_link_confidence(
     store: Node,
     site: UploadSite,
     imports_by_file: Mapping[str, list[str]],
+    modules: Mapping[str, ast.Module] | None,
 ) -> float | None:
     """`identity_confidence` for one `reads_from store → source` (§8).
 
@@ -344,9 +370,9 @@ def _reader_link_confidence(
     with the two differences ADR-0022 §5 names: the base is the read
     site's own (`ReadSite.confidence_base`, the family's 0.3 — the
     writer's 0.5 is the *writer's* signal and it is on the other link),
-    and the code-context row is read off the import table rather than off
-    two counter-sites, because the writer's side here is a file and not a
-    site.
+    and the code-context row is read off the import table and the parsed
+    modules rather than off two counter-sites, because the writer's side
+    here is a file and not a site (`_code_context`).
 
     `None` means no link, and `literal_match` decides it: two different
     literals name two stores, and neither side naming one is §5's "no
@@ -361,7 +387,9 @@ def _reader_link_confidence(
         return None
 
     signals = [literal]
-    context = _code_context(site.file_path, read.file_path, imports_by_file)
+    context = _code_context(
+        site.file_path, read.file_path, imports_by_file, modules
+    )
     if context > 0.0:
         signals.append(context)
     return combine_signals(read.confidence_base, signals)
@@ -371,24 +399,138 @@ def _code_context(
     writer_file: str,
     reader_file: str,
     imports_by_file: Mapping[str, list[str]],
+    modules: Mapping[str, ast.Module] | None = None,
 ) -> float:
     """§8's code-context signal for the reader's link.
 
-    `confidence.code_context`'s first and third rows, read off the
-    entry-point import table instead of two sites' `ModuleFacts`: the
-    same module is `CODE_CONTEXT_SAME_MODULE` (+0.2), and one file
-    importing the other, in either direction, is
-    `CODE_CONTEXT_SHARED_IMPORT` (+0.1). The shared-wrapper row (+0.3)
-    needs the manifest's dotted-name map, which this pass does not have;
-    a scope that is not the same file *is* the import clause
-    (`_site_covers`), so a read in scope scores one of the two and never
-    `0.0`.
+    The three rows are `confidence.code_context`'s, and one of them is
+    the answer — the strongest, the ADR-0021 §8 way — in this order:
+
+      - a **shared wrapper** both files reach → +0.3;
+      - else the **same module** → +0.2;
+      - else **one file importing the other** → +0.1;
+      - else `0.0`.
+
+    The weights are `confidence`'s constants and the ranking is the
+    brief's (B.3b-user_upload-attribution-followup's O2: a same-file pair
+    that also shares a wrapper scores the wrapper's +0.3, not `0.2 + 0.3`
+    and not the same module's). `confidence.code_context` itself checks
+    the same module first and pins that order in its own test; it is also
+    not callable from here, because its inputs are two `WriteSite`s'
+    `ModuleFacts` and this pass's writer side is a *file* — and its
+    wrapper row is a shared *local import*, where this one reads the
+    parsed module bodies (`confidence.module_facts` needs the manifest's
+    `path_by_dotted` map, which this stage does not have).
+
+    A pair in scope is the same file or an import apart (`_site_covers`),
+    so the last row is unreachable **through the pipeline** and is the
+    answer to the question the function is asked rather than a case that
+    happens: a read site out of scope is skipped before this runs.
     """
+    wrapper = _shared_wrapper(
+        writer_file, reader_file, imports_by_file, modules
+    )
+    if wrapper is not None:
+        return CODE_CONTEXT_SHARED_WRAPPER
     if reader_file == writer_file:
         return CODE_CONTEXT_SAME_MODULE
     if _shares_an_import_path(writer_file, reader_file, imports_by_file):
         return CODE_CONTEXT_SHARED_IMPORT
     return 0.0
+
+
+def _shared_wrapper(
+    writer_file: str,
+    reader_file: str,
+    imports_by_file: Mapping[str, list[str]],
+    modules: Mapping[str, ast.Module] | None,
+) -> str | None:
+    """The path of a wrapper module both files reach, or None (§8).
+
+    A wrapper is a module whose body defines a module-level client
+    (`_defines_a_client`) and that **both** files reach — the file
+    itself, or a module it imports (`_reaches_file`). The candidates are
+    the parsed modules the stage offered, because the body is what says
+    whether a module is a wrapper: a file this scan did not parse has no
+    body to read, which is `_module_for`'s "no modules, no edge" answer
+    to a different question.
+
+    A file reaching *itself* is what makes one of the pair a wrapper
+    rather than a third module: a handler module that defines
+    `s3 = boto3.client("s3")` and a reader that imports it share it, and
+    so does a same-file pair whose own file defines one. A wrapper only
+    one of the two files reaches is not shared.
+
+    The answer is a path rather than a `bool` so the caller could name
+    it, and the candidates are walked in sorted order so the answer does
+    not depend on the stage's dict order.
+    """
+    if modules is None:
+        return None
+    for path in sorted(modules):
+        if not _defines_a_client(modules[path]):
+            continue
+        if _reaches_file(writer_file, path, imports_by_file) and (
+            _reaches_file(reader_file, path, imports_by_file)
+        ):
+            return path
+    return None
+
+
+def _reaches_file(
+    file_path: str,
+    candidate: str,
+    imports_by_file: Mapping[str, list[str]],
+) -> bool:
+    """True if a file *is* `candidate`, or imports it.
+
+    `_module_matches_file` on each import of the file — the rule
+    `_shares_an_import_path` reads, and no new import resolution — plus
+    the file's own path, because the wrapper can be one of the two files
+    and a file does not import itself (`_shared_wrapper`).
+    """
+    if file_path == candidate:
+        return True
+    return any(
+        _module_matches_file(module, candidate)
+        for module in imports_by_file.get(file_path, ())
+    )
+
+
+def _defines_a_client(tree: ast.Module) -> bool:
+    """True if a module defines a module-level client constructor (§8).
+
+    The position and the spelling are the whole rule: a **module-level
+    assignment** whose value is a call in `WRAPPER_CALLS`' closed set.
+    `s3 = boto3.client("s3")` is a wrapper, and so is the annotated
+    spelling of it; `def get_s3(): return boto3.client("s3")` is not
+    (the client is not a module-level name), a module that only imports
+    `boto3` is not (no constructor in its body), and a constructor
+    nested in a top-level `if` or `try` is not either — the body is read
+    one level deep, which is the brief's "module level". The call's
+    return value is not followed and its receiver is not resolved: the
+    spelling is the test.
+    """
+    for statement in tree.body:
+        value = _assigned_value(statement)
+        if isinstance(value, ast.Call) and (
+            _call_target(value) in WRAPPER_CALLS
+        ):
+            return True
+    return False
+
+
+def _assigned_value(statement: ast.stmt) -> ast.expr | None:
+    """The expression a top-level statement binds to a name, or None.
+
+    `s3 = boto3.client(...)` and `s3: Client = boto3.client(...)` bind
+    one; an `import`, a `def`, a `class` and a bare call do not, which is
+    what keeps the wrapper rule on module-level *names*
+    (`_defines_a_client`).
+    """
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return statement.value
+    return None
 
 
 def _reads_from_edge(store_id: str, source_id: str, confidence: float) -> Edge:
@@ -772,6 +914,7 @@ def _graph_ids() -> tuple[str, Callable[[str, str, str], str]]:
 __all__ = [
     "SOURCE_KIND",
     "SOURCE_TYPE",
+    "WRAPPER_CALLS",
     "attribute_source_type",
 ]
 

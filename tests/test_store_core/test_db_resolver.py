@@ -19,9 +19,10 @@ What is pinned:
   - **E3** — a read whose call site the graph did not register as a
     source produces no `reads_from`;
   - **the identity** — two tables are two stores, and a site attaches to
-    the store its literal *equals*; a table whose name contains another
-    is the containment branch, which is inert through the resolver (the
-    `fs` / `s3` limitation, B.3b-fs-followup);
+    the store its literal *equals* and to every store whose literal
+    contains it or is contained by it: a table whose name contains
+    another is the containment branch, which the resolver reaches since
+    B.3b-fs-followup;
   - **the wildcard** — a site whose SQL is a literal *prefix*
     (`'INSERT INTO ' + table`) names no table, so it attaches to every
     store its family has (§5), at a lower confidence.
@@ -50,6 +51,10 @@ from aicorellator.store.resolver import StoreResolver
 HANDLER = "app/handler.py"
 TABLE = "documents"
 OTHER = "documents_archive"
+#: A table that neither equals `TABLE` nor contains it, for the "no link"
+#: row: `documents` and `documents_archive` are a *containment* pair, and
+#: the resolver attaches to both keys of one (B.3b-fs-followup).
+ELSEWHERE = "audit_log"
 
 # `handle` writes on line 2 and reads on line 3, both inside the one
 # definition that starts on line 1, and both naming one table.
@@ -278,10 +283,10 @@ def test_two_different_tables_are_two_stores_and_no_cross_pair(
 ) -> None:
     """Two tables, two stores; neither side is claimed for the other's.
 
-    The write names `documents` and the read `documents_archive`, in the
-    same module: the code context agrees about everything and the
-    literals do not. §8's rule is "no link", so the two edges that come
-    out name the store their own site named.
+    The write names `documents` and the read `audit_log`, in the same
+    module: the code context agrees about everything and the literals
+    neither equal nor contain one another. §8's rule is "no link", so the
+    two edges that come out name the store their own site named.
     """
     built = _scene(
         scan,
@@ -289,33 +294,34 @@ def test_two_different_tables_are_two_stores_and_no_cross_pair(
             "def handle(payload):\n"
             f'    cursor.execute("INSERT INTO {TABLE} (id) VALUES (?)", '
             "(1,))\n"
-            f'    return cursor.execute("SELECT * FROM {OTHER}")\n'
+            f'    return cursor.execute("SELECT * FROM {ELSEWHERE}")\n'
         ),
         nodes=[_writer_node(), _source_node(line=3)],
     )
     edges = _resolve(built)
 
     stores = {store.name: store.id for store in built.nodes("store")}
-    assert sorted(stores) == [f"db:{TABLE}", f"db:{OTHER}"]
+    assert sorted(stores) == [f"db:{ELSEWHERE}", f"db:{TABLE}"]
 
     writes_to = [edge for edge in edges if edge.kind == "writes_to"]
     reads_from = [edge for edge in edges if edge.kind == "reads_from"]
     assert [edge.target_id for edge in writes_to] == [stores[f"db:{TABLE}"]]
     assert [edge.source_id for edge in reads_from] == [
-        stores[f"db:{OTHER}"]
+        stores[f"db:{ELSEWHERE}"]
     ]
 
 
 def test_a_table_containing_another_is_two_stores(scan) -> None:
-    """The containment branch is inert here, as it is for `fs` and `s3`.
+    """The containment branch, through the resolver (B.3b-fs-followup).
 
     A write naming `documents` and a read naming `documents_archive` are
-    two literals and two stores: `literal_match` relates them on
-    containment, but the resolver attaches a site only to the store its
-    literal *equals*, so neither edge is claimed for the other's store.
-    The branch itself is pinned in
-    `tests/test_store_core/test_confidence.py`; this pins what the
-    resolver does with it today (B.3b-fs-followup).
+    two literals and two stores, and each site attaches to **both**:
+    `literal_match` relates them on containment, and the resolver's
+    attachment is the site's own literal plus every key that row relates
+    to it. So each store earns one write and one read — the equal literal
+    on one side and the prefix row on the other, `1 − 0.7 × 0.4 × 0.8 =
+    0.776` and `1 − 0.7 × 0.7 × 0.8 = 0.608`. The branch itself is pinned
+    in `tests/test_store_core/test_confidence.py`.
     """
     assert literal_match(TABLE, OTHER) == LITERAL_PREFIX
 
@@ -334,10 +340,16 @@ def test_a_table_containing_another_is_two_stores(scan) -> None:
     stores = {store.name: store.id for store in built.nodes("store")}
     assert sorted(stores) == [f"db:{TABLE}", f"db:{OTHER}"]
     assert [edge.target_id for edge in edges if edge.kind == "writes_to"] == [
-        stores[f"db:{TABLE}"]
+        stores[f"db:{TABLE}"], stores[f"db:{OTHER}"],
     ]
     assert [edge.source_id for edge in edges if edge.kind == "reads_from"] == [
-        stores[f"db:{OTHER}"]
+        stores[f"db:{TABLE}"], stores[f"db:{OTHER}"],
+    ]
+    equal = combine_signals(BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE])
+    prefix = combine_signals(BASE, [LITERAL_PREFIX, CODE_CONTEXT_SAME_MODULE])
+    assert [round(edge.identity_confidence, 4) for edge in edges] == [
+        round(equal, 4), round(prefix, 4),
+        round(prefix, 4), round(equal, 4),
     ]
 
 

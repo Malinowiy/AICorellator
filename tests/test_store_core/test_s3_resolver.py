@@ -17,11 +17,11 @@ What is pinned:
     with no write likewise: a store is not a group;
   - **E3** — a read whose call site the graph did not register as a
     source produces no `reads_from`;
-  - **the identity** — two buckets, and a bucket against a bucket plus a
-    key, are different stores: a site attaches to the store its literal
-    *equals*, which is the `fs` limitation (B.3b-fs-followup) restated
-    for `s3`, while `literal_match`'s containment branch would relate
-    the two;
+  - **the identity** — two buckets are two stores, and a bucket against a
+    bucket plus a key is the same two stores with both edges each: a site
+    attaches to the store its literal *equals* and to every store
+    `literal_match`'s containment branch relates it to, which the resolver
+    reaches since B.3b-fs-followup;
   - **the wildcard** — a site with an unresolved bucket (`None`)
     attaches to every store its family has (§5), at a lower confidence.
 
@@ -305,15 +305,17 @@ def test_two_different_buckets_are_two_stores_and_no_cross_pair(
 
 
 def test_a_bucket_and_a_bucket_with_a_key_are_two_stores(scan) -> None:
-    """The containment branch is inert here, as it is for `fs`.
+    """The containment branch, through the resolver (B.3b-fs-followup).
 
     A write naming `'docs/uploads/'` and a read naming
-    `'docs/uploads/report.txt'` are two literals and two stores:
-    `literal_match` relates them on containment, but the resolver
-    attaches a site only to the store its literal *equals*, so neither
-    edge is claimed for the other's store. The branch itself is pinned
-    in `tests/test_store_core/test_confidence.py`; this pins what the
-    resolver does with it today (B.3b-fs-followup).
+    `'docs/uploads/report.txt'` are two literals and two stores, and each
+    site attaches to **both**: `literal_match` relates them on
+    containment, and the resolver's attachment is the site's own literal
+    plus every key that row relates to it. So each store earns one write
+    and one read — the equal literal on one side and the prefix row on
+    the other, `1 − 0.7 × 0.4 × 0.8 = 0.776` and `1 − 0.7 × 0.7 × 0.8 =
+    0.608`. The branch itself is pinned in
+    `tests/test_store_core/test_confidence.py`.
     """
     built = _scene(
         scan,
@@ -330,10 +332,16 @@ def test_a_bucket_and_a_bucket_with_a_key_are_two_stores(scan) -> None:
     stores = {store.name: store.id for store in built.nodes("store")}
     assert sorted(stores) == ["s3:docs/uploads/", f"s3:{LITERAL}"]
     assert [edge.target_id for edge in edges if edge.kind == "writes_to"] == [
-        stores["s3:docs/uploads/"]
+        stores["s3:docs/uploads/"], stores[f"s3:{LITERAL}"],
     ]
     assert [edge.source_id for edge in edges if edge.kind == "reads_from"] == [
-        stores[f"s3:{LITERAL}"]
+        stores["s3:docs/uploads/"], stores[f"s3:{LITERAL}"],
+    ]
+    equal = combine_signals(BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE])
+    prefix = combine_signals(BASE, [LITERAL_PREFIX, CODE_CONTEXT_SAME_MODULE])
+    assert [round(edge.identity_confidence, 4) for edge in edges] == [
+        round(equal, 4), round(prefix, 4),
+        round(prefix, 4), round(equal, 4),
     ]
 
 
