@@ -20,6 +20,7 @@ from .fastmcp import FastMCPDetector
 from .mcp_python import MCPPythonDetector
 from .guardrails_ai import GuardrailsAIDetector
 from .nemo_guardrails import NeMoGuardrailsDetector
+from .langchain_callback import LangChainCallbackDetector
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ KNOWN_DETECTORS: dict[str, type[FrameworkDetector]] = {
     "mcp_python": MCPPythonDetector,
     "guardrails_ai": GuardrailsAIDetector,
     "nemo_guardrails": NeMoGuardrailsDetector,
+    "langchain_callback": LangChainCallbackDetector,
 }
 
 
