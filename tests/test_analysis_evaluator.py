@@ -400,9 +400,15 @@ def test_voter_payload_carries_flow_kind(store) -> None:
 # ------------------------------------------------------------
 # Guardrails reach the payload (B.4b, ADR-0019)
 # ------------------------------------------------------------
+# The section carries `observed_by` as well (B.4b-observed-by,
+# ADR-0024 §6): which producer vouched for each guardrail node.
 
 GUARDRAIL_ID = "guardrail:" + "9" * 16
 GUARDS_EDGE = "edge:" + "9" * 16
+# A second guardrail, from a framework detector rather than a
+# capability: the same `guards` edge shape, a different provenance.
+DETECTOR_GUARDRAIL_ID = "guardrail:" + "d" * 16
+DETECTOR_GUARDS_EDGE = "edge:" + "d" * 16
 
 
 def _build_unguarded_chain(store) -> None:
@@ -421,18 +427,30 @@ def _build_unguarded_chain(store) -> None:
     ))
 
 
-def _add_guardrail(store) -> None:
+def _add_guardrail(
+    store,
+    node_id: str = GUARDRAIL_ID,
+    edge_id: str = GUARDS_EDGE,
+    name: str = "PIIDetector",
+    observed_by: list[str] | None = None,
+) -> None:
     """A `guardrail` node and its `guards` edge onto `n:2`.
 
     `guardrail → component` (ADR-0019 §1) and `structural` (ADR-0015,
     decision 5), so the edge is in the graph and in no chain.
+
+    `observed_by` defaults to the schema's `["ast"]` — a
+    capability-derived guardrail (B.4-gap-2). A detector's node carries
+    `["ast", "framework:<name>"]` (ADR-0016), which is what the
+    provenance test passes in.
     """
     store.nodes.upsert(Node(
-        id=GUARDRAIL_ID, kind="guardrail", name="PIIDetector",
+        id=node_id, kind="guardrail", name=name,
         host_id="localhost", attributes={"source_file": "app/guardrails.py"},
+        observed_by=observed_by if observed_by is not None else ["ast"],
     ))
     store.edges.upsert(Edge(
-        id=GUARDS_EDGE, source_id=GUARDRAIL_ID, target_id="n:2",
+        id=edge_id, source_id=node_id, target_id="n:2",
         kind="guards", host_id="localhost", flow_kind="structural",
     ))
 
@@ -453,8 +471,10 @@ def test_voter_payload_carries_the_guardrails_section(store) -> None:
     """A guarded chain reaches the voters with the guardrail named.
 
     The section is the ADR's "what the graph knows, no more" (ADR-0019
-    §2): the node's id, kind, name, capabilities and attributes — no
-    synthesized `policy` or `enforcement_point`, which is D.6.
+    §2): the node's id, kind, name, capabilities, provenance and
+    attributes — no synthesized `policy` or `enforcement_point`, which
+    is D.6. `observed_by` rides along (ADR-0024 §6), so the model can
+    tell which producer vouched for the guardrail.
     """
     _build_chain_with_guardrail(store)
     captured: dict = {}
@@ -476,13 +496,62 @@ def test_voter_payload_carries_the_guardrails_section(store) -> None:
     assert guardrails[0]["kind"] == "guardrail"
     assert guardrails[0]["name"] == "PIIDetector"
     assert guardrails[0]["capabilities"] == []
+    assert guardrails[0]["observed_by"] == ["ast"]
     assert guardrails[0]["attributes"] == {"source_file": "app/guardrails.py"}
     # The chain itself is unchanged: the `guards` edge is not a chain edge.
     assert [e["id"] for e in captured["chain_edges"]] == ["e:1"]
 
 
+def test_the_payload_tells_a_guardrails_producers_apart(store) -> None:
+    """`observed_by` is what separates one producer's guardrail from
+    another's (ADR-0024 §6).
+
+    Two guardrails guard the same component, so one payload carries
+    both and they look alike in every other field: same kind, same
+    empty capabilities, same attributes shape. `observed_by` is the
+    only thing that says which producer vouched for each — the
+    capability-derived node is `["ast"]` (B.4-gap-2), the FastMCP
+    middleware detector's is `["ast", "framework:fastmcp_middleware"]`
+    (B.4-gap-5, ADR-0016). The model needs that to weigh a syntactic
+    class differently from a detector's recognition.
+    """
+    _build_unguarded_chain(store)
+    _add_guardrail(store)
+    _add_guardrail(
+        store,
+        node_id=DETECTOR_GUARDRAIL_ID,
+        edge_id=DETECTOR_GUARDS_EDGE,
+        name="AuditMiddleware",
+        observed_by=["ast", "framework:fastmcp_middleware"],
+    )
+    captured: dict = {}
+
+    def _fake_evaluate(**kwargs):
+        captured.update(kwargs)
+        return [_voter_response("fake-voter")]
+
+    with patch(
+        "aicorellator.analysis.voters.evaluate", side_effect=_fake_evaluate,
+    ):
+        evaluate_chains(store, [_candidate()], _config(), progress=False)
+
+    by_name = {g["name"]: g for g in captured["guardrails"]}
+    assert set(by_name) == {"PIIDetector", "AuditMiddleware"}
+    assert by_name["PIIDetector"]["observed_by"] == ["ast"]
+    assert by_name["AuditMiddleware"]["observed_by"] == [
+        "ast", "framework:fastmcp_middleware",
+    ]
+    # Nothing else in the section distinguishes them.
+    assert by_name["PIIDetector"]["kind"] == "guardrail"
+    assert by_name["AuditMiddleware"]["kind"] == "guardrail"
+
+
 def test_the_prompt_carries_guardrails_in_the_payload(store) -> None:
-    """The section travels the whole path: evaluator → voters → prompt."""
+    """The section travels the whole path: evaluator → voters → prompt.
+
+    Including provenance: the JSON the model reads names who observed
+    the guardrail (ADR-0024 §6), not just the guardrail.
+    """
     _build_chain_with_guardrail(store)
     seen: dict = {}
 
@@ -506,6 +575,13 @@ def test_the_prompt_carries_guardrails_in_the_payload(store) -> None:
     assert '"guardrails"' in untrusted
     assert GUARDRAIL_ID in untrusted
     assert '"PIIDetector"' in untrusted
+    # Provenance reaches the model too: the guardrail section says who
+    # observed the node (ADR-0024 §6).
+    assert '"observed_by"' in untrusted
+    payload = json.loads(
+        untrusted.partition("[UNTRUSTED_DATA]")[2].strip()
+    )
+    assert payload["guardrails"][0]["observed_by"] == ["ast"]
 
 
 def test_a_chain_without_guardrails_sends_an_empty_list(store) -> None:
@@ -551,6 +627,10 @@ def test_guardrails_come_from_the_guards_edge_direction(store) -> None:
     the component the object. A `guards` edge whose source is not a
     guardrail node is a construction bug, and it is left out rather than
     reported to the model as a guardrail the graph does not have.
+
+    The read is a plain graph read, so whatever provenance the node
+    carries comes back with it — here a detector's (ADR-0016), not the
+    schema's default.
     """
     store.nodes.upsert(Node(
         id="tool:1", kind="tool", name="delete_file", host_id="localhost",
@@ -558,14 +638,17 @@ def test_guardrails_come_from_the_guards_edge_direction(store) -> None:
     store.nodes.upsert(Node(
         id=GUARDRAIL_ID, kind="guardrail", name="PIIDetector",
         host_id="localhost",
+        observed_by=["ast", "framework:fastmcp_middleware"],
     ))
     store.edges.upsert(Edge(
         id=GUARDS_EDGE, source_id=GUARDRAIL_ID, target_id="tool:1",
         kind="guards", host_id="localhost", flow_kind="structural",
     ))
 
-    assert [g["id"] for g in _guardrails_for_chain(store, ["tool:1"])] == [
-        GUARDRAIL_ID,
+    found = _guardrails_for_chain(store, ["tool:1"])
+    assert [g["id"] for g in found] == [GUARDRAIL_ID]
+    assert found[0]["observed_by"] == [
+        "ast", "framework:fastmcp_middleware",
     ]
     # The reverse reading — "this component is guarded by" — is not the
     # claim the edge makes, so a guardrail is not found by its own id.

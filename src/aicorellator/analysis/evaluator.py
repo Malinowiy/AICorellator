@@ -588,19 +588,31 @@ def _guardrails_for_chain(
 def _guardrail_to_dict(node: Node) -> dict:
     """One guardrail, as the prompt's `guardrails` section shows it.
 
-    Deliberately not `_node_to_dict`: `observed_by` and `confidence`
-    describe how a *chain* node was observed, and a guardrail is never a
-    chain node — it is a reference beside the chain, not a step of it.
-    What the model gets is what the graph knows about the guardrail: its
-    name, its kind, its capabilities and its attributes. No `policy` and
-    no `enforcement_point` is synthesized (ADR-0019 §4); D.6 adds those
-    to the node, and then they arrive inside `attributes`.
+    Deliberately not `_node_to_dict`: `confidence` scores how likely a
+    *chain* is exploitable, and a guardrail is never a chain node — it
+    is a reference beside the chain, not a step of it.
+
+    `observed_by` does travel (ADR-0024 §6), and it is the one field
+    that tells the guardrail's three producers apart: `["ast"]` for a
+    node derived from a capability (B.4-gap-2), `["ast",
+    "framework:fastmcp_middleware"]` for one a framework detector
+    recognized (B.4-gap-5), and `["ast", "static_llm:<model_id>"]` for
+    one the LLM-classifier proposed. Without it the model sees three
+    identically-shaped guardrails and cannot tell a syntactic class
+    from a model's guess — the distinction ADR-0016 puts on every node.
+
+    What the model gets is what the graph knows about the guardrail:
+    its name, its kind, its capabilities, who observed it and its
+    attributes. No `policy` and no `enforcement_point` is synthesized
+    (ADR-0019 §4); D.6 adds those to the node, and then they arrive
+    inside `attributes`.
     """
     return {
         "id": node.id,
         "kind": node.kind,
         "name": node.name,
         "capabilities": list(node.capabilities),
+        "observed_by": list(node.observed_by),
         "attributes": node.attributes,
     }
 
