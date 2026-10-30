@@ -15,29 +15,38 @@ signature:
         f = request.FILES["file"]            → one site
         g = request.FILES.get("file")        → one site
 
-**The route check is not this detector's, and today it is the limit.**
-`entry_points.EntryPointStage` decides which functions are routes, and
-`entry_points._extract_route` recognizes one shape: a decorator that is
-a **call on an attribute** whose last segment is an HTTP method (or
-`websocket`), carrying a **literal string path** — `@app.post("/upload")`,
-`@router.post("/upload")`. None of Django's own route decorators is that
-shape: `@require_POST`, `@require_http_methods([...])` and `@csrf_exempt`
-are bare names, `@api_view(["POST"])` (DRF) is a call on a name, and a
-class-based view's route lives in `urls.py`. **A view decorated with
-Django's own decorators therefore produces no entry-point node, and this
-detector — which matches a function's name against the nodes the stage
-built — reports nothing for it.** That is a false negative, stated, and
-the fix is a Django route shape in `entry_points.py`: a separate step,
-and outside this one's change set. What this detector matches is
-whatever `EntryPointStage` produced for the file — a node carrying a
-`handler`, which is the HTTP/WebSocket route shape and the same shape
-`detectors.fastapi` reads — and the fixture in
-`tests/test_store_upload_django/test_end_to_end.py` uses a route
-decorator the stage does recognize, and says so.
+**The route check is not this detector's, and it now covers Django's own
+spellings.** `entry_points.EntryPointStage` decides which functions are
+routes, and `entry_points._extract_route` recognizes four shapes: a
+**call on an attribute** whose last segment is an HTTP method or
+`websocket` (`@router.post("/upload")`, `@app.post("/upload")`), Flask's
+canonical `@app.route(..., methods=[...])`, a **bare name** Django guard
+(`@require_POST`, `@require_GET`, ...), and a **call on a name** taking a
+literal list (`@require_http_methods([...])`, DRF's `@api_view([...])`).
+A view decorated the way Django documents it therefore produces an
+entry-point node as of `B.3b-user_upload-route-detectors-followup`, and
+this detector — which matches a function's name against the nodes the
+stage built — matches it. Two limits remain, both stated:
+
+  - a Django route's **path** is in `urls.py`, which the AST does not
+    see: the record's `path` is `""`, the node is named
+    `"<METHOD> <handler>"`, and the id is `(file, method, handler)`. The
+    handler is what this detector matches, so the empty path costs
+    nothing here.
+  - a **class-based view as a unit** is out of scope: its route is
+    `UploadView.as_view()` in `urls.py`, and nothing names the class. A
+    `View` subclass's *method* is a function of the module like any
+    other, so a method carrying a route decorator of its own is a route
+    the way a decorated FastAPI method is — the stage does not know what
+    a class is.
+
+What this detector matches is whatever `EntryPointStage` produced for the
+file — a node carrying a `handler`, the HTTP/WebSocket route shape, and
+the same shape `detectors.fastapi` reads.
 
 The detector does not invent a route either: a function is a candidate
 only when the scan built a node naming it **and** the function carries a
-route-shaped decorator (`_is_route_decorator`, `_extract_route`'s shape
+route-shaped decorator (`_is_route_decorator`, `_extract_route`'s shapes
 restated). On a scan the stage produced, the second condition cannot
 subtract anything — the stage records a handler only after it saw such a
 decorator, so the two agree by construction; it is here so that a
@@ -72,15 +81,16 @@ one store. The `line` is `FunctionDef.lineno` — the view, not the access.
 here, and not because a class is refused: nothing names it.
 `UploadView.post` is a function of the module like any other, but a
 class-based view reaches its handler through `urls.py`
-(`UploadView.as_view()`) or a class-level decorator, so its `post`
-carries no route decorator the entry-point stage records, the name match
-finds no node, and the view is no writer. Supporting the class as a unit
-— `line` = the class, the class body's own writes, and `self.`-calls,
-which the call graph does not record (ADR-0016) — is
-`B.3b-user_upload-django-followup`'s step; the fixture in
-`tests/test_store_upload_django/test_detector.py` pins today's answer,
-and pins the decorated-method shape that is *not* a class-based view so
-the boundary is a decision rather than an accident.
+(`UploadView.as_view()`) or a class-level decorator, so the routing lives
+on the class and no entry-point node names the method. A method that
+carries a *route decorator of its own* is the decorated-method shape the
+stage does record — exactly as it does for FastAPI — and this detector
+matches it; a method with no such decorator is no site. Supporting the
+class as a unit — `line` = the class, the class body's own writes, and
+`self.`-calls, which the call graph does not record (ADR-0016) — is
+`B.3b-user_upload-django-followup`'s step; the fixtures in
+`tests/test_store_upload_django/test_detector.py` pin today's answer,
+both ways.
 
 The sites come back in source order (`FunctionDef.lineno`), so two runs
 over one file are identical — the same property `detectors.fastapi`
@@ -113,14 +123,31 @@ FILES = "FILES"
 GET = "get"
 
 #: The decorator attributes `entry_points._extract_route` records a route
-#: for — `patterns.HTTP_METHODS` and `patterns.WEBSOCKET_METHOD`,
-#: restated rather than imported: `store/` reads no pattern table (the
-#: same rule `families.fs` and `detectors.fastapi` follow), and this is a
-#: membership test, not logic that drifts.
+#: for — `patterns.HTTP_METHODS`, `patterns.WEBSOCKET_METHOD` and Flask's
+#: canonical `route` — restated rather than imported: `store/` reads no
+#: pattern table (the same rule `families.fs` and `detectors.fastapi`
+#: follow), and this is a membership test, not logic that drifts.
+#: `route` is here because the entry-point stage is framework-agnostic: a
+#: Django module scanned next to a Flask app can hold one, and the
+#: confirmation must not refuse a route the stage recorded.
 ROUTE_ATTRIBUTES = frozenset({
     "get", "post", "put", "delete", "patch", "options", "head",
-    "websocket",
+    "websocket", "route",
 })
+
+#: The bare `Name` decorators the stage records a route for — Django's
+#: method guards (`entry_points.DJANGO_METHOD_DECORATORS`), restated for
+#: the same reason as `ROUTE_ATTRIBUTES`. The method each one names is
+#: not read here: the node the stage built carries it.
+GUARD_DECORATORS = frozenset({
+    "require_GET", "require_POST", "require_PUT", "require_PATCH",
+    "require_DELETE", "require_safe",
+})
+
+#: The `entry_points.DJANGO_LIST_DECORATORS` names — a call on a `Name`
+#: taking a literal list of methods: Django's `require_http_methods` and
+#: DRF's `api_view`.
+LIST_DECORATORS = frozenset({"require_http_methods", "api_view"})
 
 
 class DjangoUploadDetector(UploadDetector):
@@ -227,26 +254,43 @@ def _is_route(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 def _is_route_decorator(decorator: ast.expr) -> bool:
-    """True if the decorator is the shape `entry_points` records a route for.
+    """True if the decorator is a shape `entry_points` records a route for.
 
-    `_extract_route`'s three conditions, restated: a call, on an
-    attribute whose last segment is an HTTP method or `websocket`, whose
-    first argument is a literal string path. A bare `@post` and a
-    `@require_POST` are names and not calls; `@api_view(["POST"])` is a
-    call on a name; `@router.post(path)` with a variable path names no
-    path — none of them is a route here, and none of them is a route in
-    the entry-point stage either.
+    `_extract_route`'s four shapes, restated: a call on an attribute whose
+    last segment is an HTTP method, `websocket` or Flask's `route`, with a
+    literal string path as its first argument; a bare name in
+    `GUARD_DECORATORS` (`@require_POST`); and a call on a name in
+    `LIST_DECORATORS` taking a literal list (`@require_http_methods([...])`,
+    `@api_view([...])`).
+
+    A bare `@post` is a name and not a guard, `@csrf_exempt` is a wrapper
+    with no method, and `@router.post(path)` with a variable path names no
+    path — none of them is a route here, and none is a route in the
+    entry-point stage either.
     """
+    if isinstance(decorator, ast.Name):
+        return decorator.id in GUARD_DECORATORS
     if not isinstance(decorator, ast.Call):
-        return False
-    if not isinstance(decorator.func, ast.Attribute):
-        return False
-    if decorator.func.attr not in ROUTE_ATTRIBUTES:
         return False
     if not decorator.args:
         return False
-    path = decorator.args[0]
-    return isinstance(path, ast.Constant) and isinstance(path.value, str)
+
+    first = decorator.args[0]
+    if isinstance(decorator.func, ast.Attribute):
+        if decorator.func.attr not in ROUTE_ATTRIBUTES:
+            return False
+        return isinstance(first, ast.Constant) and isinstance(
+            first.value, str
+        )
+    if isinstance(decorator.func, ast.Name):
+        if decorator.func.id not in LIST_DECORATORS:
+            return False
+        return isinstance(first, (ast.List, ast.Tuple)) and any(
+            isinstance(element, ast.Constant)
+            and isinstance(element.value, str)
+            for element in first.elts
+        )
+    return False
 
 
 # ------------------------------------------------------------------
@@ -330,6 +374,8 @@ def _is_files_attribute(node: ast.AST) -> bool:
 __all__ = [
     "FILES",
     "GET",
+    "GUARD_DECORATORS",
+    "LIST_DECORATORS",
     "NAME",
     "REQUEST",
     "ROUTE_ATTRIBUTES",

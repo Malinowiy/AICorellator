@@ -18,7 +18,8 @@ import pytest
 
 from aicorellator.ingestion.discovery import FileEntry, FileManifest
 from aicorellator.ingestion.target import Target
-from aicorellator.parsing.entry_points import run
+from aicorellator.parsing.entry_points import DJANGO_PATH, run
+from aicorellator.parsing.normalizer_helpers import entry_point_id
 
 
 @pytest.fixture
@@ -91,6 +92,320 @@ async def websocket_endpoint(websocket):
     assert ep.method == "WS"
     assert ep.path == "/connect"
     assert ep.handler == "websocket_endpoint"
+
+
+def test_detect_django_require_post(tmp_manifest) -> None:
+    """`@require_POST` is a route: the method is the decorator's name.
+
+    The path is `DJANGO_PATH` — empty — because a Django view's path is
+    in `urls.py`, which the AST does not see. The handler and the line
+    are the view's, which is what the upload detectors match.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A Django view."""
+from django.views.decorators.http import require_POST
+
+
+@require_POST
+def upload(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    ep = out.entry_points[0]
+    assert ep.method == "POST"
+    assert ep.path == DJANGO_PATH == ""
+    assert ep.handler == "upload"
+    assert ep.line == 6
+
+
+def test_detect_django_require_get(tmp_manifest) -> None:
+    """`@require_GET` names GET, and `@require_safe` names it too."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A Django view."""
+from django.views.decorators.http import require_GET
+
+
+@require_GET
+def report(request):
+    return request.FILES["file"]
+''')
+    _add_py(manifest, target, "safe.py", '''\
+"""A Django view guarded for safe methods."""
+from django.views.decorators.http import require_safe
+
+
+@require_safe
+def index(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert [
+        (ep.method, ep.path, ep.handler) for ep in out.entry_points
+    ] == [("GET", "", "report"), ("GET", "", "index")]
+
+
+def test_detect_django_require_http_methods_takes_the_first(
+    tmp_manifest,
+) -> None:
+    """`@require_http_methods(["POST", "PUT"])` is one route, method POST.
+
+    A route that accepts both is one node with the primary method, the
+    convention every other route shape follows; the PUT is a false
+    negative at the entry-point level, stated.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A Django view."""
+from django.views.decorators.http import require_http_methods
+
+
+@require_http_methods(["POST", "PUT"])
+def upload(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    assert out.entry_points[0].method == "POST"
+
+
+def test_detect_django_api_view_takes_the_first(tmp_manifest) -> None:
+    """DRF's `@api_view(["POST"])` is a call on a name, and a route."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A DRF view."""
+from rest_framework.decorators import api_view
+
+
+@api_view(["POST"])
+def upload(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    assert out.entry_points[0].method == "POST"
+    assert out.entry_points[0].path == DJANGO_PATH
+
+
+def test_two_django_views_in_one_file_are_two_routes(tmp_manifest) -> None:
+    """The id is `(file, method, handler)`, so the empty path cannot merge.
+
+    Two `@require_POST` views in one file share the file, the method and
+    the empty path; the handler is the only thing that tells them apart,
+    and `entry_point_id` keys on it when there is no path.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""Two Django views in one file."""
+from django.views.decorators.http import require_POST
+
+
+@require_POST
+def upload(request):
+    return request.FILES["file"]
+
+
+@require_POST
+def upload_other(request):
+    return request.FILES["other"]
+''')
+    out = run(manifest)
+    assert [(ep.method, ep.path, ep.handler) for ep in out.entry_points] == [
+        ("POST", "", "upload"),
+        ("POST", "", "upload_other"),
+    ]
+    first, second = out.entry_points
+    assert entry_point_id(first) != entry_point_id(second)
+
+
+def test_a_django_guard_with_a_variable_list_is_not_a_route(
+    tmp_manifest,
+) -> None:
+    """`@require_http_methods(METHODS)` names no method the AST can read."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A Django view."""
+from django.views.decorators.http import require_http_methods
+
+METHODS = ["POST"]
+
+
+@require_http_methods(METHODS)
+def upload(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert out.entry_points == []
+
+
+def test_detect_csrf_exempt_alone_is_not_a_route(tmp_manifest) -> None:
+    """`@csrf_exempt` is a wrapper: no method, no path, no route."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A Django view."""
+from django.views.decorators.csrf import csrf_exempt
+
+
+@csrf_exempt
+def upload(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert out.entry_points == []
+
+
+def test_detect_django_route_below_csrf_exempt(tmp_manifest) -> None:
+    """The decorator walk reaches the route under the wrapper.
+
+    `@csrf_exempt` is not a route and needs no special case: the walk
+    over `func.decorator_list` sees both decorators, and the guard is the
+    one that produces the record.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "views.py", '''\
+"""A Django view."""
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+
+
+@csrf_exempt
+@require_POST
+def upload(request):
+    return request.FILES["file"]
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    ep = out.entry_points[0]
+    assert (ep.method, ep.path, ep.handler, ep.line) == (
+        "POST", "", "upload", 8,
+    )
+
+
+def test_detect_flask_route_with_methods(tmp_manifest) -> None:
+    """`@app.route("/upload", methods=["POST"])` — Flask's canonical form.
+
+    The last segment is `route`, not an HTTP method, so the method comes
+    out of the `methods=` keyword; the path is the first positional
+    string, exactly as for `@app.post`.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", '''\
+"""A Flask view."""
+from flask import Flask, request
+
+app = Flask(__name__)
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    return request.files["file"]
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    ep = out.entry_points[0]
+    assert ep.method == "POST"
+    assert ep.path == "/upload"
+    assert ep.handler == "upload"
+    assert ep.line == 8
+
+
+def test_detect_flask_route_takes_the_first_method(tmp_manifest) -> None:
+    """`methods=["PUT", "POST"]` is one route, method PUT — the first.
+
+    A tuple of methods is read the same way, because Flask accepts both
+    spellings and the node's method is the primary one either way.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", '''\
+"""A Flask view."""
+from flask import Flask, request
+
+app = Flask(__name__)
+
+
+@app.route("/upload", methods=["PUT", "POST"])
+def upload():
+    return request.files["file"]
+
+
+@app.route("/store", methods=("PATCH",))
+def store():
+    return request.files["file"]
+''')
+    out = run(manifest)
+    assert [(ep.method, ep.path) for ep in out.entry_points] == [
+        ("PUT", "/upload"), ("PATCH", "/store"),
+    ]
+
+
+def test_detect_flask_route_defaults_to_get(tmp_manifest) -> None:
+    """`@app.route("/health")` declares no method, so the default is GET."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", '''\
+"""A Flask view."""
+from flask import Flask
+
+app = Flask(__name__)
+
+
+@app.route("/health")
+def health():
+    return {"status": "ok"}
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    assert out.entry_points[0].method == "GET"
+    assert out.entry_points[0].path == "/health"
+
+
+def test_detect_flask_route_with_a_variable_methods_is_get(
+    tmp_manifest,
+) -> None:
+    """`methods=METHODS` is unresolved, so it is read as the default.
+
+    A false negative, stated: the route exists and the method does not
+    reach the AST, so the node carries GET — the same reading Flask
+    itself gives a route that declares no method.
+    """
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", '''\
+"""A Flask view."""
+from flask import Flask, request
+
+app = Flask(__name__)
+METHODS = ["POST"]
+
+
+@app.route("/upload", methods=METHODS)
+def upload():
+    return request.files["file"]
+''')
+    out = run(manifest)
+    assert len(out.entry_points) == 1
+    assert out.entry_points[0].method == "GET"
+
+
+def test_a_flask_route_without_a_literal_path_is_not_a_route(
+    tmp_manifest,
+) -> None:
+    """`@app.route(path)` names no path, as `@app.post(path)` does not."""
+    manifest, target = tmp_manifest
+    _add_py(manifest, target, "app.py", '''\
+"""A Flask view."""
+from flask import Flask, request
+
+app = Flask(__name__)
+path = "/upload"
+
+
+@app.route(path, methods=["POST"])
+def upload():
+    return request.files["file"]
+''')
+    out = run(manifest)
+    assert out.entry_points == []
 
 
 def test_no_routes_in_plain_function(tmp_manifest) -> None:

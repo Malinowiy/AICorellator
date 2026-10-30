@@ -8,18 +8,15 @@ produce — not hand-built — so what is pinned here is the whole seam: a
 route the scan found, a body the detector read, a store the `fs` family
 recognized, and the `writes_to` edge that joins them.
 
-**The decorator is the point of the fixture, and it is named here.**
-`entry_points._extract_route` recognizes one route shape: a call on an
-attribute whose last segment is an HTTP method, carrying a literal string
-path. Flask 2.0's method decorators are that shape (`@app.post("/upload")`)
-and the canonical `@app.route("/upload", methods=["POST"])` is not — its
-last segment is `route` — so a view decorated the canonical way produces no
-entry point and the detector has no node to match (the module docstring of
-`flask.py` states it, and `test_detector.py` pins both halves). The E1
-fixture therefore uses the decorator the stage does recognize, and E2 is
-the canonical shape on a real scan: **no entry point, hence no site** — the
-Flask detector's known limitation, and the shared
-`B.3b-user_upload-route-detectors-followup` step.
+**The decorators are the point of the fixtures, and they are named
+here.** `entry_points._extract_route` recognizes both of Flask's route
+spellings as of `B.3b-user_upload-route-detectors-followup`: a call on an
+attribute whose last segment is an HTTP method (`@app.post("/upload")`),
+and the canonical `@app.route("/upload", methods=["POST"])`, whose method
+comes out of the `methods=` keyword. E1 uses the first and E2 the second,
+on real scans, and both are one site and one `0.872` edge — the
+decorator is not part of the arithmetic, only the fact that the view is a
+route is. `test_detector.py` pins the confirmation for both shapes.
 
 E1 is the edge: `entry_point → store` at `combine_signals(
 UPLOAD_WRITER_BASE, [equal literal, same module, context in body])` =
@@ -362,26 +359,37 @@ def test_the_read_view_gets_no_edge_and_no_role(delta) -> None:
 # E2 — the canonical route shape, and the two negatives
 # ============================================================
 
-def test_a_route_methods_view_is_no_site(tmp_path: Path) -> None:
-    """E2: `@app.route(..., methods=[...])` — no entry point, no site.
+def test_a_route_methods_view_is_a_site(tmp_path: Path) -> None:
+    """E2: `@app.route(..., methods=[...])` — one entry point, one site.
 
-    This is the Flask detector's known limitation on a **real** scan: the
-    stage records no route for the canonical decorator, so the file has no
-    `entry_point` node at all and the detector has nothing to match. The
-    write is still real — the `fs` family reports the store and the
-    resolver's family-only edge survives through the `sink` node — and
-    what is missing is the upload writer's edge, which is exactly the
-    difference between a scan of this fixture and a scan of `FILES`.
+    The canonical Flask decorator is a route as of
+    `B.3b-user_upload-route-detectors-followup`: the stage reads the
+    method out of `methods=` (`POST`), the path out of the first
+    positional argument (`/upload`), and the node is named exactly as the
+    `@app.post` fixture's is. The detector matches it by handler, so the
+    upload writer's edge is the same `0.872` — the decorator is not part
+    of the arithmetic, only the fact that the view is a route is.
     """
     delta = _scan(tmp_path, ROUTE_METHODS_FILES)
 
-    assert _of_kind(delta, "entry_point") == []
-    assert _sites(delta, ROUTE_METHODS_FILES[MAIN]) == []
-    assert [node.name for node in _of_kind(delta, "store")] == [
-        f"fs:{LITERAL}"
+    entries = _of_kind(delta, "entry_point")
+    assert [node.name for node in entries] == ["POST /upload"]
+    assert entries[0].attributes["path"] == "/upload"
+
+    sites = _sites(delta, ROUTE_METHODS_FILES[MAIN])
+    assert len(sites) == 1
+    assert sites[0].framework == "flask"
+    assert sites[0].line == UPLOAD_LINE
+    assert sites[0].entry_point.id == entries[0].id
+
+    store_id = _of_kind(delta, "store")[0].id
+    upload = [
+        edge for edge in delta.edges
+        if edge.kind == "writes_to" and edge.source_id == entries[0].id
     ]
-    writes = [e for e in delta.edges if e.kind == "writes_to"]
-    assert [e.source_id.split(":")[0] for e in writes] == ["sink"]
+    assert len(upload) == 1
+    assert upload[0].target_id == store_id
+    assert round(upload[0].identity_confidence, 4) == 0.872
 
 
 def test_a_view_with_no_write_is_a_site_with_no_edge(tmp_path: Path) -> None:

@@ -10,14 +10,20 @@ brief and the readings the brief leaves to the code:
   - `request` must be a parameter of the handler, the access must be in
     the handler's own body, and the two spellings are `request.FILES[...]`
     and `request.FILES.get(...)`;
-  - a class-based view is no site, and a nested function's access is the
-    view's;
+  - **Django's own route spellings are routes**: `@require_POST` and the
+    other guards, `@require_http_methods([...])`, DRF's `@api_view([...])`
+    (`B.3b-user_upload-route-detectors-followup`), so the confirmation
+    accepts them — a bare `@post` and a bare `@csrf_exempt` are still not
+    routes;
+  - a class-based view is no site **as a unit**, a method carrying a
+    route decorator of its own is one, and a nested function's access is
+    the view's;
   - the answer is a function of the file and not of `ast.walk`'s order.
 
 The entry-point nodes are hand-built, the way `tests/test_store_upload_core`
 builds them: a detector is handed nodes, not a pipeline. `test_end_to_end.py`
-is the same detector on a real scan, and its fixture is the one that says
-which route decorator the entry-point stage recognizes today.
+is the same detector on a real scan, and its fixtures are the ones that say
+which route decorators the entry-point stage recognizes.
 """
 
 from __future__ import annotations
@@ -141,15 +147,19 @@ def test_a_helper_with_files_but_no_entry_point_is_not_a_site() -> None:
     )
 
 
-def test_a_class_based_view_is_not_a_site() -> None:
+def test_a_class_based_view_is_not_a_site_as_a_unit() -> None:
     """D5: a `View` subclass names no handler, so it is no site.
 
-    `post` is a function of the module and the detector walks it, but
-    nothing names it: a class-based view's route is in `urls.py` or on
-    the class, so the entry-point stage records no node for the method —
-    and a hand-built node naming `post` changes nothing either, because
-    `@require_POST` is a bare name and not the
-    `@<attribute>(<literal path>)` shape the stage records.
+    `post` is a function of the module and the detector walks it, but a
+    class-based view's route is `UploadView.as_view()` in `urls.py` or a
+    decorator on the class, so nothing names the method and the
+    entry-point stage records no node for the class.
+
+    A hand-built node naming `post` *is* matched, because the method
+    carries `@require_POST` and that is a route shape the stage records
+    (`B.3b-user_upload-route-detectors-followup`) — the same
+    decorated-method reading `test_a_route_decorated_method_is_a_site`
+    pins. The class as a unit is what stays out of scope.
     """
     source = '''\
 """A Django class-based view."""
@@ -166,9 +176,9 @@ class UploadView(View):
 '''
     assert _sites(source, handlers=()) == []
     assert _sites(source) == []
-    assert DjangoUploadDetector().detect(
-        ast.parse(source), FILE, [_node("post")]
-    ) == []
+    site = _one(source, handlers=("post",))
+    assert site.entry_point.attributes["handler"] == "post"
+    assert site.line == 8
 
 
 def test_a_view_without_files_is_not_a_site() -> None:
@@ -269,30 +279,107 @@ def test_a_route_decorator_without_a_literal_path_is_not_a_route() -> None:
 
 
 def test_a_name_decorator_is_not_a_route() -> None:
-    """`@post` is a `Name`: the stage reads an `Attribute`, so is not one.
+    """`@post` is a bare name, and not one of Django's guards.
 
-    The Django spellings are names too — `@require_POST`, `@csrf_exempt` —
-    which is why a view carrying them is not a site today (the module
-    docstring). This pins the reading for the shape closest to a route.
+    A bare name is a route only when it is in `GUARD_DECORATORS` —
+    `@require_POST` and friends — because the method is then the name's
+    own suffix. `@post` names no method the stage can read, so it is not
+    a route here and not one there.
     """
     _none(_module('    return request.FILES["file"]\n', decorator="@post"))
 
 
-def test_a_django_route_decorator_is_not_a_route_today() -> None:
-    """`@require_http_methods([...])` is the stage's own false negative.
+def test_a_csrf_exempt_wrapper_is_not_a_route() -> None:
+    """`@csrf_exempt` has no method and no path: it is not a route.
 
-    A view decorated the way Django documents it produces no entry point
-    — the decorator is a call on a name, and `_extract_route` requires an
-    attribute — so the detector has no node to match and reports nothing.
-    Stated, and the reason the end-to-end fixture uses a decorator the
-    stage does recognize.
+    It is a wrapper, and a view carrying only it is a view the stage
+    records nothing for — Django's routing still lives in `urls.py`. The
+    route below it is read on its own (the next test).
+    """
+    _none(_module(
+        '    return request.FILES["file"]\n', decorator="@csrf_exempt"
+    ))
+
+
+def test_a_guard_under_csrf_exempt_is_a_site() -> None:
+    """A wrapper and a guard: the guard is the route, the wrapper is not."""
+    source = '''\
+"""A Django view."""
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+
+
+@csrf_exempt
+@require_POST
+def upload(request):
+    """Handle it."""
+    return request.FILES["file"]
+'''
+    site = _one(source)
+    assert site.line == 8
+    assert site.framework == "django"
+
+
+def test_a_django_route_decorator_is_a_site() -> None:
+    """`@require_http_methods([...])` is a route as of the route step.
+
+    A view decorated the way Django documents it has an entry-point node
+    now (`entry_points.DJANGO_LIST_DECORATORS`), so the node the stage
+    built names it and the detector matches it. The method is not read
+    here — the node carries it — so the confirmation only has to
+    recognize the shape.
     """
     source = _module(
         '    return request.FILES["file"]\n',
         decorator='@require_http_methods(["POST"])',
     )
-    assert _sites(source) == []
+    site = _one(source)
+    assert site.line == VIEW_LINE
+    assert site.framework == "django"
     assert _sites(source, handlers=()) == []
+
+
+def test_a_guard_decorator_is_a_site() -> None:
+    """`@require_POST` is a bare name, and a route the stage records."""
+    source = _module(
+        '    return request.FILES["file"]\n', decorator="@require_POST"
+    )
+    site = _one(source)
+    assert site.line == VIEW_LINE
+    assert site.entry_point.attributes["handler"] == "upload"
+
+
+def test_an_api_view_decorator_is_a_site() -> None:
+    """DRF's `@api_view(["POST"])` is a call on a name, and a route."""
+    source = _module(
+        '    return request.FILES["file"]\n',
+        decorator='@api_view(["POST"])',
+    )
+    assert _one(source).line == VIEW_LINE
+
+
+def test_a_flask_route_decorator_is_confirmed_too() -> None:
+    """The confirmation mirrors `_extract_route`, not this framework.
+
+    A Django module does not spell a view `@app.route`, but the
+    entry-point stage is framework-agnostic: when it records a route for a
+    decorator, the detector must not refuse the node it built. The
+    reverse — a Django guard in a Flask module — is pinned in
+    `tests/test_store_upload_flask/test_detector.py`.
+    """
+    source = _module(
+        '    return request.FILES["file"]\n',
+        decorator='@app.route("/upload", methods=["POST"])',
+    )
+    assert _one(source).line == VIEW_LINE
+
+
+def test_a_list_decorator_without_a_literal_is_not_a_route() -> None:
+    """`@require_http_methods(METHODS)` names no method: not a route."""
+    _none(_module(
+        '    return request.FILES["file"]\n',
+        decorator="@require_http_methods(METHODS)",
+    ))
 
 
 def test_a_function_without_a_route_decorator_is_not_a_site() -> None:

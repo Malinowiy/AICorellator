@@ -6,10 +6,16 @@ C4: "**Entry point nodes** — from the entry points detector, including
 HTTP, CLI, and Streamlit."
 
 The id derivation differs per method because the identity differs: an
-HTTP route is `(file, method, path)`, a CLI entry is the file itself
-(one per script), and a Streamlit entry is `(file, call)`. The
-`entry_kind` attribute records which, so downstream consumers can tell an
-MCP entry from a CLI one without re-deriving it.
+HTTP route is `(file, method, path)` — or `(file, method, handler)` when
+the route has no path, which is every Django route, whose pattern lives
+in `urls.py` (`normalizer_helpers.entry_point_id` states it) — a CLI entry
+is the file itself (one per script), and a Streamlit entry is
+`(file, call)`. The `entry_kind` attribute records which, so downstream
+consumers can tell an MCP entry from a CLI one without re-deriving it.
+
+A path-less route's **name** is `"<METHOD> <handler>"` for the same
+reason: `"POST "` names nothing, and a Django route is named by the view
+that handles it, not by a path the AST never held.
 
 Side effects: fills `ctx.entry_node_by_handler` (handler → node id),
 which the delegation and reachability stages read.
@@ -70,7 +76,7 @@ class EntryPointStage:
                     "path": ep.path,
                     "handler": ep.handler,
                 }
-                name = f"{ep.method} {ep.path}"
+                name = f"{ep.method} {ep.path or ep.handler}"
 
             ctx.entry_node_by_handler[ep.handler] = node_id
             delta.nodes.append(Node(

@@ -8,11 +8,11 @@ brief and the readings the brief leaves to the code:
     node), and the detector confirms the decorator but does not invent a
     route — the same two conditions `detectors.django` and
     `detectors.fastapi` apply;
-  - **the Flask split is pinned in both directions**: `@app.post("/upload")`
-    is the shape `entry_points._extract_route` records, and the canonical
-    `@app.route("/upload", methods=["POST"])` is not — its decorator's last
-    segment is `route`, not an HTTP method — so a view carrying it has no
-    entry point to match and is no site today;
+  - **both Flask spellings are routes**: `@app.post("/upload")` and the
+    canonical `@app.route("/upload", methods=["POST"])` both produce an
+    entry point (`B.3b-user_upload-route-detectors-followup`, where the
+    stage learned to read `methods=`), and the confirmation accepts both
+    — a `@app.route(path)` with a variable path is not a route;
   - the access must be in the handler's own body, the two spellings are
     `request.files[...]` and `request.files.get(...)`, and **no binding for
     `request` is required** — that is the one rule this detector does not
@@ -24,9 +24,9 @@ brief and the readings the brief leaves to the code:
 
 The entry-point nodes are hand-built, the way `tests/test_store_upload_core`
 builds them: a detector is handed nodes, not a pipeline.
-`test_end_to_end.py` is the same detector on a real scan, and its fixture is
-the one that says which route decorator the entry-point stage recognizes
-today.
+`test_end_to_end.py` is the same detector on a real scan, and its fixtures
+are the ones that say which route decorators the entry-point stage
+recognizes.
 """
 
 from __future__ import annotations
@@ -193,40 +193,61 @@ def test_a_view_without_files_is_not_a_site() -> None:
     _none(_module('    return "ok", 204\n'))
 
 
-def test_a_route_methods_decorator_is_not_a_route_today() -> None:
-    """D7: the canonical Flask shape has no entry point today.
+def test_a_route_methods_decorator_is_a_site() -> None:
+    """D7: the canonical Flask shape is a route as of the route step.
 
     `@app.route("/upload", methods=["POST"])` is a call on an attribute
-    whose last segment is `route` — not an HTTP method — so
-    `entry_points._extract_route` records no route for the view, the
-    stage builds no node, and this detector has nothing to match. **This
-    is the Flask detector's known limitation**, stated in the module
-    docstring: a project using this shape (the most common one) gets no
-    `user_upload` recognition until `entry_points.py` learns it, which is
-    the shared `B.3b-user_upload-route-detectors-followup` step.
+    whose last segment is `route`, and `entry_points._extract_route`
+    reads the method out of the keyword
+    (`B.3b-user_upload-route-detectors-followup`), so the stage builds the
+    node and this detector matches it by name. The method is not read
+    here — the node carries it.
 
-    Both readings are pinned: the hand-built node is refused by the
-    route-decorator confirmation, and with no node at all there is
-    nothing to match.
+    Both readings are pinned: the hand-built node is accepted by the
+    confirmation, and with no node at all there is nothing to match.
     """
     source = _module(
         '    f = request.files["file"]\n',
         decorator='@app.route("/upload", methods=["POST"])',
     )
-    assert _sites(source) == []
+    site = _one(source)
+    assert site.line == VIEW_LINE
+    assert site.framework == "flask"
     assert _sites(source, handlers=()) == []
 
 
-def test_a_bare_route_decorator_is_not_a_route_either() -> None:
-    """`@app.route("/upload")` is the same finding without the keyword.
+def test_a_route_decorator_without_methods_is_a_site() -> None:
+    """`@app.route("/upload")` is a route, and Flask's default method is GET.
 
-    The last segment is `route` whether or not `methods=` is passed, so a
-    project that splits its verbs with `methods` on the view body
-    (`request.method`) is not a site today either — the same followup.
+    The stage records GET when `methods=` is absent or unresolved, and
+    the confirmation does not read the method at all: the node it was
+    handed carries it.
     """
-    _none(_module(
+    _one(_module(
         '    f = request.files["file"]\n',
         decorator='@app.route("/upload")',
+    ))
+
+
+def test_a_route_decorator_with_a_variable_path_is_not_a_route() -> None:
+    """`@app.route(path, ...)` names no path, so the stage records no route."""
+    _none(_module(
+        '    f = request.files["file"]\n',
+        decorator='@app.route(path, methods=["POST"])',
+    ))
+
+
+def test_a_django_guard_is_confirmed_too() -> None:
+    """The confirmation mirrors `_extract_route`, not this framework.
+
+    A Flask module does not spell a view `@require_POST`, but the
+    entry-point stage is framework-agnostic: when it records a route for a
+    decorator, the detector must not refuse the node it built. The
+    reverse — a Flask `@app.route` in a Django module — is pinned in
+    `tests/test_store_upload_django/test_detector.py`.
+    """
+    _one(_module(
+        '    f = request.files["file"]\n', decorator="@require_POST"
     ))
 
 

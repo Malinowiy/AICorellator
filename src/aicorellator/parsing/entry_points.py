@@ -4,10 +4,14 @@ Uses the standard library `ast` module. No external dependencies.
 
 Detects five things from a single parse of each file:
 
-1. Route decorators (FastAPI, Flask, Starlette) — HTTP and WebSocket:
-     @router.get("/path")
-     @app.post("/path")
-     @router.websocket("/connect")
+1. Route decorators — HTTP and WebSocket, in four spellings:
+
+     @router.get("/path")                     FastAPI, Flask, Starlette
+     @app.websocket("/connect")
+     @app.route("/path", methods=["POST"])    Flask's canonical form
+     @require_POST                            Django's own guards
+     @require_http_methods(["POST", "PUT"])
+     @api_view(["POST"])                      Django REST Framework
 
 2. CLI entries — `if __name__ == "__main__":` at module level.
 
@@ -18,6 +22,16 @@ Detects five things from a single parse of each file:
 5. Every call site inside every function, as a raw
    `SymbolCall(handler, callee, file_path, line)` record, plus the
    per-file call graph and import table.
+
+**What a route carries.** A method, the function that handles it, the
+file and the line — and a path, when the decorator spells one. A Django
+view's path lives in `urls.py`, which the AST does not see, so `path` is
+`""` for it (`DJANGO_PATH`) and the handler is what names the route. The
+id the normalizer derives follows: `(file, method, path)` for a route
+with a path, `(file, method, handler)` for one without — `(file, method,
+"")` would make two `@require_POST` views in one file a single node
+(`normalizer_helpers.entry_point_id` states it, and `EntryPointStage`
+names a path-less route `"<METHOD> <handler>"`).
 
 **A call site never names an agent.** This detector does not know what an
 agent is, so it does not guess: `SymbolCall.callee` is the call target as
@@ -198,40 +212,211 @@ def _process_function(
             output.symbol_calls.append(call)
 
 
+# ============================================================
+# Route decorators
+# ============================================================
+#
+# Four spellings produce a route, and they arrive in three AST shapes.
+# `HTTP_METHODS` stays what it is — the set of *attribute* names FastAPI,
+# Flask and Starlette use (`@app.post`, `@router.get`) — because the two
+# Django families carry their method where an attribute name is not: in
+# the decorator's own name, and in a list argument.
+
+#: Django's method guards — a bare `Name`, and the method is its suffix.
+#: `@require_safe` accepts GET and HEAD; the primary method is GET.
+DJANGO_METHOD_DECORATORS: dict[str, str] = {
+    "require_GET": "GET",
+    "require_POST": "POST",
+    "require_PUT": "PUT",
+    "require_PATCH": "PATCH",
+    "require_DELETE": "DELETE",
+    "require_safe": "GET",
+}
+
+#: Django's list-taking decorators — a call on a `Name` whose first
+#: argument is a literal list of method names: `@require_http_methods`
+#: and DRF's `@api_view`. A route that accepts POST and PUT is one route
+#: here, with POST as the primary method — the same one-node-per-route
+#: convention `HTTP_METHODS` follows.
+DJANGO_LIST_DECORATORS: frozenset[str] = frozenset({
+    "require_http_methods",
+    "api_view",
+})
+
+#: The path a Django route has in the AST: none. `urls.py` holds the
+#: pattern, and this detector does not read it — the handler is what
+#: identifies the route (`normalizer_helpers.entry_point_id`).
+DJANGO_PATH = ""
+
+#: Flask's canonical route decorator — a call on an attribute whose last
+#: segment is `route`. The method is the first name in `methods=`, and
+#: Flask's own default is GET. An unresolved `methods=` (a variable, a
+#: splat, an empty list) is read as the default too: a false negative,
+#: stated, and the reason a route declares one method here.
+FLASK_ROUTE_ATTRIBUTE = "route"
+FLASK_METHODS_KEYWORD = "methods"
+FLASK_DEFAULT_METHOD = "GET"
+
+
 def _extract_route(
     decorator: ast.expr,
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     file_path: str,
 ) -> EntryPoint | None:
-    """If the decorator is a route (HTTP or WebSocket), return an EntryPoint."""
-    if not isinstance(decorator, ast.Call):
-        return None
-    if not isinstance(decorator.func, ast.Attribute):
-        return None
+    """If the decorator is a route, return an EntryPoint.
 
+    One dispatch per AST shape a route decorator arrives in:
+
+      - a call on an attribute — `@app.post("/upload")`,
+        `@router.websocket("/connect")`, and Flask's canonical
+        `@app.route("/upload", methods=["POST"])`, which reads its method
+        out of `methods=`;
+      - a call on a name — `@require_http_methods([...])`,
+        `@api_view([...])`;
+      - a bare name — `@require_POST` and the other Django guards.
+
+    `@csrf_exempt` is none of the three and needs no case of its own: it
+    is a wrapper, and the walk over `func.decorator_list` reaches the
+    route decorator under it.
+    """
+    if isinstance(decorator, ast.Call):
+        if isinstance(decorator.func, ast.Attribute):
+            return _extract_attribute_route(decorator, func, file_path)
+        if isinstance(decorator.func, ast.Name):
+            return _extract_django_list_route(decorator, func, file_path)
+        return None
+    if isinstance(decorator, ast.Name):
+        return _extract_django_guard_route(decorator, func, file_path)
+    return None
+
+
+def _extract_attribute_route(
+    decorator: ast.Call,
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    file_path: str,
+) -> EntryPoint | None:
+    """`@app.post("/upload")`, `@router.websocket("/connect")`, `@app.route`.
+
+    The HTTP-method and WebSocket spellings take their method from the
+    attribute's last segment; Flask's canonical `route` takes it from
+    `methods=`, and defaults to GET. All three need a literal string path
+    as the first positional argument: `@app.post(path)` names no path, so
+    it is not a route.
+    """
     attr = decorator.func.attr
 
-    if attr in HTTP_METHODS:
+    if attr == FLASK_ROUTE_ATTRIBUTE:
+        method = (
+            _first_literal_method(_methods_keyword(decorator))
+            or FLASK_DEFAULT_METHOD
+        )
+    elif attr in HTTP_METHODS:
         method = attr.upper()
     elif attr == WEBSOCKET_METHOD:
         method = "WS"
     else:
         return None
 
+    path = _literal_path(decorator)
+    if path is None:
+        return None
+    return _entry_point(method, path, func, file_path)
+
+
+def _extract_django_guard_route(
+    decorator: ast.Name,
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    file_path: str,
+) -> EntryPoint | None:
+    """`@require_POST`, `@require_GET`, ... — Django's bare method guards.
+
+    The method is the decorator's own name (`DJANGO_METHOD_DECORATORS`)
+    and the path is `DJANGO_PATH`: a Django view's path is in `urls.py`.
+    Every other bare name — `@csrf_exempt`, `@login_required`, a bare
+    `@post` — is not in the table and is not a route.
+    """
+    method = DJANGO_METHOD_DECORATORS.get(decorator.id)
+    if method is None:
+        return None
+    return _entry_point(method, DJANGO_PATH, func, file_path)
+
+
+def _extract_django_list_route(
+    decorator: ast.Call,
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    file_path: str,
+) -> EntryPoint | None:
+    """`@require_http_methods([...])` and DRF's `@api_view([...])`.
+
+    The method is the first literal name in the list argument, and the
+    path is `DJANGO_PATH`. A list that is not a literal, or holds no
+    literal, names no method the AST can read — a false negative, and the
+    reason the method is the only thing this reads out of the argument.
+    """
+    if decorator.func.id not in DJANGO_LIST_DECORATORS:
+        return None
     if not decorator.args:
         return None
 
-    path_arg = decorator.args[0]
-    if not isinstance(path_arg, ast.Constant) or not isinstance(path_arg.value, str):
+    method = _first_literal_method(decorator.args[0])
+    if method is None:
         return None
+    return _entry_point(method, DJANGO_PATH, func, file_path)
 
+
+def _entry_point(
+    method: str,
+    path: str,
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    file_path: str,
+) -> EntryPoint:
+    """The record every route shape produces; the line is the function's."""
     return EntryPoint(
         method=method,
-        path=path_arg.value,
+        path=path,
         handler=func.name,
         file_path=file_path,
         line=func.lineno,
     )
+
+
+def _literal_path(decorator: ast.Call) -> str | None:
+    """The decorator's first positional argument, if it is a literal string."""
+    if not decorator.args:
+        return None
+
+    path = decorator.args[0]
+    if isinstance(path, ast.Constant) and isinstance(path.value, str):
+        return path.value
+    return None
+
+
+def _methods_keyword(decorator: ast.Call) -> ast.expr | None:
+    """A Flask route's `methods=` value, or None when it is absent."""
+    for keyword in decorator.keywords:
+        if keyword.arg == FLASK_METHODS_KEYWORD:
+            return keyword.value
+    return None
+
+
+def _first_literal_method(node: ast.expr | None) -> str | None:
+    """The first literal string in a list or tuple of method names.
+
+    `["POST", "PUT"]` → `"POST"`, and `["put"]` → `"PUT"`: the value is
+    uppercased, because a Flask route may spell its methods in lower case
+    while a node's `method` is upper. Returns None for anything else — a
+    variable, a splat, an empty list, a `Name` — which every caller reads
+    as "no method the AST can see".
+    """
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+
+    for element in node.elts:
+        if isinstance(element, ast.Constant) and isinstance(
+            element.value, str
+        ):
+            return element.value.upper()
+    return None
 
 
 def _extract_symbol_call(

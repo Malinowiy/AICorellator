@@ -21,9 +21,10 @@ run.
   - `flask` — `FlaskUploadDetector` (B.3b-user_upload-flask): the same
     shape with `request.files`, and the last of the four. Its marker
     needs no parameter, because Flask imports `request` rather than
-    handing a view one — and its known limitation is the route shape:
-    `@app.post("/upload")` is an entry point today, the canonical
-    `@app.route(..., methods=[...])` is not.
+    handing a view one — and both of Flask's route spellings are entry
+    points as of `B.3b-user_upload-route-detectors-followup`:
+    `@app.post("/upload")` and the canonical
+    `@app.route("/upload", methods=["POST"])`.
 """
 
 from ..registry import register_upload_detector

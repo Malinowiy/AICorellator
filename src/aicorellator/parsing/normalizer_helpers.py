@@ -99,8 +99,20 @@ def mcp_entry_point_id(server_name: str) -> str:
 
 
 def entry_point_id(ep) -> str:
-    key = f"entry_point:{ep.file_path}:{ep.method}:{ep.path}:{HOST_ID}"
+    """Canonical ID for an HTTP route.
+
+    `(file, method, path)` — and `(file, method, handler)` when the route
+    has no path, which is every Django route: `entry_points` sets `path`
+    to `""` for one, because the pattern lives in `urls.py` and the AST
+    does not see it. Two `@require_POST` views in one file are two
+    routes, and `(file, method, "")` would make them one node — so the
+    handler is the route's identity there, and the path is its identity
+    everywhere else.
+    """
+    identity = ep.path or ep.handler
+    key = f"entry_point:{ep.file_path}:{ep.method}:{identity}:{HOST_ID}"
     return f"entry_point:{sha256(key)}"
+
 
 def cli_entry_point_id(file_path: str) -> str:
     """Canonical ID for a CLI entry point (one per script)."""

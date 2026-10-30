@@ -8,17 +8,17 @@ so what is pinned here is the whole seam: a route the scan found, a body
 the detector read, a store the `fs` family recognized, and the `writes_to`
 edge that joins them.
 
-**The decorator is the point of the fixture, and it is named here.**
-`entry_points._extract_route` recognizes one route shape: a call on an
-attribute whose last segment is an HTTP method, carrying a literal string
-path (`@router.post("/upload")`). Django's own decorators are not that
-shape — `@require_POST` is a bare name — so a view decorated the way
-Django documents it produces no entry point, and the detector has no node
-to match (the module docstring of `django.py` states it). The fixture
-therefore uses the decorator the stage does recognize, which is what a
-project running Django behind such a dispatcher — or a scan of a module
-that mixes frameworks — actually holds. A Django *route shape* in
-`entry_points.py` is a separate step.
+**The decorators are the point of the fixtures, and they are named
+here.** `entry_points._extract_route` recognizes Django's own route
+spellings as of `B.3b-user_upload-route-detectors-followup` —
+`@require_POST`, `@require_http_methods([...])`, DRF's `@api_view([...])`
+— as well as the attribute shape `@router.post("/upload")`. E1 and the
+two negatives keep `@router.post`, because a view behind a dispatcher is
+a real shape; the canonical Django spelling gets its own fixture and its
+own tests (`REQUIRE_POST_FILES`, X1). A Django route has **no path** in
+the AST — `urls.py` holds it — so its node is named
+`"POST upload_report"` and its id keys on `(file, method, handler)`
+instead of the path.
 
 E1 is the edge: `entry_point → store` at `combine_signals(
 UPLOAD_WRITER_BASE, [equal literal, same module, context in body])` =
@@ -118,6 +118,25 @@ def ping(request):
     """Write something, accept nothing."""
     with open("/uploads/audit.txt", "wb") as fh:
         fh.write(b"ping")
+    return HttpResponse(status=204)
+''',
+}
+
+
+#: X1 — the canonical Django route shape, on a real scan.
+REQUIRE_POST_FILES: dict[str, str] = {
+    MAIN: '''\
+"""A Django view decorated the way Django documents it."""
+from django.views.decorators.http import require_POST
+
+
+@require_POST
+def upload_report(request):
+    """Persist the upload."""
+    uploaded = request.FILES["report"]
+    with open("/uploads/report.txt", "wb") as fh:
+        for chunk in uploaded.chunks():
+            fh.write(chunk)
     return HttpResponse(status=204)
 ''',
 }
@@ -334,6 +353,56 @@ def test_the_read_view_gets_no_edge_and_no_role(delta) -> None:
         node for node in delta.nodes
         if node.attributes.get("source_type") == "user_upload"
     ] == []
+
+
+# ============================================================
+# X1 — the canonical Django route shape
+# ============================================================
+
+def test_the_canonical_django_route_is_an_entry_point(
+    tmp_path: Path,
+) -> None:
+    """X1a: `@require_POST` is a route, so the detector has a node.
+
+    The node's name is `"<METHOD> <handler>"` — there is no path to name
+    it by — and its `path` is empty. That is the record
+    `B.3b-user_upload-route-detectors-followup` added; the detector
+    matches it by handler like any other route.
+    """
+    delta = _scan(tmp_path, REQUIRE_POST_FILES)
+
+    entries = _of_kind(delta, "entry_point")
+    assert [node.name for node in entries] == ["POST upload_report"]
+    assert entries[0].attributes["method"] == "POST"
+    assert entries[0].attributes["path"] == ""
+    assert entries[0].attributes["handler"] == "upload_report"
+
+    sites = _sites(delta, REQUIRE_POST_FILES[MAIN])
+    assert len(sites) == 1
+    assert sites[0].framework == "django"
+    assert sites[0].file_path == MAIN
+    assert sites[0].line == UPLOAD_LINE
+    assert sites[0].entry_point.id == entries[0].id
+
+
+def test_the_canonical_route_view_writes_the_store(tmp_path: Path) -> None:
+    """X1b: the edge is the same 0.872 the dispatcher fixture earns.
+
+    Base 0.5 (the view accepts an upload), an equal literal, the same
+    module, and the write in the handler's own body — the decorator that
+    made the view a route does not enter the arithmetic.
+    """
+    delta = _scan(tmp_path, REQUIRE_POST_FILES)
+
+    entry_id = _entry(delta, "POST upload_report").id
+    store_id = _of_kind(delta, "store")[0].id
+    upload = [
+        edge for edge in delta.edges
+        if edge.kind == "writes_to" and edge.source_id == entry_id
+    ]
+    assert len(upload) == 1
+    assert upload[0].target_id == store_id
+    assert round(upload[0].identity_confidence, 4) == 0.872
 
 
 # ============================================================

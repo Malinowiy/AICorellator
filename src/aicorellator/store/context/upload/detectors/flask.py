@@ -15,33 +15,34 @@ implementation, after `fastapi` (function-level, read from a signature),
         f = request.files["file"]            → one site
         g = request.files.get("file")        → one site
 
-**The route check is not this detector's, and today it splits Flask in
-two.** `entry_points.EntryPointStage` decides which functions are routes,
-and `entry_points._extract_route` recognizes one shape: a decorator that
-is a **call on an attribute** whose last segment is an HTTP method (or
-`websocket`), carrying a **literal string path**. Flask 2.0's method
-decorators are that shape, so:
+**The route check is not this detector's, and it now covers both Flask
+spellings.** `entry_points.EntryPointStage` decides which functions are
+routes, and `entry_points._extract_route` recognizes four shapes: a
+**call on an attribute** whose last segment is an HTTP method or
+`websocket` (`@app.post("/upload")`); the **same shape with `route` as
+the last segment** (`@app.route("/upload", methods=["POST"])`, whose
+method is the first name in `methods=`, or GET when it is absent); a
+**bare name** Django guard (`@require_POST`); and a **call on a name**
+taking a literal list (`@require_http_methods([...])`, DRF's
+`@api_view([...])`). Both of Flask's spellings are routes as of
+`B.3b-user_upload-route-detectors-followup`:
 
-    @app.post("/upload")                        → an entry point today
-    @app.route("/upload", methods=["POST"])     → not one
+    @app.post("/upload")                        → an entry point
+    @app.route("/upload", methods=["POST"])     → an entry point
 
-The second is the **canonical** Flask spelling, and its decorator's last
-segment is `route`, which is not in `HTTP_METHODS` — so the stage records
-no entry point for the view, and this detector — which matches a
-function's name against the nodes the stage built — reports nothing for
-it. That is a false negative, stated, and it is **this detector's known
-limitation**: a project using `@app.route(..., methods=[...])` gets no
-`user_upload` recognition until `entry_points.py` learns a route shape
-that reads the method out of a `methods=[...]` keyword. The fix is the
-one Django's route decorators need too (`@require_POST` and friends are
-calls on *names*, and a class-based view's route is in `urls.py`), and it
-is a single shared followup step —
-`B.3b-user_upload-route-detectors-followup` — not this one. What this
-detector matches is whatever `EntryPointStage` produced for the file: a
-node carrying a `handler`, the HTTP/WebSocket route shape, and the same
-shape `detectors.fastapi` and `detectors.django` read. The fixture in
-`tests/test_store_upload_flask/test_end_to_end.py` uses `@app.post` and
-says so; `test_detector.py` pins both halves of the split.
+so a view decorated the **canonical** way has the node this detector
+matches by name. What remains out of scope is the **class-based**
+`MethodView`: its route is `app.add_url_rule(...)` with
+`view_func=UploadView.as_view(...)`, which names `as_view` rather than the
+method, so nothing names the method — unless the method carries a route
+decorator of its own, which the stage records like any other decorated
+function.
+What this detector matches is whatever `EntryPointStage` produced for the
+file: a node carrying a `handler`, the HTTP/WebSocket route shape, and
+the same shape `detectors.fastapi` and `detectors.django` read. The
+fixture in `tests/test_store_upload_flask/test_end_to_end.py` uses
+`@app.post` for E1 and the canonical `@app.route(..., methods=[...])` for
+E2; `test_detector.py` pins both.
 
 The detector does not invent a route either: a function is a candidate
 only when the scan built a node naming it **and** the function carries a
@@ -139,17 +140,31 @@ FILES = "files"
 GET = "get"
 
 #: The decorator attributes `entry_points._extract_route` records a route
-#: for — `patterns.HTTP_METHODS` and `patterns.WEBSOCKET_METHOD`,
-#: restated rather than imported: `store/` reads no pattern table (the
-#: rule `families.fs`, `detectors.fastapi` and `detectors.django`
-#: follow), and this is a membership test, not logic that drifts. Flask's
-#: canonical `@app.route` is deliberately **not** a member: its last
-#: segment is `route`, the stage records no route for it, and the module
-#: docstring is the whole story.
+#: for — `patterns.HTTP_METHODS`, `patterns.WEBSOCKET_METHOD` and Flask's
+#: canonical `route` — restated rather than imported: `store/` reads no
+#: pattern table (the rule `families.fs`, `detectors.fastapi` and
+#: `detectors.django` follow), and this is a membership test, not logic
+#: that drifts. `route` is a member because the stage reads the method out
+#: of its `methods=` keyword, and the confirmation must not refuse a route
+#: the stage recorded.
 ROUTE_ATTRIBUTES = frozenset({
     "get", "post", "put", "delete", "patch", "options", "head",
-    "websocket",
+    "websocket", "route",
 })
+
+#: The bare `Name` decorators the stage records a route for — Django's
+#: method guards (`entry_points.DJANGO_METHOD_DECORATORS`), restated for
+#: the same reason as `ROUTE_ATTRIBUTES`. The method each one names is not
+#: read here: the node the stage built carries it.
+GUARD_DECORATORS = frozenset({
+    "require_GET", "require_POST", "require_PUT", "require_PATCH",
+    "require_DELETE", "require_safe",
+})
+
+#: The `entry_points.DJANGO_LIST_DECORATORS` names — a call on a `Name`
+#: taking a literal list of methods: Django's `require_http_methods` and
+#: DRF's `api_view`.
+LIST_DECORATORS = frozenset({"require_http_methods", "api_view"})
 
 
 class FlaskUploadDetector(UploadDetector):
@@ -258,26 +273,41 @@ def _is_route(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 def _is_route_decorator(decorator: ast.expr) -> bool:
     """True if the decorator is the shape `entry_points` records a route for.
 
-    `_extract_route`'s three conditions, restated: a call, on an
-    attribute whose last segment is an HTTP method or `websocket`, whose
-    first argument is a literal string path. `@app.post("/upload")` is
-    that shape and `@app.route("/upload", methods=["POST"])` is not — its
-    last segment is `route` — which is the split the module docstring
-    states and `test_detector.py` pins both halves of. A bare `@post` is
-    a name and not a call, and `@app.post(path)` with a variable path
-    names no path — neither is a route here, and neither is in the
-    entry-point stage either.
+    `_extract_route`'s four shapes, restated: a call on an attribute whose
+    last segment is an HTTP method, `websocket` or Flask's `route`, with a
+    literal string path as its first argument; a bare name in
+    `GUARD_DECORATORS` (`@require_POST`); and a call on a name in
+    `LIST_DECORATORS` taking a literal list (`@require_http_methods([...])`,
+    `@api_view([...])`).
+
+    `@app.post("/upload")` and `@app.route("/upload", methods=["POST"])`
+    are both that shape; a bare `@post` is a name and not a guard, and
+    `@app.post(path)` with a variable path names no path — neither is a
+    route here, and neither is one in the entry-point stage.
     """
+    if isinstance(decorator, ast.Name):
+        return decorator.id in GUARD_DECORATORS
     if not isinstance(decorator, ast.Call):
-        return False
-    if not isinstance(decorator.func, ast.Attribute):
-        return False
-    if decorator.func.attr not in ROUTE_ATTRIBUTES:
         return False
     if not decorator.args:
         return False
-    path = decorator.args[0]
-    return isinstance(path, ast.Constant) and isinstance(path.value, str)
+
+    first = decorator.args[0]
+    if isinstance(decorator.func, ast.Attribute):
+        if decorator.func.attr not in ROUTE_ATTRIBUTES:
+            return False
+        return isinstance(first, ast.Constant) and isinstance(
+            first.value, str
+        )
+    if isinstance(decorator.func, ast.Name):
+        if decorator.func.id not in LIST_DECORATORS:
+            return False
+        return isinstance(first, (ast.List, ast.Tuple)) and any(
+            isinstance(element, ast.Constant)
+            and isinstance(element.value, str)
+            for element in first.elts
+        )
+    return False
 
 
 # ------------------------------------------------------------------
@@ -346,6 +376,8 @@ def _is_files_attribute(node: ast.AST) -> bool:
 __all__ = [
     "FILES",
     "GET",
+    "GUARD_DECORATORS",
+    "LIST_DECORATORS",
     "NAME",
     "REQUEST",
     "ROUTE_ATTRIBUTES",
