@@ -70,7 +70,7 @@ def _streamlit_node() -> Node:
 def test_importing_the_detectors_package_registers_django(
     monkeypatch,
 ) -> None:
-    """R1: empty the registry, re-import the package, all three are there.
+    """R1: empty the registry, re-import the package, all four are there.
 
     A reload is the only way to observe the import in a process that has
     already imported the package: the registration is a statement in
@@ -82,7 +82,9 @@ def test_importing_the_detectors_package_registers_django(
 
     importlib.reload(detectors_package)
 
-    assert registry.all_names() == ["django", "fastapi", "streamlit"]
+    assert registry.all_names() == [
+        "django", "fastapi", "flask", "streamlit",
+    ]
     assert registry.UPLOAD_DETECTORS["django"] is DjangoUploadDetector
     assert registry.UPLOAD_DETECTORS["fastapi"] is not None
     assert registry.UPLOAD_DETECTORS["streamlit"] is not None
@@ -116,14 +118,15 @@ def test_resolve_returns_an_instance() -> None:
 def test_resolving_all_gives_every_detector_in_registration_order() -> None:
     """R2 — a scan's default is the whole registry, in order.
 
-    `django` is registered last, so it resolves last: a scan runs the
-    detectors in the order `detectors/__init__.py` names them, and the
-    context's dedup is what decides between two of them.
+    `flask` is registered last, so it resolves last, and `django` third
+    (B.3b-user_upload-django): a scan runs the detectors in the order
+    `detectors/__init__.py` names them, and the context's dedup is what
+    decides between two of them.
     """
     resolved = registry.resolve(None)
 
     assert [det.name for det in resolved] == [
-        "fastapi", "streamlit", "django",
+        "fastapi", "streamlit", "django", "flask",
     ]
 
 
@@ -141,7 +144,9 @@ def test_the_class_declares_the_key() -> None:
 def test_all_names_includes_django() -> None:
     """R3: the name a config asks for is the name in the list."""
     assert "django" in registry.all_names()
-    assert registry.all_names() == ["django", "fastapi", "streamlit"]
+    assert registry.all_names() == [
+        "django", "fastapi", "flask", "streamlit",
+    ]
 
 
 def test_the_families_registry_is_untouched() -> None:

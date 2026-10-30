@@ -17,14 +17,20 @@ run.
   - `django` — `DjangoUploadDetector` (B.3b-user_upload-django): a view
     whose body reads `request.FILES`, matched by name against the route
     nodes `EntryPointStage` built — function-level, like `fastapi`, and
-    the marker is the body rather than the signature. `flask` is a
-    separate step.
+    the marker is the body rather than the signature.
+  - `flask` — `FlaskUploadDetector` (B.3b-user_upload-flask): the same
+    shape with `request.files`, and the last of the four. Its marker
+    needs no parameter, because Flask imports `request` rather than
+    handing a view one — and its known limitation is the route shape:
+    `@app.post("/upload")` is an entry point today, the canonical
+    `@app.route(..., methods=[...])` is not.
 """
 
 from ..registry import register_upload_detector
 from .fastapi import FastAPIUploadDetector
 from .streamlit import StreamlitUploadDetector
 from .django import DjangoUploadDetector
+from .flask import FlaskUploadDetector
 
 # Registered by the literal name config names, and not by
 # `FastAPIUploadDetector.name`: a drift between the two is what
@@ -33,9 +39,11 @@ from .django import DjangoUploadDetector
 register_upload_detector("fastapi", FastAPIUploadDetector)
 register_upload_detector("streamlit", StreamlitUploadDetector)
 register_upload_detector("django", DjangoUploadDetector)
+register_upload_detector("flask", FlaskUploadDetector)
 
 __all__ = [
     "DjangoUploadDetector",
     "FastAPIUploadDetector",
+    "FlaskUploadDetector",
     "StreamlitUploadDetector",
 ]
