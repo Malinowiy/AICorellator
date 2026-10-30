@@ -79,6 +79,118 @@ Plus two coverage gaps that Phase B has not yet closed:
 
 ## Recently done
 
+### 2026-10-31 — B.6 + B.7: `chain_groups.lethal_trifecta` writer, bundle shape, and the provenance columns
+
+- B.6's writer and the bundle keys land in `_evaluate_one_group` / `_group_to_dict`; B.7 adds the evaluation provenance the `chains` table has had since ADR-0005/0006. The two steps share three files (`evaluator.py`, `chain_groups.py`, `bundle.py`) and are the same shape — row column → bundle key, "not computed" on an unevaluated row — so they land as one commit.
+- B.7: `chain_groups` gains `voter_outputs JSON NOT NULL DEFAULT '[]'` and `prompt_version TEXT NOT NULL DEFAULT ''` (placed after `reasoning`, `chains`' order) plus `CHECK (json_valid(voter_outputs))`; a new `schema_version` row 4 records it and **no ALTER is issued** (ADR-0003 — the DB is rebuilt per scan, `run_scan.py --clean`).
+- `ChainGroupRecord` gains both fields with defaults (`Chain` untouched); `to_row` / `from_row` and `add` / `upsert` carry them — `upsert` writes them **inside** the `if group.verdict is not None` gate, the same rule as `validated` / `validated_kind` / `lethal_trifecta`.
+- The group path writes `prompt_version = PROMPT_VERSION` (still v1.6.0) and `voter_outputs` through `_voter_response_dict(r, group_edge_ids)` — **the group's own edge set**, the set Layer 3 already judges citations by, so `evidence_valid` answers the group's question and not the graph's. `raw` is stripped inside the helper.
+- `bundle.py::_group_to_dict` emits `"prompt_version"` and `"voter_outputs"` always; an unevaluated row emits the stored `""` / `[]` — one notch past B.6, because the two new columns have defaults to mirror.
+- **Decision (B.6):** `validated_kind` in `chain_groups.json` stays gated on `verdict is not None` because `from_row` coerces a NULL to `"existence"` (a chain-row convenience, not a group-row fact); the bundle mirrors the stored column. B.7 needs no such gate — `from_row` substitutes nothing for the two new columns.
+- **Tests:** +4 (the repository round-trip and `add`'s defaults, the evaluator's row write pinned on the group's edge set, the schema's PRAGMA defaults and the `json_valid` CHECK; two B.6 bundle tests renamed for `""` / `[]`). 2335 passed, 0 errors, 0 warnings.
+- **Not run:** the four-corpus regression (corpora not on this machine). Storage and bundle shape only.
+
+### 2026-10-31 — B.6: `chain_groups.lethal_trifecta` writer, and the bundle's two row columns
+
+- `_evaluate_one_group` projects the read side's flags onto the record: `any(flag for chain in payload["read_chains"] for flag in chain["lethal_trifecta"].values())` — `_group_payload`'s own map (no second store read), the node set exactly `group.read_chains` with the anchor included (the same set as `graph/query.py::_score_lethal_trifecta`). The **write side is not read**: the attacker's content enters through the read, and a trifecta node upstream of the write is another chain's problem.
+- `_group_to_dict` gains `"lethal_trifecta"` and `"validated_kind"`, closing the bundle's half of the same gap. **No separate item is opened for the bundle**: the two keys land in B.6 together, and `prompt_version` / `voter_outputs` wait for B.7's schema change.
+- `chain_groups.py`: module docstring only — "no writer yet" removed, the writer named, `upsert` does not refresh the column (fine: the graph is rebuilt per scan, and the next scan's `add` is a fresh INSERT). `add` / `upsert` / `list` / `get` otherwise byte-identical.
+- **Tests:** +4 (evaluator_groups +2, reporting +2, one pipeline assertion). 2331 passed, 0 errors, 0 warnings.
+
+### 2026-10-31 — B.4b-observed-by: the guardrail payload carries `observed_by`
+
+- `_guardrail_to_dict` returns `observed_by`, in `_node_to_dict`'s order (`id`, `kind`, `name`, `capabilities`, `observed_by`, `attributes`). Before this, a voter reading two guardrails on one chain saw two identical-looking objects; the field is the only thing that tells the three producers apart (`["ast"]`, `["ast", "framework:<name>"]`, `["ast", "static_llm:<model_id>"]`, ADR-0024 §6).
+- `_guardrails_for_group` gains it through `_guardrails_for_chain`; the `{write, read, anchor}` partition is untouched.
+- The docstring is **rewritten, not extended**: the confidence rationale stays (it is the chain-node exploitability estimate), the `observed_by` rationale is new.
+- **Tests:** +1 (`_add_guardrail` generalised to take `observed_by`, so each test's provenance is an assertion and not an accident of inheritance). 2327 passed.
+
+### 2026-10-31 — ADR-0019 revision 1: `mcp_server` as a guards target, and its payload read
+
+- The decision, not the code. `COMPONENT_KINDS` grows to `{"agent", "tool", "mcp_server"}` with its own evidence rule (an `add_middleware(...)` call site on the server object, or a `@mcp.middleware(...)` decorator on the factory, read from the server's own module AST), and `_guardrails_for_chain` also reads a `guards` edge on a `tool`'s `parent_server`.
+- Co-location stays non-evidence; ADR-0007's table is not contradicted — a `mcp_server` is the container its tools live in, and a middleware that runs on the server protects every tool it exposes.
+- The code lands as **B.4-gap-5-followup** when the four corpora return; the corpus regression is deferred, not skipped.
+
+### 2026-10-30 — Delete `aicorellator_dump.txt`
+
+- The 85,163-line dump file `dd2bfa5` added by accident (that commit's `--stat` shows 86,367 insertions) is removed from the tree; the deletion entered the mainline through the 2026-10-31 merge, which carries nothing else. No source change, no test.
+
+### 2026-10-30 — B.4-gap-5: FastMCP middleware detector
+
+- The fourth and last guardrail-SDK detector on ADR-0024 §3's plan: a class whose base is `Middleware` (or a dotted equivalent) becomes a `guardrail` node, `observed_by=["ast", "framework:fastmcp_middleware"]`.
+- **Node-only.** A middleware is a hook, not a component the guard wraps; `guardrail_edges` has no visible component to link and emits nothing for a middleware node. All `Middleware` subclasses are accepted — an audit middleware is a weak guardrail, and the payload is a signal, not a filter (ADR-0024 §2). The negative capability `validates_input` cannot fire here: a middleware's hook is called by the framework, not from an agent body.
+- A middleware registered on a server (`mcp.add_middleware(...)`) is a node and **no** `guards` edge — the pinned behaviour that became ADR-0019 rev 1.
+- `parsing/framework_detectors/fastmcp_middleware.py`; registered in `registry.py`.
+- **Tests:** +32 (test_framework_fastmcp_middleware 26, test_fastmcp_middleware_detector 6). 2326 passed.
+
+### 2026-10-30 — B.4-gap-4: LangChain callbacks detector
+
+- The third guardrail-SDK detector: a class whose base is `BaseCallbackHandler` (or a dotted equivalent) becomes a `guardrail` node, `observed_by=["ast", "framework:langchain_callback"]`.
+- **Node-only**, for B.4-gap-5's reason: a callback is a hook into the LLM / tool lifecycle, and `guardrail_edges` has nothing to link. All subclasses are accepted — the AST cannot tell a validating hook from a logging one, and the capability rule cannot fire either (the framework calls the hook, not an agent body).
+- `parsing/framework_detectors/langchain_callback.py`; registered in `registry.py`.
+- **Tests:** +37 (test_framework_langchain_callback 32, test_langchain_callback_detector 5). 2294 passed.
+
+### 2026-10-30 — B.4-gap-3: NeMo Guardrails detector
+
+- The second guardrail-SDK detector: `LLMRails(...)` constructions become `guardrail` nodes, `observed_by=["ast", "framework:nemo_guardrails"]`. Fast path `_has_import_prefix(tree, "nemoguardrails")` — four import forms; no import, no detection.
+- **Node-only:** an `LLMRails` wraps a generation call at runtime, so the AST has no static component the rails "guard".
+- `parsing/framework_detectors/nemo_guardrails.py`; registered in `registry.py`.
+- **Tests:** +50 (test_framework_nemo_guardrails 45, test_nemo_guardrails_detector 5). 2257 passed.
+
+### 2026-10-30 — B.4-gap-2: Guardrails AI detector
+
+- The first guardrail-SDK detector on ADR-0024 §3's plan: `Guard(...)`, `Guard.from_pydantic`, `Guard.for_string` and `Guard.for_rail` constructions become `guardrail` nodes, `observed_by=["ast", "framework:guardrails_ai"]`. Fast path `_has_import_prefix(tree, "guardrails")`.
+- **Node-only:** a `Guard` wraps an LLM call at runtime, so B.4a's `guardrail_edges` has nothing to link and emits nothing for it; the node joins the guardrail set the way a capability node does.
+- `parsing/framework_detectors/guardrails_ai.py`; registered in `registry.py`.
+- **Tests:** +45 (test_framework_guardrails_ai 40, test_guardrails_ai_detector 5). 2207 passed.
+
+### 2026-10-30 — B.4-gap-1: capability `validates_input` and the guardrail kind
+
+- ADR-0024 §2's first producer: a **negative** capability `validates_input`, credited on a function or method called from an agent / tool / entry-point body and carrying none of SINK / AGENT / LLM_ENDPOINT / TOOL. `CLASSIFYING_CAPABILITIES` is the one definition of that negative set — producer and classifier both read it.
+- `classification.py`: `sink → guardrail → tool → layout`, the guardrail branch gated on `caps & GUARDRAIL_CAPABILITIES and not caps & CLASSIFYING_CAPABILITIES` — the gate that resolves a brief contradiction ("before sink" vs "sink → guardrail → tool"); every pinned outcome holds. `classify_class` unchanged (a class is not a guardrail; the method is).
+- New `parsing/normalizer_stages/guardrail_capability.py` (stage 2, between `mcp_server_nodes` and `class_nodes`): writes `validates_input` into `ctx.capabilities` for a method / function whose caller in the call graph has `calls_llm` / `invokes_mcp_tool` / `reads_untrusted`. No node, no edge — the node comes from the classification. The caller kind is capability-based because at stage 2 the agent / tool / entry nodes do not exist yet.
+- **Known:** `logger.info` is unreachable as written — `_collect_call_names` records `ast.Name` targets only, so ADR-0024 §2's `logger.info(text)` example is a wording issue, not a rule issue. Both halves are pinned: the accepted false positive (a capability-free helper called by bare name) and the documented miss (an attribute call — the limitation B.4a notes for `self.pii.check(x)`).
+- **Tests:** +24 net (test_guardrail_capability 14, test_classification +6, test_patterns +2, test_stage_order +2; the stage docstrings move from "N of 20" to "N of 21"). 2162 passed.
+
+### 2026-10-30 — ADR-0024: the guardrail node producer
+
+- Three producers, one precedence: a **framework detector** (ADR-0011 route, per-SDK module — the SDK's own convention is the strongest evidence); the negative **capability `validates_input`** (second: structural, deterministic, an inference); the **LLM classifier** (D.2, opt-in, off by default — the fallback for projects no detector and no capability covers).
+- The rule is **not a name table**; ADR-0016 decision 7 stays removed. The capability rule reads the call graph and the capability map and accepts its false positives (`print`, `logger.info`), because the guardrails payload is a signal the model weighs (ADR-0019 §2), not a filter.
+- §3 also names `@guard`, `guard.parse` and `guard.validate`; the detectors ship the **constructions** only.
+
+### 2026-10-30 — B.3b-llm_fallback: LLM fallback for unresolved store identity
+
+- ADR-0023's opt-in fallback: a site with `identity_hint=None` (an `open(path)`, a `Bucket=var`, an f-string with no literal prefix, an unresolved handle) in a writer's scope gets an LLM-proposed `identity_hint`; the fallback creates the store and its `writes_to` / `reads_from` edges with `identity_source='llm'` and `identity_confidence=0.2`, and the store is weak (special floor 0.1, `include_weak=True` to inspect). Deterministic answers win — the fallback fills the gap, it is not the primary producer.
+- New `store/llm_fallback/` (config, prompt, cache, runner): its own `PROMPT_VERSION` (`store_identity:v1.0.0`), its own config section (`llm_fallback_model`, temperature 0.0, defaulting to the classifier's model), and D.2's SQLite cache keyed on `(content_hash, prompt_version, model_id)`.
+- **Tests:** +139 net (124 new in `test_store_llm_fallback`, 7 stage, 2 query-layer, 2 whole-pipeline, `scan_config` additions). 2138 passed.
+- **Not run:** the four-corpus regression (corpora not on this machine); ruff / mypy not installed.
+
+### 2026-10-30 — ADR-0023: LLM fallback for unresolved store identity
+
+- ADR-0021 §5's rule ("unresolved identity → no store, no edge") is correct but silent: the analysis cannot distinguish "no store" from "a store the AST could not name". The decision is an **opt-in** LLM fallback, the last resort after the AST and the resolver's signals.
+- Recorded: the model section, the prompt and its own `PROMPT_VERSION`, the shared cache and its key, base confidence 0.2 (`identity_source='llm'`), and where it runs (the store resolver stage, the writer's scope).
+
+### 2026-10-30 — B.5 + B.9: judge determinism and evidence presence
+
+- **B.5:** `scan_config._DEFAULT_CONFIG_YAML`'s judge entry moves from `temperature: 0.6` to `0.0`, with the trade-off stated (deterministic verdicts by default; raise it for a sampling judge; a per-model temperature is an override and is honored as written). `judge.evaluate` and `_parse_model_entry` untouched — a config default, not a function change; `analysis/config_loader.py`'s sample and docstring follow.
+- **B.9:** `evaluator._evidence_present(voter_responses, candidate_edges)` — at least one voter cited at least one edge **from the candidate chain**, not from the graph. A pass sets `validated_kind = "evidence"`; a failure sets `validated = False`, `validated_kind = "semantic"` (the last level passed) and one note ("no voter cited an edge from the chain", plus the count of citations outside, or "no voters responded"). A `validate_chain` failure short-circuits — the evidence check is not reached.
+- Schema: both `validated_kind` CHECKs gain `'evidence'` (the group path never writes it — B.4b's check is unchanged); `VALID_VALIDATED_KINDS` gains it so the mirror of the CHECK stays true. No migration (ADR-0003).
+- **Tests:** +15 net (config 27, judge 8, evaluator 26, semantic_validation 43, evaluator_groups 16). 1999 passed.
+
+### 2026-10-30 — ADR-0018 revision 2: evidence presence as the third `validated_kind` level
+
+- §1/§2 defined `validated` as existence + semantic coherence, `validated_kind ∈ {"existence", "semantic"}`. B.9 adds a third level — **evidence presence** — so `validated` is true when all three pass and `"evidence"` becomes the highest `validated_kind`.
+- The read path is unchanged (`NULL → "existence"`, `"semantic" → "semantic"`); a failure is stored as `validated: false`, `validated_kind: "semantic"` plus the note. `chain_groups.validated` stays B.4b's check, which already folds the voters' evidence.
+- A revision, not a new ADR: §1 already names "existence" and "semantic". **Risk recorded:** chains stored before B.9 with `validated: true` become retroactively weaker — the DB is recreated per scan, so this is a reputation change, not a migration.
+
+### 2026-10-30 — B.3b-user_upload-core-module-followup-2: module-level writer's reach
+
+- The module-level branch's start set is now the **module body's own `ast.Name` call targets**, not the module's list of top-level functions. That fixes the false positive the mixed fixture pinned: a Streamlit upload site in a file that also holds a FastAPI route handler no longer inherits the route handler's store.
+- `_module_body_calls` walks `module.body`, skips `_SCOPE_NODES` (`FunctionDef` / `AsyncFunctionDef` / `ClassDef` / `Lambda`) and collects the `ast.Call` targets that are `ast.Name`; `_reach` unions `_reachable(name, call_graph)` over them. `_top_level_functions` is removed (no other caller). The writer keeps its own `_reachable` — `store/` does not reach into `parsing/`. Module-body writes are unchanged.
+- CLI (`entry_kind="cli"`) gets the same rule, pinned on an `if __name__ == "__main__"` fixture; the attribute-call false negative is pinned too.
+- **Decision:** the module-level branch is a **call-graph reach from the module body**, not "everything top-level in the file" — the mixed-file false positive is the reason.
+- **Tests:** +5 net (writer_module 59, streamlit 42, upload_core 99, normalizer + pipeline 285); the fixtures followed the rule, and the Streamlit E2E test that pinned the false positive is renamed and now asserts `found == []`. 1984 passed.
+- **Not run:** the four-corpus regression (corpora not on this machine); ruff / mypy not installed.
+
 ### 2026-10-30 — B.3b-s3-followup: handles, `s3fs`, MinIO
 
 - **`store/families/s3.py` gains three shapes the literal receiver set could not see.** `s3_client = boto3.client('s3')` then `s3_client.put_object(...)`; `fs = s3fs.S3FileSystem()` then `fs.open('s3://<bucket>/<key>', mode)`; `mc = Minio(...)` then `mc.put_object(bucket, key, ...)` / `mc.get_object(bucket, key)`.
@@ -405,7 +517,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.3 — Store model (the largest Phase B step)
 
 **Priority:** **High**
-**Status:** In progress. Done (2026-10-30): B.3a, B.3b-core, B.3b-fs, B.3b-s3, B.3b-db, B.3b-user_upload-core (+ `-module` / `-module-followup` / `-route-detectors-followup`), B.3b-user_upload-fastapi / -streamlit / -django / -flask, B.3b-mcp-catalogue, B.3c. Remaining: B.3b-llm_fallback and the two open followups (B.3b-fs-followup, B.3b-user_upload-attribution).
+**Status:** Done (2026-10-30). B.3a, B.3b-core, B.3b-fs (+ `-followup`), B.3b-s3 (+ `-followup`), B.3b-db, B.3b-user_upload-core (+ `-module` / `-module-followup` / `-module-followup-2` / `-route-detectors-followup`), B.3b-user_upload-fastapi / -streamlit / -django / -flask, B.3b-mcp-catalogue, B.3b-user_upload-attribution (+ its two followups), B.3b-llm_fallback, B.3c — all landed.
 
 #### B.3a — Mechanism: store node, reads_from, identity_confidence, store join
 
@@ -528,10 +640,10 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 #### B.3b-llm_fallback — LLM identity fallback
 
 **Priority:** **Medium**
-**Status:** Not started.
-**Rationale:** When the AST does not find a literal (unresolved identity), the LLM classifier (D.2) proposes an identity hint from the surrounding code. `identity_source='llm'`, confidence 0.2.
+**Status:** Done (2026-10-30, febd3de).
+**Rationale:** When the AST does not find a literal (unresolved identity), an opt-in LLM fallback (ADR-0023) proposes an identity hint from the surrounding code. `identity_source='llm'`, confidence 0.2; the store is weak (special floor 0.1).
 **Size:** ~1 day.
-**References:** ADR-0021 §7; D.2; `store/context/llm_fallback.py` (new).
+**References:** ADR-0021 §7; ADR-0023; `store/llm_fallback/` (new).
 
 #### B.3c — Migrate B.2 to the store model
 
@@ -554,22 +666,22 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 #### B.3b-fs-followup — Prefix containment through the resolver
 
 **Priority:** **Medium**
-**Status:** Not started.
-**Rationale:** `literal_match`'s containment branch (+0.3) is correct and tested, but inert end-to-end: `_attached_keys` attaches a site only to the exact key it equals, so a write hint `/uploads/` and a read hint `/uploads/x` produce two stores, not one. Making containment live means changing `_attached_keys` (a resolver change, not a family change), and the two stores should become one store with two edges — a rule, not a one-liner.
+**Status:** Done (2026-10-30, 5c2fa46).
+**Rationale:** `literal_match`'s containment branch (+0.3) is correct and tested, but inert end-to-end: `_attached_keys` attaches a site only to the exact key it equals, so a write hint `/uploads/` and a read hint `/uploads/x` produce two stores, not one. Making containment live meant changing `_attached_keys` (a resolver change, not a family change). **Decided (5c2fa46):** the two stores are **not** merged — `_attached_keys` attaches the exact key(s) plus every key `literal_match` returns `LITERAL_PREFIX` for, so two keys give two stores, two `writes_to`, two `reads_from` and two groups; `LITERAL_ONE_SIDE` attaches nothing, `confidence.py` unchanged.
 **Size:** ~1 day.
 **References:** B.3b-fs; ADR-0021 §8.
 
 #### B.3b-user_upload-attribution — `source_type='user_upload'` end-to-end
 
 **Priority:** **High** (blocks B.3b-user_upload-* from producing a `user_upload` chain group)
-**Status:** Not started.
-**Rationale:** The attribution logic works (unit-tested), but end-to-end it is inert: a filesystem read (`open('/uploads/x', 'rb')`) is not one of 1.3a's source types, so the reader has no `untrusted_source` node to stamp. The `user_upload` read side has no producer yet — the same shape as B.4-gap.
+**Status:** Done (2026-10-30, a9ec3a3). Its two followups (the shared-wrapper code-context row, the third-file module wrapper) landed in 5c2fa46.
+**Rationale:** The attribution logic works (unit-tested), and end-to-end it now fires: a filesystem read (`open('/uploads/x', 'rb')`) is not one of 1.3a's source types, so ADR-0022 has the attribution pass create the `untrusted_source` node itself (`user_upload:<dotted call>`) in the writer's scope and link `reads_from` store → source.
 **Two options:**
 - **(a)** Upload context creates an `untrusted_source` node for an `fs` read in the writer's scope. New producer, new identity rule.
 - **(b)** Multi-role `source_type` on an existing `untrusted_source` node (a source can be both `user_upload` and `rag_corpus` in different scopes). ADR-0022 territory.
-**Decision needed before any implementation:** (a) or (b), with a corpus or fixture that motivates it.
+**Decision (2026-10-30):** **(a)** — ADR-0022. The 1.3a producer takes precedence (§3); no overwrite.
 **Size:** ~1 day.
-**References:** B.3b-user_upload-core; ADR-0021 §10; ADR-0022 (not yet written).
+**References:** B.3b-user_upload-core; ADR-0021 §10; ADR-0022.
 
 ### B.4 — Guardrails affect evaluation
 
@@ -593,19 +705,34 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 **What changed:** payload `guardrails` section (root for a chain, partition for a group); `PROMPT_VERSION` v1.5.0 → v1.6.0; one rule block per system prompt.
 **References:** ADR-0019 §2–§3.
 
+#### B.4b-observed-by — the guardrail payload carries `observed_by`
+
+**Priority:** **Medium**
+**Status:** Done (2026-10-31, 5d1e3a3).
+**Rationale:** ADR-0024 §6 requires the payload's `guardrails` section to name the producer. `observed_by` is the only field that tells `["ast"]`, `["ast", "framework:<name>"]` and `["ast", "static_llm:<model_id>"]` apart in a serialized payload; `_guardrail_to_dict` omitted it, so two guardrails on one chain looked identical.
+**What changed:** `_guardrail_to_dict` returns `observed_by` in `_node_to_dict`'s order; `_guardrails_for_group` gains it through `_guardrails_for_chain`, the partition untouched; the docstring is rewritten, not extended.
+**References:** ADR-0024 §6; B.4b.
+
 #### B.4-gap — No producer of `guardrail` nodes after ADR-0016
 
 **Priority:** **High** (blocks B.4 end-to-end)
-**Status:** Not started.
+**Status:** Done (2026-10-30, 6c4b028 + 33e0ac6 + c3a0b67 + f3f37ef + dd2bfa5 — the five steps B.4-gap-1..5). The `mcp_server` guards target of ADR-0019 rev 1 is code-pending (B.4-gap-5-followup).
 **Found in:** B.4a implementation (2026-10-29).
 **Rationale:** B.4a emits `guards` edges from `guardrail` nodes. On all four corpora `guards = 0` — there are no `guardrail` nodes for it to link. ADR-0016 decision 7 removed the class-A name heuristics (path rule, class suffix). `classify_class` / `classify_method` return `sink` / `agent` / `llm_endpoint` / `tool` and nothing else. The LLM classifier (D.2) can, via its `DetectionResult` merged at stage 10 (which is why `guardrail_edges` runs after the merge), but on the four corpora no source produces them.
-**Consequence:** B.4a and B.4b are correct and ready; end-to-end guardrail influence does not fire until a producer exists.
+**Consequence:** B.4a and B.4b are correct and ready; with B.4-gap-1..5 the producer exists, so guardrail influence fires where a `guardrail` node does — verified on synthetic targets, not yet on the four corpora.
 **What does not close this gap:** re-adding the path rule or class suffix (class-A heuristics in another shape); LLM classifier as the only source (opt-in, off by default).
-**What could close it (decision for a later planning session):**
-- Capability-based detection (a class or function whose body calls a known filter / validator API). Needs new `CapabilityRule`s and corpus evidence.
-- Framework detector (LangChain callbacks, FastMCP middleware, Guardrails AI, NeMo Guardrails). ADR-0011 route; a new detector (D.1 territory).
-- LLM classifier as the only source. B.4 must not depend on it being on.
-**Decision needed before any implementation:** which producer, with which corpus evidence. A new ADR records it.
+**What closed it (the decision, ADR-0024, 2026-10-30 — three producers, one precedence):**
+- Capability-based detection (a class or function whose body calls a known filter / validator API). New `CapabilityRule`s (`validates_input`, negative); landed as B.4-gap-1. Corpus evidence still to be produced.
+- Framework detector (LangChain callbacks, FastMCP middleware, Guardrails AI, NeMo Guardrails). ADR-0011 route; landed as B.4-gap-2..5.
+- LLM classifier as an opt-in fallback, never the only source. B.4 must not depend on it being on. D.2 unchanged.
+
+#### B.4-gap-5-followup — `mcp_server` as a guards target (ADR-0019 rev 1)
+
+**Priority:** **Medium**
+**Status:** ADR done (ADR-0019 rev 1, 8aa0b07, 2026-10-31), **code pending corpora**. The ADR is committed; the code brief is separate.
+**Rationale:** `guardrail_edges.py::COMPONENT_KINDS` is `{"agent", "tool"}`, and the name-keyed call graph (ADR-0016) does not record `mcp.add_middleware(...)`, so a middleware registered on a server is a `guardrail` node and no `guards` edge (pinned by B.4-gap-5). ADR-0019 rev 1 grows `COMPONENT_KINDS` with `mcp_server` and gives it its own evidence rule (an `add_middleware(...)` call site on the server object, or a `@mcp.middleware(...)` decorator), and `_guardrails_for_chain` also reads a `guards` edge on a `tool`'s `parent_server`.
+**Blocker:** the four-corpus regression (corpora not on this machine); the code brief is separate from the ADR.
+**References:** ADR-0019 (rev 1); B.4-gap-5.
 
 #### B.4b-followup — `SOLO` step 4 and user prompt questions
 
@@ -618,7 +745,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.5 — Judge determinism
 
 **Priority:** **Medium**
-**Status:** Not started
+**Status:** Done (2026-10-30, 776b9b9).
 **Rationale:** The judge runs with `temperature=0.6`. Two runs on the same graph with the same prompt can produce different `verdict` values, persisted in `chains.verdict` and `chain_groups.verdict`. The report is non-deterministic even when the graph is not.
 
 **Approach:** `judge.temperature = 0.0` as the default, with an explicit override in the config for users who want stochasticity. Document the trade-off.
@@ -630,7 +757,8 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.6 — `chain_groups.lethal_trifecta` column
 
 **Priority:** **Low**
-**Status:** Not started
+**Status:** Done (2026-10-31, 32c8157). The bundle's two row columns (`lethal_trifecta`, `validated_kind`) landed in the same step; no separate item is opened for the bundle, because the keys landed together.
+**Decision (B.6):** `validated_kind` in `chain_groups.json` is gated on `verdict is not None` because `from_row` coerces a NULL to `"existence"` (a chain-row convenience, not a group-row fact); the bundle mirrors the stored column.
 **Rationale:** `chain_groups.lethal_trifecta` exists in the schema and has no writer. It is `False` on every row. The per-node flag exists (1.3d); the per-group aggregate does not. The report does not show it, but `chain_groups.json` includes it as `false` on every row, which reads as a claim.
 
 **Approach:** one line in `_evaluate_one_group`: `record.lethal_trifecta = any(node.attributes.get("lethal_trifecta") for node in read_chain_nodes)`. No schema change.
@@ -642,7 +770,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.7 — `chain_groups.prompt_version` / `voter_outputs` columns
 
 **Priority:** **Medium**
-**Status:** Not started
+**Status:** Done (2026-10-31, da1478a).
 **Rationale:** `chains` has `prompt_version` and `voter_outputs`. `chain_groups` does not. A group verdict cannot be traced to prompt v1.5.0 in storage.
 
 **Approach:** two columns (`prompt_version TEXT`, `voter_outputs JSON`), populated by `evaluator._evaluate_one_group`. Schema change; DB recreated per scan, no migration.
@@ -666,7 +794,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 ### B.9 — Evidence presence affects validation
 
 **Priority:** **Medium**
-**Status:** Not started
+**Status:** Done (2026-10-30, 776b9b9).
 **Rationale:** `is_chain_valid` does not look at voter evidence. A voter that returns `exploitable: true, evidence: []` produces `validated: true`. The `evidence_valid` field is computed per voter but does not propagate to `Chain.validated`.
 
 **Approach:** `Chain.validated` becomes a two-part condition: every node and edge exists, and at least one voter cited at least one edge from the chain. If the second fails, the chain is stored with `validated: false` and the reason is visible in the report.
@@ -910,6 +1038,27 @@ All in the "do not change" sets of past steps; each is one line or one sentence.
 **Priority:** **Low**
 **Status:** Done (2026-10-30) — the same file as the `families/base.py` item above; this entry's title said `family/base.py`, the path is `store/families/base.py`. Actually fixed in the 2026-10-30 doc-debt pass: `B.3b-user_upload` → `B.3b-user_upload-core`, and `B.3b-core` is the correct reference for the parameter itself.
 
+### Doc-debt opened by B.4-gap-1..5, B.5+B.9 and B.6+B.7 (2026-10-31)
+
+**Priority:** **Low**
+**Status:** Not started — **open**. A separate brief; the 2026-10-31 commits do not fix these.
+
+- `Documentation/Architecture/C4_L3_Phase1.md` lines 34 (the four-detector list needs `guardrails_ai`), 39 and 301 ("20 stages" → the guardrail stage), 323.
+- `parsing/normalizer_stages/body_attributes.py` and `lethal_trifecta.py` — "second to last" no longer names the last stage.
+- `graph/query.py:1436` — the `validated_kind` levels ("third level": `evidence`).
+- `tests/test_reporting.py:359` — the stale group-row shape.
+- `store/context/upload/detectors/streamlit.py:19` — "the module's top-level functions" (superseded by B.3b-user_upload-core-module-followup-2).
+- `Documentation/BACKLOG.md` self-references: lines 152 and 451 (`-module`'s old reach), 180, and 6 / 23 / 30 / 37 (the header and §0.1–§0.2).
+- `store/families/s3.py:95-101` — the containment branch is live end-to-end now.
+- `store/confidence.py:43-49` — same.
+- ADR-0024 §2's `logger.info` example — unreachable as written (`_collect_call_names` records `ast.Name` targets only).
+- `tests/test_normalizer_stages/__init__.py` — the stage list.
+- `B.4-gap-5-followup`'s "Blocker: the four-corpus regression" is also `D.5`'s
+  real blocker: `D.5` (guardrails `bypassed_by` derived edge) says "**Blocked by**
+  B.4-gap", but `B.4-gap` is Done (B.4-gap-1..5); the real blocker is the same
+  corpus run. This line records the correction; `D.5`'s own "Blocked by" text is
+  left for the next planning session, when the corpora return.
+  
 ---
 
 ## Known gaps
