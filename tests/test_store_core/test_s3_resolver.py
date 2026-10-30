@@ -23,7 +23,12 @@ What is pinned:
     `literal_match`'s containment branch relates it to, which the resolver
     reaches since B.3b-fs-followup;
   - **the wildcard** — a site with an unresolved bucket (`None`)
-    attaches to every store its family has (§5), at a lower confidence.
+    attaches to every store its family has (§5), at a lower confidence;
+  - **B.3b-s3-followup** — a tracked boto3 handle writing and an `s3fs`
+    `s3://` path reading are one store and one group; MinIO's positional
+    layout joins a boto3 keyword call the same way; and a receiver the
+    file did not bind to a constructor leaves the write side silent
+    rather than guessed.
 
 The registry is not involved: the resolver is handed the family, the way
 `test_fs_resolver.py` hands it `fs`. That the real registry holds `s3` is
@@ -379,6 +384,106 @@ def test_an_unresolved_bucket_attaches_to_the_store_it_cannot_name(
     assert [round(edge.identity_confidence, 4) for edge in edges] == [
         round(from_unresolved, 4), round(from_equal, 4),
     ]
+
+
+# ============================================================
+# B.3b-s3-followup — three spellings, one store
+# ============================================================
+
+# `handle` binds a boto3 handle on line 2 and writes with it on line 3,
+# then binds an `s3fs` handle on line 4 and reads `s3://...` with it on
+# line 5. The two calls do not look alike and name the same store.
+FOLLOWUP_SOURCE = f'''\
+def handle(payload):
+    s3_client = boto3.client("s3")
+    s3_client.put_object(Bucket="{BUCKET}", Key="{KEY}", Body=payload)
+    fs = s3fs.S3FileSystem()
+    return fs.open("s3://{BUCKET}/{KEY}", "rb")
+'''
+
+FOLLOWUP_READ_LINE = 5
+
+
+def test_a_tracked_handle_and_an_s3fs_path_are_one_store(scan) -> None:
+    """The handle and the `s3://` path name the same identity hint.
+
+    The family's half is pinned in `test_s3.py`; what this pins is that
+    the *store* is one node and the pair is one group — `_identity_hint`
+    is `bucket + "/" + key` whichever spelling produced it, so a boto3
+    write and an `s3fs` read meet at `s3:docs/uploads/report.txt` with
+    §8's equal-literal confidence.
+    """
+    expected = combine_signals(
+        BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]
+    )
+    built = _scene(
+        scan,
+        source=FOLLOWUP_SOURCE,
+        nodes=[_writer_node(), _source_node(line=FOLLOWUP_READ_LINE)],
+    )
+    edges = _resolve(built)
+
+    stores = built.nodes("store")
+    assert [store.name for store in stores] == [f"s3:{LITERAL}"]
+    assert stores[0].attributes == {
+        "family": "s3", "identity_hint": LITERAL,
+    }
+    assert [edge.kind for edge in edges] == ["writes_to", "reads_from"]
+    writes_to, reads_from = edges
+    assert writes_to.source_id == "tool:handle"
+    assert writes_to.target_id == stores[0].id
+    assert reads_from.source_id == stores[0].id
+    assert reads_from.target_id == "untrusted_source:1"
+    assert [round(edge.identity_confidence, 4) for edge in edges] == [
+        round(expected, 4), round(expected, 4),
+    ]
+
+
+def test_a_minio_write_and_a_boto3_read_are_one_store(scan) -> None:
+    """MinIO's positional `(bucket, key)` names the same store.
+
+    The write is `mc.put_object("docs", "uploads/report.txt", fileobj)`
+    and the read is `s3.get_object(Bucket=..., Key=...)`: two argument
+    layouts, one literal, so one store and the equal-literal pair.
+    """
+    built = _scene(
+        scan,
+        source=(
+            "def handle(payload):\n"
+            "    mc = Minio('localhost:9000')\n"
+            f'    mc.put_object("{BUCKET}", "{KEY}", payload)\n'
+            f'    return s3.get_object(Bucket="{BUCKET}", Key="{KEY}")\n'
+        ),
+        nodes=[_writer_node(), _source_node(line=4)],
+    )
+    edges = _resolve(built)
+
+    assert [store.name for store in built.nodes("store")] == [f"s3:{LITERAL}"]
+    assert [edge.kind for edge in edges] == ["writes_to", "reads_from"]
+
+
+def test_an_untracked_receiver_leaves_the_store_unnamed(scan) -> None:
+    """The follow-up's false negatives are false *negatives*, not noise.
+
+    `c = get_client()` is not a handle, so line 3 is not a site and the
+    write side contributes nothing: the read alone names the store, one
+    edge, and no `writes_to`. A family that guessed would have produced
+    a confident edge from a call it could not read.
+    """
+    built = _scene(
+        scan,
+        source=(
+            "def handle(payload):\n"
+            "    c = get_client()\n"
+            f'    c.put_object(Bucket="{BUCKET}", Key="{KEY}", Body=payload)\n'
+            f'    return s3.get_object(Bucket="{BUCKET}", Key="{KEY}")\n'
+        ),
+        nodes=[_writer_node(), _source_node(line=4)],
+    )
+    edges = _resolve(built)
+
+    assert [store.name for store in built.nodes("store")] == [f"s3:{LITERAL}"]
+    assert [edge.kind for edge in edges] == ["reads_from"]
 
 
 # ============================================================

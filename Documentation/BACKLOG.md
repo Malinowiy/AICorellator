@@ -79,6 +79,15 @@ Plus two coverage gaps that Phase B has not yet closed:
 
 ## Recently done
 
+### 2026-10-30 — B.3b-s3-followup: handles, `s3fs`, MinIO
+
+- **`store/families/s3.py` gains three shapes the literal receiver set could not see.** `s3_client = boto3.client('s3')` then `s3_client.put_object(...)`; `fs = s3fs.S3FileSystem()` then `fs.open('s3://<bucket>/<key>', mode)`; `mc = Minio(...)` then `mc.put_object(bucket, key, ...)` / `mc.get_object(bucket, key)`.
+- **Handle tracking is dataflow-lite, not dataflow.** One `Name = Call` per name per scope whose target is a constructor; the receiver's *name* is looked up, no value is followed (ADR-0001). Module-level handles are visible from any call site in the file, function-local ones only in their own function (a handle assigned in another function is a false negative — the family builds no call graph). Two assignments to one name in one scope: the last in source order wins. The literal receiver set and the handle sets are **additive and independent**, so `client = some_factory(); client.put_object(...)` is still a site by the literal rule.
+- **The discriminator between boto3 and MinIO is the argument layout, not the receiver name** — the same `put_object` name belongs to both. boto3 is keyword-only (`Bucket=` / `Key=`, no positional), MinIO is positional `(bucket, key)` or lowercase `bucket=` / `key=`; a call carrying the other spelling is not a site. `s3fs` paths must be `s3://...` and the scheme is stripped for the hint, so `fs.open('s3://docs/x')` and `s3.get_object(Bucket='docs', Key='x')` name one store.
+- **Documented false positives / negatives:** `boto3.client('ec2')` (the service argument is not checked), and the unresolvables — a factory handle, a handle from another function, a direct `s3fs.S3FileSystem().open(...)`, and a bare `open('s3://...')` (which is the `fs` family's site).
+- **Tests:** +30 (test_s3 +27, test_s3_resolver +3). 1979 passed.
+- **Not done, flagged:** the four corpora are not on this machine, so the corpus regression was not re-run.
+
 ### 2026-10-30 — Doc-debt ×3: docstrings after B.3b-* and B.3c
 
 - Three doc-debt commits (six stale docstrings, then four, then seven) — docstrings and one C4 table row only. No behaviour, no test, no schema, no ADR.
