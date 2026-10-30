@@ -230,6 +230,8 @@ def test_evidence_outside_the_group_fails_layer_3(store) -> None:
     row = store.chain_groups.get(GROUP_ID)
     assert row.verdict == "exploitable"
     assert row.validated is False
+    # B9G: B.4b's label for a group that its own check rejected.
+    assert row.validated_kind == "existence"
 
 
 def test_evidence_inside_the_group_validates(store) -> None:
@@ -240,7 +242,32 @@ def test_evidence_inside_the_group_validates(store) -> None:
     with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
         evaluate_chain_groups(store, [group], _config(), progress=False)
 
-    assert store.chain_groups.get(GROUP_ID).validated is True
+    row = store.chain_groups.get(GROUP_ID)
+    assert row.validated is True
+    # B9G: the group path is B.4b's and did not move. It writes the two
+    # A.4 labels — "semantic" for its own check passing — and never
+    # "evidence", which B.9 adds to the linear chain path only.
+    assert row.validated_kind == "semantic"
+
+
+def test_a_group_no_voter_argued_still_validates(store) -> None:
+    """B9G — the group's rule, spelled the other way round.
+
+    B.9 does not reach this path: a group whose voters cite nothing is
+    validated when its edges exist, its hops resolve and no citation
+    left the pair (B.4b's check). The same empty evidence on the linear
+    chain path reads `"semantic"` and not validated; the two tables
+    disagree on purpose, and this pins that they still do.
+    """
+    group = _build(store)
+    fake, _ = _voter([])
+
+    with patch("aicorellator.analysis.voters._evaluate_one", side_effect=fake):
+        evaluate_chain_groups(store, [group], _config(), progress=False)
+
+    row = store.chain_groups.get(GROUP_ID)
+    assert row.validated is True
+    assert row.validated_kind == "semantic"
 
 
 def test_an_edge_missing_from_the_graph_fails_layer_3(store) -> None:

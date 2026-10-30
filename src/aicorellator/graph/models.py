@@ -65,16 +65,21 @@ VALID_EDGE_KINDS = frozenset({
 #   structural — a declaration, not a path (guards).
 VALID_FLOW_KINDS = frozenset({"control", "data", "structural"})
 
-# Which Layer 3 rule level judged a chain (A.4). Mirrors the CHECK
+# Which Layer 3 rule level judged a chain (A.4, B.9). Mirrors the CHECK
 # constraints in schema.sql (on `chains` and on `chain_groups`).
 #   existence — existence was as far as the chain got: a node or an
 #               edge was missing, or existence held and a structural
 #               check rejected the chain.
-#   semantic  — every check passed, which is also what `validated`
-#               records (the two agree on every row A.4 wrote).
+#   semantic  — existence and coherence passed. Before B.9 that also
+#               meant `validated`; since B.9 it is the level a chain
+#               reaches when the evidence check is the one that
+#               rejected it.
+#   evidence  — existence, coherence and evidence presence all passed
+#               (B.9): at least one voter cited an edge of the chain.
+#               This is the only level that sets `validated`.
 # `None` is a row written before A.4; `Chain.from_row` reads it back
 # as "existence", which is the level that row was actually judged by.
-VALID_VALIDATED_KINDS = frozenset({"existence", "semantic"})
+VALID_VALIDATED_KINDS = frozenset({"existence", "semantic", "evidence"})
 
 
 # ------------------------------------------------------------

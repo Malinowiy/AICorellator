@@ -295,3 +295,120 @@ def test_the_workspace_template_is_a_valid_ensemble_config(
     assert len(cfg.voters) == 1
     assert cfg.voters[0].role == "fast"
     assert cfg.judge is None
+
+
+# ------------------------------------------------------------
+# The judge's temperature is a config default (B.5)
+# ------------------------------------------------------------
+#
+# `judge.evaluate` is unchanged: it takes a per-judge `temperature` when
+# the entry names one and the config's otherwise. What B.5 moved is the
+# value the template ships for the judge — 0.6 to 0.0 — so two runs over
+# the same graph write the same verdict. Voters and `solo` are not part
+# of that decision.
+
+JUDGE_WITH_A_TEMPERATURE = """
+evaluation:
+  mode: "custom"
+  defaults:
+    temperature: 0.0
+  models:
+    - name: "v"
+      role: "voter"
+    - name: "j"
+      role: "judge"
+      temperature: 0.6
+"""
+
+JUDGE_WITH_NONE = """
+evaluation:
+  mode: "custom"
+  defaults:
+    temperature: 0.0
+  models:
+    - name: "v"
+      role: "voter"
+    - name: "j"
+      role: "judge"
+"""
+
+
+def _judge_block(text: str) -> str:
+    """The template's text from the JUDGE banner to the next section."""
+    start = text.index("# --- JUDGE")
+    body = text[text.index("\n", start) + 1:]
+    end = body.find("# ---")
+    return body if end == -1 else body[:end]
+
+
+def test_a_judge_with_no_temperature_falls_through_to_the_default(
+    tmp_path: Path,
+) -> None:
+    """B5A — no per-model value, so the config's `0.0` is what it gets.
+
+    `DEFAULT_TEMPERATURE` and `defaults.temperature` are both already
+    0.0; what this pins is that the judge's absence resolves to the
+    config's value rather than to a judge-specific number. That is why
+    B.5 is a config default: `judge.evaluate` keeps its rule (per-model
+    first, config second) and the template moves the second.
+    """
+    path = _write_config(tmp_path, JUDGE_WITH_NONE)
+    cfg = load_config(path)
+
+    assert cfg.temperature == 0.0
+    assert cfg.judge.temperature is None      # no override named
+
+
+def test_a_judge_overrides_the_default_in_the_file(tmp_path: Path) -> None:
+    """B5B — `temperature: 0.6` in the config is honored as written.
+
+    B.5 is a default, not a clamp: a user who wants a sampling judge
+    gets one by saying so, per model, exactly as before.
+    """
+    path = _write_config(tmp_path, JUDGE_WITH_A_TEMPERATURE)
+    cfg = load_config(path)
+
+    assert cfg.judge.temperature == 0.6
+
+
+def test_the_template_judge_is_deterministic_and_the_solo_is_not(
+    tmp_path: Path,
+) -> None:
+    """B5C + B5D — one entry moved, and the trade-off is written down.
+
+    The template is read as text because it is the artifact a user
+    edits: the judge's entry reads 0.0 with the trade-off beside it, and
+    `solo` — a voter wearing the solo prompt, not the standalone judge —
+    keeps the 0.6 it had.
+    """
+    path = tmp_path / "config" / "config.yaml"
+    write_default_config(path)
+    text = path.read_text(encoding="utf-8")
+
+    judge = _judge_block(text)
+    assert "temperature: 0.0" in judge
+    assert "deterministic" in judge        # the trade-off, stated
+    assert "override" in judge
+    assert "temperature: 0.6" not in judge
+
+    solo = text[text.index("# --- SOLO"):]
+    assert "temperature: 0.6" in solo[:solo.index("# --- VOTERS")]
+
+
+def test_the_template_judge_reaches_the_model_at_zero(
+    tmp_path: Path,
+) -> None:
+    """B5A end to end: the shipped judge entry and the default agree.
+
+    `mode=custom` selects the voters and the judge the template defines,
+    so this is the ensemble a real run builds: the value the judge
+    receives is 0.0, and the voters keep their own resolution (no
+    override, so the config default).
+    """
+    path = tmp_path / "config" / "config.yaml"
+    write_default_config(path)
+    cfg = load_config(path, mode="custom")
+
+    assert cfg.judge.temperature == 0.0
+    assert cfg.temperature == 0.0
+    assert [v.temperature for v in cfg.voters] == [None, None, None]

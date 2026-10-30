@@ -46,7 +46,7 @@ Config schema (YAML, inside `evaluation:`):
         - name: "qwen3.6-35b-a3b"
           role: "judge"
           reasoning_effort: "medium"
-          temperature: 0.6
+          temperature: 0.0
           max_tokens: 16000
           timeout: 1800
 
@@ -58,6 +58,13 @@ Roles:
 
 A model may appear multiple times with different roles and
 different parameters (e.g. qwen3.6 as both solo and judge).
+
+The judge is deterministic by default (B.5): the template's judge
+entry reads `temperature: 0.0`, so two runs over the same graph with
+the same prompt write the same verdict. That is a config default and
+not a loader rule — a judge entry with `temperature: 0.6` still gets
+0.6 — and it is the judge's alone: `solo` is one voter wearing the
+solo prompt, and its temperature is unchanged.
 
 Mode determination:
   mode=fast   → role="fast"  only
@@ -83,6 +90,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_TIMEOUT = 600
+# The fallback for every model that names no temperature of its own —
+# voters and judges alike. 0.0 keeps a re-run of the same graph
+# reproducible, which is B.5's judge default; a per-model `temperature`
+# overrides it and is honored as written.
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_MAX_TOKENS = 2000
 DEFAULT_MODE = "custom"

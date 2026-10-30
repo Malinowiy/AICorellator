@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 from aicorellator.analysis.client import LLMResponse
+from aicorellator.analysis.config_loader import load_config
 from aicorellator.analysis.judge import evaluate
 from aicorellator.analysis.models import VoterConfig, VoterResponse
+from aicorellator.scan_config import write_default_config
 
 import pytest
 
@@ -147,3 +150,30 @@ def test_judge_uses_defaults_without_override() -> None:
     captured = _capture_request(_judge(), temperature=0.3, max_tokens=1234)
     assert captured["temperature"] == 0.3
     assert captured["max_tokens"] == 1234
+
+
+def test_the_shipped_judge_runs_at_the_configs_zero(tmp_path: Path) -> None:
+    """B5A — the template's judge reaches the model at 0.0.
+
+    `evaluate` is unchanged by B.5: a judge with no temperature of its
+    own takes the config's, and the template now names 0.0 there. The
+    config is read through `load_config`, so what is pinned is the file
+    a user edits, not a literal restated in the test.
+    """
+    path = tmp_path / "config" / "config.yaml"
+    write_default_config(path)
+    config = load_config(path, mode="custom")
+
+    captured = _capture_request(
+        config.judge, temperature=config.temperature,
+        max_tokens=config.max_tokens,
+    )
+    assert captured["temperature"] == 0.0
+    # A judge that names its own temperature still wins (ADR-0005).
+    assert _capture_request(
+        VoterConfig(
+            name="judge-1", base_url="http://localhost:1234/v1",
+            role="judge", timeout=900, temperature=0.6,
+        ),
+        temperature=0.0,
+    )["temperature"] == 0.6

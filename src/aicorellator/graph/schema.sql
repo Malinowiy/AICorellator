@@ -264,6 +264,10 @@ CREATE INDEX IF NOT EXISTS idx_findings_updated ON findings(updated_at);
 -- rejected it (an array of short, name-based notes — no source
 -- text, same rule as FlowDecision.evidence). `validated` now means
 -- "exists AND is structurally coherent", not just "exists".
+--
+-- B.9 (ADR-0018 revision 2) adds the third level, 'evidence': at
+-- least one voter cited at least one edge of the chain, so
+-- `validated` means "exists AND is coherent AND was argued".
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chains (
@@ -280,6 +284,9 @@ CREATE TABLE IF NOT EXISTS chains (
     -- A.4; `Chain.from_row` reads that back as 'existence', which is
     -- what such a row was judged by. `validation_notes` is empty for
     -- a chain that passed and for a row written before A.4.
+    -- B.9 adds 'evidence': a row written after B.9 whose kind is
+    -- 'semantic' and whose validated is 0 failed the evidence level,
+    -- not the coherence one.
     validated_kind   TEXT,
     validation_notes JSON NOT NULL DEFAULT '[]',
     status          TEXT NOT NULL DEFAULT 'active',
@@ -290,7 +297,7 @@ CREATE TABLE IF NOT EXISTS chains (
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (validated IN (0, 1)),
     CHECK (validated_kind IS NULL
-           OR validated_kind IN ('existence', 'semantic')),
+           OR validated_kind IN ('existence', 'semantic', 'evidence')),
     CHECK (json_valid(validation_notes)),
     CHECK (status IN ('active', 'stale')),
     CHECK (json_valid(chain_nodes)),
@@ -324,6 +331,10 @@ CREATE INDEX IF NOT EXISTS idx_chains_prompt_version ON chains(prompt_version);
 -- validated_kind: A.4's label on the group's own Layer 3 check
 -- (edge existence, evidence membership, hop resolution). It is a
 -- label only — the check itself is 1.3e's and did not change.
+-- B.9 adds 'evidence' to the same CHECK (the value list is shared
+-- between the two tables) but not to this path: the group's own
+-- check already folds the voters' citations in, so a group never
+-- writes 'evidence'. The group path is B.4b's, unchanged.
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS chain_groups (
@@ -350,7 +361,7 @@ CREATE TABLE IF NOT EXISTS chain_groups (
     CHECK (lethal_trifecta IN (0, 1)),
     CHECK (validated IN (0, 1)),
     CHECK (validated_kind IS NULL
-           OR validated_kind IN ('existence', 'semantic')),
+           OR validated_kind IN ('existence', 'semantic', 'evidence')),
     CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CHECK (verdict IS NULL OR verdict IN (
         'exploitable', 'not_exploitable', 'uncertain'

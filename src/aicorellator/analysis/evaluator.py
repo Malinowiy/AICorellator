@@ -5,7 +5,9 @@ Pipeline per chain (ADR-0005 + ADR-0006):
     1. Enumerate candidate (already done by QueryLayer.find_chains)
     2. Voters evaluate (parallel or sequential)
     3. Judge issues final verdict (only in full/custom mode)
-    4. Layer 3 deterministic validation (validate_edges)
+    4. Layer 3 deterministic validation: existence plus coherence
+       (QueryLayer.validate_chain, A.4), then evidence presence —
+       did any voter cite an edge of this chain (B.9)
     5. Persist to chains table
 
 Pipeline per chain *group* (1.3e, ADR-0010 — indirect prompt injection):
@@ -35,6 +37,7 @@ from ..graph.query import ANCHOR_EDGE_KINDS, CandidateChain, ChainGroup
 from ..patterns import TRAVERSABLE_FLOW_KINDS
 from . import aggregation, judge as judge_mod, voters as voters_mod
 from .config_loader import EnsembleConfig
+from .models import VoterResponse
 from .prompts import (
     GROUP_SYSTEM_PROMPT,
     PROMPT_VERSION,
@@ -254,6 +257,30 @@ def _evaluate_one(
             "chain %s rejected by Layer 3 (%s): %s",
             candidate.chain_id, validated_kind, "; ".join(validation_notes),
         )
+    else:
+        # 4b. Evidence presence (B.9, ADR-0018 revision 2) — the third
+        #     level. The two checks above are checks on the chain; this
+        #     one is a check on what the ensemble said about it: at
+        #     least one voter cited at least one edge of *this* chain.
+        #     A voter that cited nothing, or cited only edges outside
+        #     the chain, has not argued the chain, and a chain nobody
+        #     argued is not a validated finding. The level reached is
+        #     "semantic": existence and coherence did pass, and this is
+        #     the last level that did.
+        has_evidence, evidence_note = _evidence_present(
+            voter_responses, set(candidate.edges),
+        )
+        if has_evidence:
+            validated_kind = "evidence"
+        else:
+            # `_evidence_present` is total: a False always carries its
+            # note, so the stored row says why it was rejected.
+            validated, validated_kind = False, "semantic"
+            validation_notes = [evidence_note]
+            log.info(
+                "chain %s rejected by Layer 3 (semantic): %s",
+                candidate.chain_id, evidence_note,
+            )
 
     # 5. Persist.
     candidate_edge_ids = set(candidate.edges)
@@ -396,6 +423,65 @@ def _evaluate_one_group(
     # spelled the way a chain spells it. No new check.
     record.validated_kind = "semantic" if validated else "existence"
     return record
+
+
+# ------------------------------------------------------------
+# Layer 3's third level — evidence presence (B.9, ADR-0018 rev. 2)
+# ------------------------------------------------------------
+
+def _evidence_present(
+    voter_responses: list[VoterResponse],
+    candidate_edges: set[str],
+) -> tuple[bool, str | None]:
+    """Did any voter cite an edge of the candidate chain? (B.9)
+
+    ADR-0018 revision 2's third level, and the narrowest of the three
+    questions: the cited edge must be one of **this chain's** edges, not
+    merely an edge the graph has. A voter citing a real edge of some
+    other path has not argued this one, so it does not count — and an
+    empty `evidence` list does not count either, which is the case B.9
+    exists for (`exploitable: true, evidence: []` used to validate).
+
+    All-timeout and no-voters are the same answer to this question — no
+    evidence — and the note says which happened. A voter that answered
+    and cited nothing inside the chain gets the bare note; the count is
+    for the citations that left the chain.
+
+    It reads the raw `evidence` lists rather than `_voter_response_dict`'s
+    per-voter `evidence_valid` / `evidence_unknown` fields: those
+    classify one voter's citations against the chain, and this is the
+    aggregate the chain's `validated` is made of.
+
+    Returns `(True, None)` when the evidence is there, and
+    `(False, note)` when it is not — `note` is the `validation_notes`
+    entry the caller stores.
+
+    What it cannot see: whether the argument made *about* the edge is
+    sound. A voter that cites an edge of the chain and reasons badly
+    still passes; the layer validates structure, and the reasoning is
+    the model's (ADR-0018 §1).
+    """
+    for response in voter_responses:
+        if candidate_edges.intersection(response.evidence):
+            return True, None
+
+    if not any(not response.timeout for response in voter_responses):
+        return False, (
+            "no voter cited an edge from the chain (no voters responded)"
+        )
+
+    outside = [
+        edge_id
+        for response in voter_responses
+        for edge_id in response.evidence
+        if edge_id not in candidate_edges
+    ]
+    if outside:
+        return False, (
+            "no voter cited an edge from the chain "
+            f"({len(outside)} citation(s) outside the chain)"
+        )
+    return False, "no voter cited an edge from the chain"
 
 
 # ============================================================

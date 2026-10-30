@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from aicorellator.analysis.client import LLMResponse
-from aicorellator.analysis.config_loader import EnsembleConfig
+from aicorellator.analysis.config_loader import EnsembleConfig, load_config
 from aicorellator.analysis.evaluator import (
     _edge_to_dict,
     _guardrails_for_chain,
@@ -23,6 +24,7 @@ from aicorellator.analysis.models import (
 from aicorellator.analysis.prompts import build_voter_prompt
 from aicorellator.graph import Edge, Node
 from aicorellator.graph.query import CandidateChain
+from aicorellator.scan_config import write_default_config
 
 
 def _candidate(chain_id: str = "chain:test") -> CandidateChain:
@@ -49,11 +51,16 @@ def _config(voters_count: int = 1, with_judge: bool = False) -> EnsembleConfig:
     )
 
 
-def _voter_response(model: str, exploitable: bool = True, confidence: float = 0.8):
+def _voter_response(
+    model: str,
+    exploitable: bool = True,
+    confidence: float = 0.8,
+    evidence: list[str] | None = None,
+):
     return VoterResponse(
         chain_id="chain:test", model=model, prompt_version="v1.1.0",
         exploitable=exploitable, confidence=confidence,
-        reasoning="r", evidence=[],
+        reasoning="r", evidence=list(evidence or []),
     )
 
 
@@ -602,3 +609,239 @@ def test_a_guards_edge_does_not_change_enumeration(store) -> None:
     assert [g["id"] for g in _guardrails_for_chain(store, ["n:1", "n:2"])] == [
         GUARDRAIL_ID,
     ]
+
+
+# ------------------------------------------------------------
+# Layer 3's third level — evidence presence (B.9, ADR-0018 rev. 2)
+# ------------------------------------------------------------
+#
+# `validated` is existence + coherence + evidence: the chain has to be
+# real, it has to be a chain, and a voter has to have cited one of *its*
+# edges. The first two are `validate_chain`'s (A.4) and are tested in
+# tests/test_semantic_validation/; what is tested here is the third, and
+# the order the three are asked in.
+
+def _evidence_chain(store) -> None:
+    """`n:1 --e:1--> n:2`, the chain `_candidate()` names.
+
+    Typed at both ends, one hop, no anchor: `validate_chain` returns
+    `(True, "semantic", [])` for it, which is the state B.9's check
+    starts from. The ids are `_candidate()`'s, so a test can hand the
+    evaluator the candidate and read the row back by one id.
+    """
+    store.nodes.upsert(Node(
+        id="n:1", kind="entry_point", name="POST /chat", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="sink", name="filesystem", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2", kind="has_access_to",
+        host_id="localhost", flow_kind="control",
+    ))
+
+
+def _evaluate(store, candidates, responses) -> None:
+    """Run the evaluator with the voters mocked to `responses`."""
+    with patch(
+        "aicorellator.analysis.voters.evaluate", return_value=responses,
+    ):
+        evaluate_chains(store, candidates, _config(), progress=False)
+
+
+def test_a_citation_from_the_chain_is_the_evidence_level(store) -> None:
+    """B9A — one voter, one edge of the chain: `"evidence"` and validated."""
+    _evidence_chain(store)
+    _evaluate(store, [_candidate()], [_voter_response("v1", evidence=["e:1"])])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is True
+    assert chain.validated_kind == "evidence"
+    assert chain.validation_notes == []
+
+
+def test_a_voter_that_cites_nothing_leaves_the_chain_semantic(store) -> None:
+    """B9B — the case B.9 exists for: `exploitable` with no evidence.
+
+    The chain is coherent, so the level it reached is `"semantic"`; the
+    vote is not a validated one, and the note says why. This is the
+    assertion that used to read `validated: true, validated_kind:
+    "semantic"`.
+    """
+    _evidence_chain(store)
+    _evaluate(store, [_candidate()], [_voter_response("v1")])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is False
+    assert chain.validated_kind == "semantic"
+    assert chain.validation_notes == ["no voter cited an edge from the chain"]
+
+
+def test_citations_from_outside_the_chain_name_the_count(store) -> None:
+    """B9C — an edge that exists but is not this chain's is not evidence.
+
+    A hallucinated citation is the loudest way to cite nothing, so the
+    note carries how many there were: two citations, none of them the
+    chain's, reads as two.
+    """
+    _evidence_chain(store)
+    _evaluate(store, [_candidate()], [
+        _voter_response("v1", evidence=["edge:ghost", "edge:phantom"]),
+    ])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is False
+    assert chain.validated_kind == "semantic"
+    assert chain.validation_notes == [
+        "no voter cited an edge from the chain "
+        "(2 citation(s) outside the chain)"
+    ]
+
+
+def test_no_voter_responded_is_its_own_note(store) -> None:
+    """B9D — all timeouts, then no voters at all: both are "no evidence".
+
+    The two are the same answer to the evidence question and different
+    facts about the run, so the note names the fact. Neither is a chain
+    to report.
+    """
+    _evidence_chain(store)
+    timed_out = VoterResponse(
+        chain_id="chain:test", model="v1", prompt_version="v1.1.0",
+        exploitable=False, confidence=0.0, reasoning="timeout",
+        evidence=[], timeout=True,
+    )
+    _evaluate(store, [_candidate()], [timed_out])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is False
+    assert chain.validated_kind == "semantic"
+    assert chain.validation_notes == [
+        "no voter cited an edge from the chain (no voters responded)"
+    ]
+
+    _evaluate(store, [_candidate()], [])
+    assert store.chains.get("chain:test").validation_notes == [
+        "no voter cited an edge from the chain (no voters responded)"
+    ]
+
+
+def test_one_voter_citing_the_chain_is_enough(store) -> None:
+    """The criterion is "at least one voter, at least one edge".
+
+    A second voter that cites a ghost does not undo the first voter's
+    citation: the chain was argued, and the per-voter record of the bad
+    citation is in `voter_outputs`, where it belongs.
+    """
+    _evidence_chain(store)
+    _evaluate(store, [_candidate()], [
+        _voter_response("v1", evidence=["e:1"]),
+        _voter_response("v2", evidence=["edge:ghost"]),
+    ])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is True
+    assert chain.validated_kind == "evidence"
+    assert chain.validation_notes == []
+    assert chain.voter_outputs[1]["evidence_unknown"] == ["edge:ghost"]
+
+
+def test_a_missing_edge_short_circuits_the_evidence_check(store) -> None:
+    """B9E — existence fails first, and the citation cannot rescue it.
+
+    The voter cites `e:1`, which is in the chain: were the checks asked
+    in the other order the chain would read `"evidence"`. It reads
+    `"existence"` — the level it actually reached — with A.4's note.
+    """
+    _evidence_chain(store)
+    candidate = CandidateChain(
+        chain_id="chain:test", nodes=["n:1", "n:2"],
+        edges=["e:1", "edge:ghost"], length=2,
+    )
+    _evaluate(store, [candidate], [_voter_response("v1", evidence=["e:1"])])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is False
+    assert chain.validated_kind == "existence"
+    assert chain.validation_notes == ["missing edge edge:ghost"]
+
+
+def test_a_broken_hop_short_circuits_the_evidence_check(store) -> None:
+    """B9F — coherence fails first, for the same reason.
+
+    Existence holds (both nodes and the edge are in the graph) and the
+    hop runs the wrong way, so A.4 rejects the chain and its note is the
+    one stored. The citation is not an answer to that question.
+    """
+    store.nodes.upsert(Node(
+        id="n:1", kind="entry_point", name="POST /chat", host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="sink", name="filesystem", host_id="localhost",
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:2", target_id="n:1", kind="has_access_to",
+        host_id="localhost", flow_kind="control",
+    ))
+    _evaluate(store, [_candidate()], [_voter_response("v1", evidence=["e:1"])])
+
+    chain = store.chains.get("chain:test")
+    assert chain.validated is False
+    assert chain.validated_kind == "existence"
+    assert chain.validation_notes == [
+        "disconnected: edge e:1 links n:2 → n:1, expected n:1 → n:2"
+    ]
+
+
+# ------------------------------------------------------------
+# Determinism, with the LLM pinned (B.5)
+# ------------------------------------------------------------
+
+def test_two_runs_over_one_graph_store_the_same_verdict(
+    store, db_path: Path
+) -> None:
+    """B5A + D1 — the judge is deterministic by default, so a re-run agrees.
+
+    The mock pins the model — it answers the same text both times — so
+    what this pins is everything downstream of the model: the config's
+    temperature reaching `judge.evaluate` as 0.0 (B.5), the aggregation,
+    and the three Layer 3 levels. A template loaded here is the real
+    path: `load_config` on the file `ensure()` writes.
+    """
+    path = db_path.parent / "config" / "config.yaml"
+    write_default_config(path)
+    config = load_config(path, mode="custom")
+
+    _evidence_chain(store)
+    judge_text = json.dumps({
+        "chain_id": "chain:test", "verdict": "exploitable",
+        "confidence": 0.75, "reasoning": "the chain reaches the sink",
+    })
+    voter_text = json.dumps({
+        "chain_id": "chain:test", "exploitable": True, "confidence": 0.9,
+        "reasoning": "r", "evidence": ["e:1"],
+    })
+    temperatures: list[float] = []
+
+    def _fake_judge(base_url, request, api_key=None):
+        temperatures.append(request.temperature)
+        return LLMResponse(text=judge_text, model="test")
+
+    with patch(
+        "aicorellator.analysis.voters.complete",
+        return_value=LLMResponse(text=voter_text, model="test"),
+    ), patch(
+        "aicorellator.analysis.judge.complete", side_effect=_fake_judge,
+    ):
+        evaluate_chains(store, [_candidate()], config, progress=False)
+        first = store.chains.get("chain:test")
+        evaluate_chains(store, [_candidate()], config, progress=False)
+        second = store.chains.get("chain:test")
+
+    assert first.verdict == second.verdict == "exploitable"
+    assert first.confidence == second.confidence == 0.75
+    assert first.validated_kind == second.validated_kind == "evidence"
+    assert first.validated is second.validated is True
+    assert first.validation_notes == second.validation_notes == []
+    # ... and the judge was handed the deterministic default both times.
+    assert temperatures == [0.0, 0.0]

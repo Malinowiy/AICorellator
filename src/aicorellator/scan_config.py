@@ -551,10 +551,16 @@ evaluation:
       timeout: 300
 
     # --- JUDGE (for mode=full) ---
+    # B.5: the judge is deterministic by default. Two runs over the same
+    # graph with the same prompt should write the same `verdict` to
+    # `chains.verdict` and `chain_groups.verdict`, and 0.0 is what makes
+    # that true. Raise it (0.6 is what this template used before B.5) for
+    # a judge that samples; a per-model `temperature` is an override and
+    # is honored exactly as written.
     - name: "qwen3.6-35b-a3b"
       role: "judge"
       reasoning_effort: "medium"
-      temperature: 0.6
+      temperature: 0.0
       max_tokens: 16000
       timeout: 1800
 

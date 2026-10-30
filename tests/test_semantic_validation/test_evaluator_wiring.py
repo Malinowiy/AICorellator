@@ -4,6 +4,11 @@
 adds two columns to `chains`, so three things have to hold: the
 evaluator writes them, `ChainsRepository` moves them, and a row written
 before A.4 — the column is NULL — still reads as something honest.
+
+B.9 adds the third level to the same wiring: a coherent chain is stored
+as `"evidence"` only when a voter cited one of its edges, so the
+coherent fixture here cites one and its no-citation twin is the level
+below.
 """
 
 from __future__ import annotations
@@ -31,16 +36,57 @@ def _config() -> EnsembleConfig:
     )
 
 
-def _response(chain_id: str) -> VoterResponse:
+def _response(
+    chain_id: str, evidence: list[str] | None = None
+) -> VoterResponse:
     return VoterResponse(
         chain_id=chain_id, model="fake", prompt_version="v1",
-        exploitable=True, confidence=0.9, reasoning="r", evidence=[],
+        exploitable=True, confidence=0.9, reasoning="r",
+        evidence=list(evidence or []),
     )
 
 
-def test_a_coherent_chain_is_stored_as_semantic(
+def test_a_coherent_chain_whose_voter_cites_an_edge_is_stored_as_evidence(
     store: GraphStore, graph: Graph
 ) -> None:
+    """The full path: coherent, and argued — the only `validated` row.
+
+    B.9: `"evidence"` is the level a chain reads when all three checks
+    passed, so this is what a validated row looks like after B.9. The
+    citation is the chain's own edge, which is the whole criterion.
+    """
+    entry = graph.node("entry", "entry_point")
+    agent = graph.node("agent", "agent")
+    sink = graph.node("sink", "sink")
+    e1 = graph.edge("e1", entry, agent)
+    graph.edge("e2", agent, sink)
+
+    candidates = store.query.find_chains()
+    assert len(candidates) == 1
+
+    with patch(
+        "aicorellator.analysis.voters.evaluate",
+        return_value=[_response(candidates[0].chain_id, evidence=[e1])],
+    ):
+        stats = evaluate_chains(store, candidates, _config(), progress=False)
+
+    chain = store.chains.get(candidates[0].chain_id)
+    assert stats["validated"] == 1
+    assert chain.validated is True
+    assert chain.validated_kind == "evidence"
+    assert chain.validation_notes == []
+
+
+def test_a_coherent_chain_no_voter_argued_is_not_validated(
+    store: GraphStore, graph: Graph
+) -> None:
+    """Same chain, a voter that cites nothing: `"semantic"`, not validated.
+
+    The A.4 case this file used to store as `"semantic"` and validated:
+    coherent, and nobody said why. B.9 keeps the level it reached —
+    existence and coherence passed, so the kind is `"semantic"` — and
+    turns `validated` off with the reason in the notes.
+    """
     entry = graph.node("entry", "entry_point")
     agent = graph.node("agent", "agent")
     sink = graph.node("sink", "sink")
@@ -57,10 +103,10 @@ def test_a_coherent_chain_is_stored_as_semantic(
         stats = evaluate_chains(store, candidates, _config(), progress=False)
 
     chain = store.chains.get(candidates[0].chain_id)
-    assert stats["validated"] == 1
-    assert chain.validated is True
+    assert stats["validated"] == 0
+    assert chain.validated is False
     assert chain.validated_kind == "semantic"
-    assert chain.validation_notes == []
+    assert chain.validation_notes == ["no voter cited an edge from the chain"]
 
 
 def test_a_disconnected_chain_is_stored_with_its_notes(
@@ -150,8 +196,20 @@ def test_a_row_written_before_a4_reads_as_existence(
     assert chain.validation_notes == []
 
 
-def test_the_column_only_accepts_the_two_levels(store: GraphStore) -> None:
-    """The CHECK is the schema's half of the two-value contract."""
+def test_the_column_only_accepts_the_known_levels(store: GraphStore) -> None:
+    """The CHECK is the schema's half of the level contract.
+
+    B.9 widens it to the third level and no further: `"evidence"` is a
+    row the schema accepts, and a level nobody defined is still
+    rejected.
+    """
+    store.chains.add(Chain(
+        id="chain:evidence", chain_nodes=[], chain_edges=[],
+        verdict="uncertain", prompt_version="v1",
+        validated=True, validated_kind="evidence",
+    ))
+    assert store.chains.get("chain:evidence").validated_kind == "evidence"
+
     with pytest.raises(sqlite3.IntegrityError):
         store.chains.add(Chain(
             id="chain:bad", chain_nodes=[], chain_edges=[],
