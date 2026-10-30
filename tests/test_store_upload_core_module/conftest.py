@@ -41,7 +41,9 @@ from aicorellator.store.context.upload.writer import find_upload_stores
 from aicorellator.store.families.fs import FsFamily
 
 #: The module the upload is declared in — the site's file, and the file
-#: whose body and top-level functions the writer reads.
+#: whose body the writer reads: its own calls are the reach's start set
+#: (B.3b-user_upload-core-module-followup-2) and its own writes are
+#: claimed directly.
 MODULE = "app/app.py"
 
 #: A helper module the upload's module calls into.

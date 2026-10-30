@@ -5,8 +5,18 @@ branch. A module-level entry point (`entry_kind` `"streamlit"` or
 `"cli"`, what `entry_points.EntryPointStage` records for a Streamlit and
 for a CLI entry, and no `handler` for either) has no handler to BFS from,
 and "which writes does this upload reach" is answered from the module
-itself: its top-level functions, everything the call graph reaches from
-them, and the writes directly in the module body.
+itself: the names the module **body** calls, everything the call graph
+reaches from them, and the writes directly in the module body.
+
+B.3b-user_upload-core-module-followup-2 narrows that: the start set is
+the module body's own calls, not the module's list of top-level
+functions. A function the body never calls does not run when the module
+is imported, so it is not the upload's scope — a FastAPI route handler
+defined beside a Streamlit upload is the route's store and not the
+upload's (`test_the_uncalled_function_is_not_in_the_reach` and the
+siblings below). A function the body **does** call is still a start, and
+everything under it comes along, so the delegated shape (`run()` →
+`load_and_save()` → write) is unchanged.
 
 The marker is the node's `entry_kind` and not the `<module>` sentinel
 (B.3b-user_upload-core-module-followup): the sentinel is on the
@@ -17,8 +27,8 @@ carries.
 The numbers come from `confidence`'s constants and not from the brief's
 prose, the way `test_store_upload_core/test_writer.py` pins §8's. A write
 in the module body is `combine_signals(UPLOAD_WRITER_BASE_MODULE, [equal
-literal, same module])`; a write in one of the module's top-level
-functions is the same combination with `UPLOAD_WRITER_BASE`, because the
+literal, same module])`; a write in a function the module body **calls**
+is the same combination with `UPLOAD_WRITER_BASE`, because the
 context-in-body signal needs a handler's body and a module-level site has
 none. (The brief's prose adds the signals — 0.4 + 0.6 + 0.2 — and states
 0.896; the rule is `combine_signals`, and `test_number_pinning.py`
@@ -65,24 +75,45 @@ MODULE_BODY = (
     "    fh.write('x')\n"
 )
 
-# W2 — a top-level function writes it.
+# W2 — a top-level function writes it, and the module body calls it.
 TOP_LEVEL = (
     "def save(payload):\n"
     f'    with open("{LITERAL}", "wb") as fh:\n'
     "        fh.write(payload)\n"
+    "\n"
+    'save(b"x")\n'
 )
 
-# W3 — a nested function inside a top-level function writes it.
+# W3 — a nested function inside a top-level function writes it, and the
+# module body calls the enclosing function.
 NESTED = (
     "def handle(payload):\n"
     "    def save():\n"
     f'        with open("{LITERAL}", "wb") as fh:\n'
     "            fh.write(payload)\n"
     "    save()\n"
+    "\n"
+    'handle(b"x")\n'
 )
 
-# W5 — two top-level functions, two stores.
+# W5 — two top-level functions, two stores, and the body calls both.
 TWO_FUNCTIONS = (
+    "def save_report(payload):\n"
+    f'    with open("{LITERAL}", "wb") as fh:\n'
+    "        fh.write(payload)\n"
+    "\n"
+    "def save_temp(payload):\n"
+    f'    with open("{TEMP}", "wb") as fh:\n'
+    "        fh.write(payload)\n"
+    "\n"
+    'save_report(b"x")\n'
+    'save_temp(b"x")\n'
+)
+
+# The same two functions with **no** call in the module body: neither is
+# a start, so neither write is in the reach
+# (B.3b-user_upload-core-module-followup-2's false positive, inverted).
+TWO_FUNCTIONS_UNCALLED = (
     "def save_report(payload):\n"
     f'    with open("{LITERAL}", "wb") as fh:\n'
     "        fh.write(payload)\n"
@@ -92,7 +123,7 @@ TWO_FUNCTIONS = (
     "        fh.write(payload)\n"
 )
 
-# The module body and a top-level function, both writing the same store.
+# The module body and a called top-level function, both writing one store.
 BODY_AND_FUNCTION = (
     f'with open("{LITERAL}", "wb") as fh:\n'
     "    fh.write('x')\n"
@@ -100,6 +131,8 @@ BODY_AND_FUNCTION = (
     "def save(payload):\n"
     f'    with open("{LITERAL}", "wb") as fh:\n'
     "        fh.write(payload)\n"
+    "\n"
+    'save(b"x")\n'
 )
 
 # A module whose only write is inside a class method: no top-level
@@ -117,12 +150,43 @@ NO_WRITE = (
     "    return payload\n"
 )
 
-# The module calls a helper that lives in another file.
+# A CLI module: the `if __name__ == "__main__":` block is a statement in
+# the module body, so the call inside it is a module-body call. `unused`
+# is defined beside it and never called.
+CLI_MODULE = (
+    "def save_report(payload):\n"
+    f'    with open("{LITERAL}", "wb") as fh:\n'
+    "        fh.write(payload)\n"
+    "\n"
+    "def unused(payload):\n"
+    f'    with open("{TEMP}", "wb") as fh:\n'
+    "        fh.write(payload)\n"
+    "\n"
+    'if __name__ == "__main__":\n'
+    '    save_report(b"x")\n'
+)
+
+# A Streamlit app whose module body calls a helper that lives in another
+# file (`SAVER`).
 CALLER = (
     "def handle(payload):\n"
     "    save(payload)\n"
+    "\n"
+    'handle(b"x")\n'
 )
 SAVER = (
+    "def save(payload):\n"
+    f'    with open("{LITERAL}", "wb") as fh:\n'
+    "        fh.write(payload)\n"
+)
+
+# A module body whose only call is an attribute call: `run` is not an
+# `ast.Name` target, so it is not a start name at all.
+ATTRIBUTE_CALL = (
+    "import helper\n"
+    "\n"
+    "helper.run()\n"
+    "\n"
     "def save(payload):\n"
     f'    with open("{LITERAL}", "wb") as fh:\n'
     "        fh.write(payload)\n"
@@ -238,11 +302,11 @@ def test_the_module_level_edge_is_structural_and_makes_no_flow_claim(
 
 
 # ============================================================
-# W2 — a top-level function writes the upload
+# W2 — a function the module body calls writes the upload
 # ============================================================
 
-def test_a_write_in_a_top_level_function_is_an_edge(project) -> None:
-    """W2 — the module's function is a handler-shaped scope."""
+def test_a_write_in_a_called_function_is_an_edge(project) -> None:
+    """W2 — a function the module body calls is a handler-shaped scope."""
     built, edges = run_module(
         project, {MODULE: TOP_LEVEL}, call_graph={"save": set()},
     )
@@ -253,13 +317,13 @@ def test_a_write_in_a_top_level_function_is_an_edge(project) -> None:
     ]
 
 
-def test_the_top_level_function_edge_carries_the_function_base(
+def test_the_called_function_edge_carries_the_function_base(
     project,
 ) -> None:
     """W2 — base 0.5, and still no context-in-body.
 
     The write is in a function, but not in the entry point's own body:
-    the entry point's body is the module, and the write is the top-level
+    the entry point's body is the module, and the write is the called
     function's. So the base is the function's and the 0.2 does not fire.
     """
     _, edges = run_module(
@@ -272,25 +336,51 @@ def test_the_top_level_function_edge_carries_the_function_base(
     assert round(edges[0].identity_confidence, 4) == 0.84
 
 
-def test_every_top_level_function_is_a_start(project) -> None:
-    """Each top-level function is a BFS start, so the call graph is not needed.
+def test_the_uncalled_function_is_not_in_the_reach(project) -> None:
+    """M2 — a top-level function the module body does not call writes nothing.
 
-    The module-level reachable set is the top-level functions **plus**
-    everything they reach, so a write in one of them is claimed without
-    any call edge to record. The call graph matters for what is *under* a
-    top-level function (a helper in another file, a nested function's
-    name), which the tests around this one cover.
+    This is B.3b-user_upload-core-module-followup-2's whole point, and the
+    false positive it removes: the start set is the module body's own
+    calls and **not** the module's list of top-level functions, so a
+    function that is defined beside the upload and never called from the
+    module body contributes no store. A Streamlit upload and a FastAPI
+    route handler in one file is the shape this fixes — the route's store
+    is the route's (`tests/test_store_upload_streamlit/`).
+
+    A call graph is passed and it holds both functions, which is not what
+    makes this empty: nothing starts the BFS, because the module body
+    never names either of them. It is not the "no helper" case either —
+    a helper under a function the body does not call is just as
+    unreachable (`test_a_write_in_a_helper_the_module_does_not_reach`).
     """
     _, edges = run_module(
-        project, {MODULE: TWO_FUNCTIONS}, stores=(LITERAL, TEMP),
+        project, {MODULE: TWO_FUNCTIONS_UNCALLED}, stores=(LITERAL, TEMP),
+        call_graph={"save_report": set(), "save_temp": set()},
     )
 
-    assert [round(edge.identity_confidence, 4) for edge in edges] == [
-        0.84, 0.84,
-    ]
+    assert edges == []
+
+
+def test_a_write_in_a_helper_the_module_does_not_reach(project) -> None:
+    """The start set is the whole of it, not one hop of it.
+
+    `handle` calls `save` and `save` writes, so the call graph has the
+    edge — but the module body never calls `handle`, so no BFS starts and
+    the helper's store is not reached either. The rule is "what the
+    module body reaches", and a function it does not call is not a step
+    on that path. The same fixture with a module-body `handle(...)` call
+    is an edge (`test_a_write_in_a_function_the_module_calls_is_an_edge`).
+    """
+    _, edges = run_module(
+        project, {MODULE: NO_WRITE, HELPER: SAVER},
+        call_graph={"handle": {"save"}, "save": set()},
+    )
+
+    assert edges == []
+
 
 # ============================================================
-# W3 — a nested function inside a top-level function
+# W3 — a nested function inside a called function
 # ============================================================
 
 def test_a_write_in_a_nested_function_is_at_the_function_base(
@@ -298,11 +388,12 @@ def test_a_write_in_a_nested_function_is_at_the_function_base(
 ) -> None:
     """W3 — reached through the enclosing function's name.
 
-    The nested function is not a top-level one, so it is not a BFS start
-    of its own: it is reachable because `handle` calls it, which is what
-    the call graph records. Its write is inside a function and not in the
-    module body, so the base is the function's 0.5 — and that it differs
-    from the module body's 0.808 is the point of the assertion.
+    The nested function is not a module-body call, so it is not a BFS
+    start of its own: it is reachable because `handle` calls it, which is
+    what the call graph records, and the module body calls `handle`. Its
+    write is inside a function and not in the module body, so the base is
+    the function's 0.5 — and that it differs from the module body's 0.808
+    is the point of the assertion.
     """
     _, edges = run_module(
         project, {MODULE: NESTED},
@@ -314,16 +405,16 @@ def test_a_write_in_a_nested_function_is_at_the_function_base(
 
 
 def test_a_nested_write_is_the_enclosing_functions_write(project) -> None:
-    """A nested write is claimed even when no call is recorded.
+    """M4 — a nested write is claimed even when no call is recorded.
 
     The reachability check is `any` over the write's **whole** enclosing
     chain, not over its innermost name: a write inside `save` inside
-    `handle` is inside `handle`'s body, and `handle` is a top-level
-    function and therefore a BFS start. So the edge is there without a
-    call edge in the graph — the same rule the function-level branch has
-    (a nested function inside the handler is reached through the handler's
-    name, `test_store_upload_core/test_writer.py`), stated here so the
-    module branch's version of it is a decision on the record.
+    `handle` is inside `handle`'s body, and `handle` is what the module
+    body calls — so the edge is there without a call edge from `handle`
+    to `save`. The same rule the function-level branch has (a nested
+    function inside the handler is reached through the handler's name,
+    `test_store_upload_core/test_writer.py`), stated here so the module
+    branch's version of it is a decision on the record.
     """
     _, edges = run_module(
         project, {MODULE: NESTED},
@@ -331,6 +422,45 @@ def test_a_nested_write_is_the_enclosing_functions_write(project) -> None:
     )
 
     assert [round(edge.identity_confidence, 4) for edge in edges] == [0.84]
+
+
+def test_a_nested_write_in_an_uncalled_function_is_not_in_the_reach(
+    project,
+) -> None:
+    """M5 — the enclosing function is what the nested write rides on.
+
+    `handle` nests `save`, and `save` writes — but the module body never
+    calls `handle`, so neither name is in the reach and the nested write
+    is not either. This is the nested half of M2: a nested function is
+    reached **through** its enclosing top-level function, so it inherits
+    that function's absence from the reach as much as its presence.
+    """
+    uncalled = NESTED.replace('handle(b"x")\n', "")
+    _, edges = run_module(
+        project, {MODULE: uncalled},
+        call_graph={"handle": {"save"}, "save": set()},
+    )
+
+    assert edges == []
+
+
+def test_a_module_body_that_only_makes_attribute_calls_has_no_start(
+    project,
+) -> None:
+    """`helper.run()` names nothing the call graph holds.
+
+    `_module_body_calls` records `ast.Name` call targets only — the call
+    graph's own rule (ADR-0016, `entry_points._collect_call_names`) — so a
+    module body whose calls are all attribute calls starts no BFS and
+    reaches nothing but its own writes. `save` is defined and writes, and
+    it is not reached: a stated false negative, the same one
+    `entry_to_sink` has.
+    """
+    _, edges = run_module(
+        project, {MODULE: ATTRIBUTE_CALL}, call_graph={"save": set()},
+    )
+
+    assert edges == []
 
 
 # ============================================================
@@ -347,7 +477,7 @@ def test_no_write_in_the_module_is_no_edge(project) -> None:
 def test_a_write_in_a_class_method_is_not_a_module_level_write(
     project,
 ) -> None:
-    """W4 — a method is not a top-level function, so it is not a start.
+    """W4 — a method is not a module-body call, so it is not a start.
 
     A false negative, stated: `self.`-calls are not in the call graph
     (ADR-0016) and a module-level entry point has no `self` to call a
@@ -375,11 +505,14 @@ def test_a_write_in_another_module_is_no_edge_when_nothing_calls_it(
 def test_a_write_in_a_function_the_module_calls_is_an_edge(project) -> None:
     """The call graph is scan-wide: the helper's file needs no signal.
 
-    The module-level analogue of the core step's "a helper in another
-    file" case — no same-module signal, so `1 − 0.5 × 0.4 = 0.8`.
+    `CALLER` is a module body that calls `handle`, which calls `save` in
+    another file (`SAVER`), so the BFS from the body's own call name
+    crosses the file boundary — the module-level analogue of the core
+    step's "a helper in another file" case, and no same-module signal, so
+    `1 − 0.5 × 0.4 = 0.8`.
     """
     _, edges = run_module(
-        project, {MODULE: NO_WRITE, HELPER: SAVER},
+        project, {MODULE: CALLER, HELPER: SAVER},
         call_graph={"handle": {"save"}, "save": set()},
     )
 
@@ -387,7 +520,7 @@ def test_a_write_in_a_function_the_module_calls_is_an_edge(project) -> None:
 
 
 def test_a_module_body_write_in_another_file_is_not_claimed(project) -> None:
-    """The branch claims the entry point's **own** body, and no other.
+    """The branch claims the entry point's **own** file, and no other.
 
     A module body elsewhere runs at that file's import, and this writer
     has no import graph to say the module runs it. Deliberately narrower
@@ -405,14 +538,17 @@ def test_a_module_body_write_in_another_file_is_not_claimed(project) -> None:
 # W5 — several writes, one module
 # ============================================================
 
-def test_two_top_level_functions_writing_two_stores_are_two_edges(
+def test_two_called_functions_writing_two_stores_are_two_edges(
     project,
 ) -> None:
     """W5 — one edge per store, in the writes' source order.
 
     Two functions of one module writing two literals are two `writes_to`
     edges from one entry point: the store is the edge's target and there
-    are two stores (§1), so nothing merges them.
+    are two stores (§1), so nothing merges them. Both functions are
+    module-body calls, which is what puts them in the reach
+    (`test_the_uncalled_function_is_not_in_the_reach` is the same fixture
+    without them).
     """
     built, edges = run_module(
         project, {MODULE: TWO_FUNCTIONS}, stores=(LITERAL, TEMP),
@@ -433,7 +569,7 @@ def test_a_module_body_write_and_a_function_write_of_one_store_are_one_edge(
 ) -> None:
     """One `writes_to` per (entry point, store), the stronger kept.
 
-    The module body's 0.808 and the top-level function's 0.84 are two
+    The module body's 0.808 and the called function's 0.84 are two
     claims about one link; the edge is one row, and the stronger claim is
     what it carries — the resolver's `_keep_edge` rule, reached from a
     second branch.
@@ -517,6 +653,30 @@ def test_the_module_level_branch_is_the_entry_kind(project) -> None:
         project, {MODULE: MODULE_BODY}, entry=nameless,
     )
     assert no_edges == []
+
+
+def test_a_cli_entry_gets_the_same_reach_as_a_streamlit_one(project) -> None:
+    """U3 — `entry_kind` `"cli"` is the same rule, not a second one.
+
+    The branch selects on the closed set, so the reach is the module
+    body's for both members: a CLI script is a file that runs, and the
+    functions it calls are the functions the `if __name__ == "__main__":`
+    block names. `CLI_MODULE` holds one it calls (`save_report`) and one
+    it does not (`unused`), and only the first store is claimed — the
+    same narrowing, on the other member of the set.
+    """
+    built, edges = run_module(
+        project, {MODULE: CLI_MODULE}, stores=(LITERAL, TEMP),
+        entry=module_entry(entry_kind="cli", path=MODULE),
+        call_graph={"save_report": set(), "unused": set()},
+    )
+
+    stores = {
+        store.id: store.attributes["identity_hint"]
+        for store in built.nodes("store")
+    }
+    assert [stores[edge.target_id] for edge in edges] == [LITERAL]
+    assert [round(edge.identity_confidence, 4) for edge in edges] == [0.84]
 
 
 def test_a_real_streamlit_node_gets_the_module_body_edge(project) -> None:
@@ -633,13 +793,18 @@ def test_a_module_level_site_and_a_function_level_site_are_two_writers(
     """One run, both branches: the module's writes and the handler's.
 
     The module-level site reaches the module body's store at the module
-    base **and** the write inside the module's top-level function at the
-    function base; the function-level site reaches that same write at its
-    own 0.872, because the write is in the handler's own body. Two entry
-    points, so the temp store carries two claims — one edge per site —
-    and the module body's store carries one. Overlap is expected and not
-    merged: the edges differ in their source, and a reader of the temp
-    file would see both writers.
+    base **and** the write inside the function the module body calls at
+    the function base; the function-level site reaches that same write at
+    its own 0.872, because the write is in the handler's own body. Two
+    entry points, so the temp store carries two claims — one edge per
+    site — and the module body's store carries one. Overlap is expected
+    and not merged: the edges differ in their source, and a reader of the
+    temp file would see both writers.
+
+    The `handle(...)` line at the bottom is what puts the handler's write
+    in the module-level site's reach: without it the module body names no
+    function and the module-level site claims only its own write
+    (`test_the_uncalled_function_is_not_in_the_reach`).
     """
     source = (
         f'with open("{LITERAL}", "wb") as fh:\n'
@@ -648,6 +813,8 @@ def test_a_module_level_site_and_a_function_level_site_are_two_writers(
         "def handle(payload):\n"
         f'    with open("{TEMP}", "wb") as fh:\n'
         "        fh.write(payload)\n"
+        "\n"
+        'handle(b"x")\n'
     )
     built = project(files={MODULE: source})
     module_node = module_entry()

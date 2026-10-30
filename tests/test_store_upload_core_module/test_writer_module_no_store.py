@@ -19,11 +19,15 @@ PARAMETER_WRITE = (
     "    fh.write('x')\n"
 )
 
-# A top-level function writing a store named by a parameter.
+# A function the module body calls, writing a store named by a
+# parameter: the write is in the reach, and §5 is the only reason it
+# earns no edge.
 FUNCTION_PARAMETER_WRITE = (
     "def save(payload, path):\n"
     '    with open(path, "wb") as fh:\n'
     "        fh.write(payload)\n"
+    "\n"
+    'save(b"x", None)\n'
 )
 
 # A module body that writes an f-string: the family reports the prefix
@@ -57,12 +61,20 @@ def test_a_module_body_write_naming_no_store_is_no_edge(project) -> None:
 
 
 def test_a_function_write_naming_no_store_is_no_edge(project) -> None:
-    """The same, through the module's top-level function."""
-    _, edges = run_module(
+    """The same, through a function the module body calls.
+
+    The write **is** in the reach — the body calls `save` — so §5 is the
+    only reason it earns no edge: the family reported the site with
+    `identity_hint=None`, and a store needs a literal.
+    """
+    built, edges = run_module(
         project, {MODULE: FUNCTION_PARAMETER_WRITE},
         call_graph={"save": set()},
     )
 
+    assert [write.identity_hint for write in fs_writes(
+        built, {MODULE: FUNCTION_PARAMETER_WRITE}
+    )] == [None]
     assert edges == []
 
 

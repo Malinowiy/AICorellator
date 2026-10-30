@@ -9,18 +9,24 @@ have. The chain this module walks:
     UploadSite (entry_point, file, line)
       → the entry point node, which is one of two shapes:
           - `entry_kind` `"cli"` or `"streamlit"` → a **module-level**
-            entry point: the module's top-level functions, BFS from each
+            entry point: the names the module body calls, BFS from each
             of them, and the writes directly in the module body
           - a `handler`, a function name → BFS from it over the call graph
       → the `fs` write sites in that reachable set
       → the `store` node each write names (family `fs` + its literal)
       → writes_to: entry_point → store, at the signals' confidence
 
-The module-level branch is B.3b-user_upload-core-module's, and it is the
-answer to "which writes does an upload at module level reach": the
-module's own writes — its top-level functions and its body — and not
-every sink in the target (`entry_to_sink`'s CLI fallback, deliberately
-**not** copied: an upload writer's scope is its module). Its selector is
+The module-level branch is B.3b-user_upload-core-module's, narrowed by
+B.3b-user_upload-core-module-followup-2: the answer to "which writes
+does an upload at module level reach" is what the module **body** itself
+reaches — the names its body calls, BFS from each of them, plus its
+body's own writes — and not every sink in the target
+(`entry_to_sink`'s CLI fallback, deliberately **not** copied: an upload
+writer's scope is its module). The list of top-level functions is not a
+start set: a top-level function the module body never calls is not in
+the reach, which is the false positive that step fixed — a Streamlit
+upload and a FastAPI route often share a file, and the route handler's
+store is the route handler's, not the Streamlit upload's. Its selector is
 `entry_kind`, and not the `entry_points` stage's `<module>` sentinel
 (B.3b-user_upload-core-module-followup): the sentinel is on the
 `EntryPoint` **record**, and the **node** a site carries has no `handler`
@@ -66,8 +72,8 @@ all three.
 
 A module-level entry point's writes are the other two numbers, and they
 are the same shape: a write in the module body is `1 − 0.6 × 0.4 × 0.8 =
-0.808` (base 0.4, no context-in-body) and a write in one of the module's
-top-level functions is `1 − 0.5 × 0.4 × 0.8 = 0.84` (base 0.5, no
+0.808` (base 0.4, no context-in-body) and a write in a function the
+module body calls is `1 − 0.5 × 0.4 × 0.8 = 0.84` (base 0.5, no
 context-in-body either). A function is a stronger signal than a module
 body; `tests/test_store_upload_core_module/` pins both from the
 constants.
@@ -86,16 +92,29 @@ What this module does not do, and why:
     that rule and the reason the branch exists: the module body *is* its
     body, so the write is claimed — at the weaker 0.4 base.
   - **A module body write in another file is not the module-level entry
-    point's.** The branch claims the module's **own** file: its top-level
-    functions (through the call graph, which is scan-wide) and its own
-    body. A module body elsewhere runs at that file's import, which this
-    writer has no import graph to establish, so claiming it would be the
-    CLI fallback's breadth by another route. A stated false negative.
+    point's.** The branch claims the module's **own** file: the functions
+    its body calls (through the call graph, which is scan-wide) and its
+    own body. A module body elsewhere runs at that file's import, which
+    this writer has no import graph to establish, so claiming it would be
+    the CLI fallback's breadth by another route. A stated false negative.
+  - **A top-level function the module body does not call is not in the
+    reach** (B.3b-user_upload-core-module-followup-2). The start set is
+    `_module_body_calls`, so a route handler — or any other function
+    defined beside the upload and never called from the module body —
+    contributes nothing. This is the step's whole point: the module is a
+    file, and the functions in it are not the module body's.
+  - **A module body that only makes attribute calls has no start name.**
+    `_module_body_calls` records `ast.Name` call targets only, the
+    call graph's own rule (ADR-0016): `helper.run()` names no function in
+    the graph, so a module body whose calls are all attribute calls
+    reaches nothing but its own writes. The same false negative
+    `entry_to_sink` has, stated rather than hidden.
   - **A module the caller did not parse yields no edge.** The
-    module-level branch reads the module's top-level functions and its
-    body from the AST, and a module that is not in `modules` is skipped
-    rather than guessed — the same rule as the enclosing-function check
-    below, and a false negative.
+    module-level branch reads the module body's own calls — and the
+    function ranges a write's enclosing chain is built from — out of the
+    AST, and a module that is not in `modules` is skipped rather than
+    guessed — the same rule as the enclosing-function check below, and a
+    false negative.
   - **`self.`-calls are not in the call graph** (ADR-0016: only
     `ast.Name` calls are recorded), so a method handler that calls
     `self._save()` does not reach the write `_save` makes. A false
@@ -120,7 +139,7 @@ handler → node map would be a second way to say one thing.
 from __future__ import annotations
 
 import ast
-from typing import TYPE_CHECKING, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator, Mapping
 
 from ...confidence import (
     CODE_CONTEXT_SAME_MODULE,
@@ -146,8 +165,8 @@ UPLOAD_WRITER_BASE = 0.5
 #: because the claim is weaker: a function is a discrete unit that runs
 #: when it is called, and a module body is a file that runs when it is
 #: imported — the same write, one step further from "the upload handler
-#: does this". A write inside one of the module's top-level functions
-#: keeps `UPLOAD_WRITER_BASE`, because that write *is* in a function.
+#: does this". A write inside a function the module body calls keeps
+#: `UPLOAD_WRITER_BASE`, because that write *is* in a function.
 UPLOAD_WRITER_BASE_MODULE = 0.4
 
 #: The context-in-body signal: the write is directly in the handler's
@@ -171,6 +190,19 @@ FS_FAMILY = "fs"
 #: entry carries `entry_kind="mcp"`, which is a framework-detected server
 #: and not an upload at module level.
 MODULE_LEVEL_ENTRY_KINDS = frozenset({"cli", "streamlit"})
+
+#: The statements that open a scope of their own. A module-level entry
+#: point's start names are the calls **outside** every one of them
+#: (`_module_body_calls`): a definition is not a call site, and the body
+#: of a definition is not the module body. `Lambda` is here for the same
+#: reason a nested `def` is — a call inside one belongs to whoever calls
+#: the lambda, not to the module body.
+_SCOPE_NODES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.Lambda,
+)
 
 #: §9's default threshold (`graph.query.DEFAULT_STORE_CONFIDENCE_THRESHOLD`,
 #: `config.yaml`'s `store_confidence_threshold`), restated rather than
@@ -201,7 +233,7 @@ def find_upload_stores(
     A site whose entry point carries a function-name `handler` reaches
     that function's writes; a site whose entry point is module-level
     (`_module_level`: `entry_kind` `"cli"` or `"streamlit"`) reaches the
-    module's **own** writes — its top-level functions, and its body
+    module's **own** writes — the functions its body calls, and its body
     (`_reach`, `_is_module_body`). Nothing else: the CLI fallback's
     "every sink in the target" is not this rule.
 
@@ -211,7 +243,7 @@ def find_upload_stores(
     nodes the resolver built into the delta; the caller (the stage) has
     both. `modules` is read for two things per site: the enclosing
     function of a write (either branch) and the module-level branch's
-    top-level functions.
+    own start names.
 
     `confidence_threshold` is a floor. §9 puts the threshold on the
     *join* (`find_chain_groups`) and the resolver states the same, so
@@ -263,9 +295,13 @@ def _reach(
     """`(the names the site reaches, is it module-level)`, or None.
 
     A function-level site reaches its handler and everything the call
-    graph puts under it. A module-level site (`_module_level`) reaches its
-    module's top-level functions and everything under **them**; its own
-    body is not a name and is handled per write (`_is_module_body`).
+    graph puts under it. A module-level site (`_module_level`) reaches
+    what its **module body** reaches: the names the body calls
+    (`_module_body_calls`), BFS from each of them. A top-level function
+    the body never calls is not in the set — the module is a file, and
+    the functions in it are not its body
+    (B.3b-user_upload-core-module-followup-2). The site's own body is not
+    a name and is handled per write (`_is_module_body`).
 
     `None` means the site earns no edge at all: no `handler` attribute to
     start from, or a module-level site whose own module the caller did
@@ -273,14 +309,14 @@ def _reach(
     answer the enclosing-function check gives for a write it cannot
     place. The reachable set is a set of names and only membership is
     read from it, so the writer's output does not depend on its
-    iteration order.
+    iteration order; the start names are a set for the same reason.
     """
     if _module_level(site.entry_point):
         module = _module_for(modules, site.file_path)
         if module is None:
             return None
         reachable: set[str] = set()
-        for name in _top_level_functions(module):
+        for name in _module_body_calls(module):
             reachable |= _reachable(name, call_graph)
         return reachable, True
 
@@ -357,21 +393,51 @@ def _module_level(entry_point: Node) -> bool:
     return entry_point.attributes.get("entry_kind") in MODULE_LEVEL_ENTRY_KINDS
 
 
-def _top_level_functions(module: ast.Module) -> list[str]:
-    """The names of a module's top-level functions, in source order.
+def _module_body_calls(module: ast.Module) -> set[str]:
+    """The names a module's **body** calls — its start set.
 
-    Top level means `module.body`, so a nested function is not one of
-    them: it is reached through its enclosing function's name, which is
-    how the call graph records the call (`_reachable`). A class body is
-    not a top-level function either, so a method is not a BFS start —
-    `self.`-calls are not in the call graph and a module-level entry point
-    has no `self` to call it through.
+    B.3b-user_upload-core-module-followup-2: a module-level entry point's
+    reach starts from the calls the module body itself makes, not from
+    the list of top-level functions the module defines. A function the
+    body never calls does not run when the module is imported, so it is
+    not the upload's scope; a function the body **does** call is, and
+    everything the call graph puts under it comes along (`_reachable`).
+
+    A call counts when its target is an `ast.Name` (`save(...)`) and the
+    call is not inside a function, a class or a lambda — the body is the
+    module's, and a nested definition's body is not (`_outside_scopes`).
+    An attribute call (`helper.run()`) is not a name the call graph holds
+    (ADR-0016, `entry_points._collect_call_names`), so it is not a start;
+    a module body whose calls are all attribute calls therefore reaches
+    nothing but its own writes. Both halves are the same
+    under-approximation `entry_to_sink` makes, stated rather than hidden.
+
+    Returns a set: it is a start set, and only membership is ever read
+    from it, so the BFS order cannot leak into the writer's output.
     """
-    return [
-        node.name
-        for node in module.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    calls: set[str] = set()
+    for statement in module.body:
+        if isinstance(statement, _SCOPE_NODES):
+            continue
+        for node in _outside_scopes(statement):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                calls.add(node.func.id)
+    return calls
+
+
+def _outside_scopes(node: ast.AST) -> Iterator[ast.AST]:
+    """`node` and its descendants, stopping at every nested scope.
+
+    `ast.walk` would descend into a `def` a module body nests inside an
+    `if` block, and a call there is the nested function's, not the module
+    body's. A scope node is where the walk stops: it is not descended
+    into, and — being a definition and not a call — it is not a start
+    name either (`_module_body_calls`).
+    """
+    yield node
+    for child in ast.iter_child_nodes(node):
+        if not isinstance(child, _SCOPE_NODES):
+            yield from _outside_scopes(child)
 
 
 def _named_store(

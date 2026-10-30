@@ -4,7 +4,7 @@
 (`combine_signals`), so the numbers are products and not sums:
 
     module body         1 − (1 − 0.4) × (1 − 0.6) × (1 − 0.2) = 0.808
-    top-level function  1 − (1 − 0.5) × (1 − 0.6) × (1 − 0.2) = 0.84
+    called function     1 − (1 − 0.5) × (1 − 0.6) × (1 − 0.2) = 0.84
 
 The brief's prose gives `0.4 + 0.6 + 0.2 = 0.896` for the first one, which
 adds the signals and is not what `combine_signals` computes. The rule is
@@ -13,6 +13,10 @@ constants and not against the prose — the way
 `tests/test_store_upload_core/test_writer.py` pins §8's 0.872 / 0.84 /
 0.8. The `0.896` assertion below is there so the discrepancy is a
 recorded decision and not a silent one.
+
+The second row is a function the **module body calls**
+(B.3b-user_upload-core-module-followup-2): a top-level function the body
+never calls is not in the reach at all, so it has no number to state.
 
 The other numbers the branch produces follow from the same constants: a
 write in another file's function loses the same-module signal and is
@@ -45,6 +49,8 @@ TOP_LEVEL = (
     "def save(payload):\n"
     '    with open("/uploads/report.txt", "wb") as fh:\n'
     "        fh.write(payload)\n"
+    "\n"
+    'save(b"x")\n'
 )
 
 
@@ -56,7 +62,7 @@ def _module_body_link() -> float:
 
 
 def _function_link() -> float:
-    """A top-level function's link: base 0.5, equal literal, same module."""
+    """A called function's link: base 0.5, equal literal, same module."""
     return combine_signals(
         UPLOAD_WRITER_BASE, [LITERAL_EQUAL, CODE_CONTEXT_SAME_MODULE]
     )
@@ -69,7 +75,7 @@ def test_the_module_body_number_is_the_product_of_its_signals() -> None:
     assert round(_module_body_link(), 4) != 0.896
 
 
-def test_the_top_level_function_number_is_the_product_of_its_signals() -> None:
+def test_the_called_function_number_is_the_product_of_its_signals() -> None:
     """P1 — `1 − 0.5 × 0.4 × 0.8 = 0.84`, from the constants."""
     assert round(_function_link(), 4) == 0.84
 
@@ -117,7 +123,9 @@ def test_the_weakest_module_link_is_still_above_the_default_threshold(
     """
     _, edges = run_module(
         project,
-        {MODULE: "def handle(payload):\n    save(payload)\n",
+        {MODULE: "def handle(payload):\n    save(payload)\n"
+                 "\n"
+                 'handle(b"x")\n',
          "app/storage.py": TOP_LEVEL},
         call_graph={"handle": {"save"}, "save": set()},
     )

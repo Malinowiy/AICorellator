@@ -17,13 +17,16 @@ is the *handler's* body, and a Streamlit entry has no handler.
 
 E2 is the second fixture, a file that holds a Streamlit upload **and** a
 FastAPI route: the route is a function-level site and its own store is
-0.872, unchanged by the Streamlit entry beside it. What that fixture also
-shows, and is pinned rather than hidden, is that the module-level site
-reaches the module's top-level functions — a route handler is one — so
-the Streamlit entry claims the route's store at 0.84 as well. That is the
-module-level branch's rule as it stands ("the module's top-level
-functions are its scope"), not a Streamlit reading; it is flagged in the
-step's report.
+0.872, and the Streamlit entry beside it earns exactly one edge — its own
+module body's write. What that fixture used to show, and no longer does,
+is the module-level site reaching the route handler's store: the
+module-level reach starts from the names the module **body** calls, and a
+`@app.post` decorator registers a function without calling it
+(B.3b-user_upload-core-module-followup-2). The old pin
+(`test_the_module_level_site_reaches_the_routes_function`) is now the
+negative — `..._does_not_reach_...` — and the positive beside it is
+`test_the_module_level_site_reaches_a_helper_it_calls`, whose module body
+does call the function that writes.
 
 What is **not** pinned as working is the attribution: `user_upload` is a
 read *role*, and 1.3a has no `open(...)` source type, so a scan of this
@@ -60,6 +63,7 @@ from aicorellator.store.context.upload.writer import (
 MAIN = "app/streamlit_app.py"
 LITERAL = "/uploads/report.txt"
 API_LITERAL = "/uploads/api_report.txt"
+HELPER_LITERAL = "/uploads/archive.txt"
 
 #: The `st.file_uploader` call's line — `EntryPointStage`'s `line_start`,
 #: and therefore `UploadSite.line` — in both fixtures below.
@@ -110,6 +114,28 @@ async def upload_report(file: UploadFile):
     with open("/uploads/api_report.txt", "wb") as fh:
         fh.write(await file.read())
     return {"status": "ok"}
+''',
+}
+
+#: A Streamlit app whose module body **calls** a helper that writes: the
+#: positive beside `ROUTE_FILES`' negative (X2). The module body's own
+#: `st.file_uploader` call is an attribute call and names nothing, so the
+#: helper is the only start name the body has.
+CALLED_HELPER_FILES: dict[str, str] = {
+    MAIN: '''\
+"""A Streamlit app that hands the upload to a helper."""
+import streamlit as st
+
+uploaded = st.file_uploader("Upload a report")
+
+
+def save_report(payload):
+    """Persist the upload."""
+    with open("/uploads/archive.txt", "wb") as fh:
+        fh.write(payload)
+
+
+save_report(uploaded)
 ''',
 }
 
@@ -353,24 +379,50 @@ def test_the_route_in_the_same_file_is_a_function_level_site(
     ) == 0.872
 
 
-def test_the_module_level_site_reaches_the_routes_function(
+def test_the_module_level_site_does_not_reach_the_routes_function(
     route_delta,
 ) -> None:
-    """The module-level branch's rule, seen on a real file.
+    """M2/E2 — the route handler is not the Streamlit upload's writer.
 
-    A module-level entry point reaches the module's **top-level
-    functions** and everything under them (`writer._reach`), and a route
-    handler in the same file is one of them: so the Streamlit entry also
-    claims the route's store, at the function base 0.5 — 0.84, the same
-    combination as the route's own edge without the body signal. This is
-    the writer's rule as it stands and not a Streamlit reading; it is
-    pinned here so the behaviour is a decision on the record rather than a
-    surprise in a report.
+    The module-level branch's start set is the names the module **body**
+    calls (`writer._module_body_calls`,
+    B.3b-user_upload-core-module-followup-2), and the body of this file
+    never calls `upload_report` — a `@app.post` decorator registers a
+    function, it does not call it. So the route handler's store is not in
+    the Streamlit site's reach, and the Streamlit upload earns no edge
+    into it.
+
+    This is the negative the followup step exists for. Before it, the
+    start set was the module's list of top-level functions, and the route
+    handler — being one — handed the Streamlit upload a claim on the
+    route's store at 0.84. That was a false positive and it is pinned as
+    gone here rather than deleted, so a regression re-opens this test.
     """
     entry = _entry(route_delta, f"Streamlit:{MAIN}:file_uploader")
     store = _store(route_delta, API_LITERAL)
 
     found = _writes(route_delta, entry.id, store.id)
+
+    assert found == []
+
+
+def test_the_module_level_site_reaches_a_helper_it_calls(
+    tmp_path: Path,
+) -> None:
+    """X2 — a function the module body calls **is** in the reach.
+
+    The positive beside the negative above, on a real file: the module
+    body ends with `save_report(uploaded)`, `save_report` writes
+    `/uploads/archive.txt`, and the Streamlit site claims that store at
+    the function base 0.5 — `1 − (1 − 0.5)(1 − 0.6)(1 − 0.8) = 0.84`. The
+    narrowing is about *which* functions the body reaches, not about
+    whether the writer follows a call at all.
+    """
+    delta = _scan(tmp_path, CALLED_HELPER_FILES)
+
+    entry = _entry(delta, f"Streamlit:{MAIN}:file_uploader")
+    store = _store(delta, HELPER_LITERAL)
+    found = _writes(delta, entry.id, store.id)
 
     assert len(found) == 1
     assert round(found[0].identity_confidence, 4) == 0.84
@@ -382,10 +434,17 @@ def test_the_module_level_site_reaches_the_routes_function(
     ) == 0.84
 
 
-def test_the_mixed_file_has_two_writers_and_three_upload_edges(
+def test_the_mixed_file_has_two_writers_and_two_upload_edges(
     route_delta,
 ) -> None:
-    """The whole shape of the mixed file, in one place."""
+    """The whole shape of the mixed file, in one place.
+
+    Two writers and two edges, not three: the Streamlit site's reach is
+    the module body's — its own write of `/uploads/report.txt` at 0.808 —
+    and the route handler's store belongs to the route handler alone, at
+    0.872. The Streamlit entry is not silently credited with the route's
+    store (B.3b-user_upload-core-module-followup-2).
+    """
     entries = {
         node.id: node.name for node in _of_kind(route_delta, "entry_point")
     }
@@ -402,7 +461,6 @@ def test_the_mixed_file_has_two_writers_and_three_upload_edges(
 
     assert upload == [
         ("POST /upload", API_LITERAL, 0.872),
-        (f"Streamlit:{MAIN}:file_uploader", API_LITERAL, 0.84),
         (f"Streamlit:{MAIN}:file_uploader", LITERAL, 0.808),
     ]
 
