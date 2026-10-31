@@ -1,6 +1,8 @@
 [project]
 name = "aicorellator"
-version = "0.0.1"
+# Single-sourced from aicorellator.__version__ (see [tool.setuptools.dynamic]
+# below) so the package metadata and the runtime attribute cannot drift.
+dynamic = ["version"]
 description = "AI Infrastructure Attack Surface Correlator"
 readme = "README.md"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
@@ -26,6 +28,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "aicorellator.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
