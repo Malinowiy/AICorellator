@@ -8,8 +8,16 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",
-    "python-dotenv>=1.0",
     "pyyaml>=6.0"
+]
+
+[project.optional-dependencies]
+# Tests import `pytest` and `requests`; `requests` is already a runtime
+# dependency. The framework libraries the detectors *parse* (langchain,
+# mcp, flask, ...) appear only inside fixture sample projects and are not
+# imported by the suite, so they are not needed to run it.
+test = [
+    "pytest>=7",
 ]
 
 [build-system]

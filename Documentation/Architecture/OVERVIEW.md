@@ -148,8 +148,21 @@ flowchart LR
         EP["entry_points.py<br/>routes, CLI, Streamlit"]
         FD["framework_detectors/<br/>LangChain, LangGraph, FastMCP, MCP SDK"]
         FLOW["flow/<br/>per-edge, per-node decisions"]
-        LLMC["llm_classifier/<br/>(new) Layer 1b"]
-        SC["scan_config.py<br/>(new) ScanConfig dataclass"]
+        NORM["normalizer_stages/<br/>~20 stages, one aspect each"]
+        LLMC["llm_classifier/<br/>Layer 1b"]
+    end
+
+    subgraph ROOT["top-level modules"]
+        direction TB
+        SC["scan_config.py<br/>ScanConfig dataclass"]
+        PAT["patterns.py, patterns_registry.py"]
+    end
+
+    subgraph STORE["store/ — storage model (ADR-0021)"]
+        direction TB
+        FAM["families/<br/>fs, s3, db"]
+        CTX["context/<br/>upload detectors: FastAPI,<br/>Streamlit, Django, Flask"]
+        FB["llm_fallback/"]
     end
 
     subgraph GRAPH["graph/ — SQLite graph store"]
@@ -173,7 +186,7 @@ flowchart LR
         BUNDLE["bundle.py, markdown.py"]
     end
 
-    subgraph RUNTIME["runtime/ — (new) Layer 2"]
+    subgraph RUNTIME["runtime/ — Layer 2 (roadmap, no directory yet)"]
         direction TB
         RTPY["python/<br/>sys.settrace, frame mapper, stitcher"]
     end
@@ -186,19 +199,29 @@ flowchart LR
 
     INGEST --> PARSING
     PARSING --> GRAPH
+    PARSING --> STORE
+    STORE --> GRAPH
     GRAPH --> ANALYSIS
     GRAPH --> REPORTING
     RUNTIME -.->|enriches| GRAPH
 ```
 
 **Note on `parsing/`:** it is not `parsing/python/` + `parsing/go/`. It
-is a flat set of analysis modules, because each module is "an aspect
-of analysis", not "support for a language". Python `ast` inside
-`capability_extractor` is an implementation detail of that module, not
-a language layer. TSA is the only component that knows about multiple
-languages. Runtime is the only layer where language is the primary
-unit — and that is honest, because runtime analysis *is*
+is a set of analysis modules grouped by aspect — `framework_detectors/`,
+`normalizer_stages/`, `flow/`, `llm_classifier/` — because each module is
+"an aspect of analysis", not "support for a language". Python `ast`
+inside `capability_extractor` is an implementation detail of that
+module, not a language layer. TSA is the only component that knows about
+multiple languages. Runtime is the only layer where language is the
+primary unit — and that is honest, because runtime analysis *is*
 language-specific.
+
+**Note on `store/`:** the storage model (ADR-0021) is its own
+subpackage. `families/` holds the technology families (`fs`, `s3`,
+`db`), `context/upload/` holds the four upload detectors (FastAPI,
+Streamlit, Django, Flask), and `llm_fallback/` holds the store-identity
+fallback. It is a producer of `store` nodes and `writes_to` /
+`reads_from` edges, so it feeds the graph alongside `parsing/`.
 
 ---
 
