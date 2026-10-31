@@ -18,18 +18,20 @@ about what happens to a detector node *after* the detector:
   - **X1 — B.4a.** `GuardrailEdgeStage` reads `delta.nodes` after the
     merge, so a detector `guardrail` node is a `guardrail` node to it.
 
-**The X1 fixtures pin what B.4a does, and it is not what the register
-shape suggests.** B.4a's evidence is a call site inside a component's own
-body or a literal `@guardrail` decorator (ADR-0019 §1), and its
-`COMPONENT_KINDS` is `{"agent", "tool"}` — a `mcp_server` is deliberately
-not one of them (`guardrail_edges.py`: a server is the container the
-tools live in, not a body a guardrail is called from). So X1a — the
-realistic FastMCP shape, a middleware subclass registered on a server in
-its own file — is a **node and no edge**: registering the middleware does
-not put its name in any component's body, and the server is not a
-component B.4a links to. The edge that does fire is X1a′: a component
-whose own body constructs the middleware. B.4a is unchanged by this step;
-the fixtures say what it does.
+**The X1 fixtures pin what B.4a does for a middleware.** B.4a's evidence
+is a call site inside a component's own body, a literal `@guardrail`
+decorator, or — since ADR-0019 rev 1 §1 — a *registration* on the
+`mcp_server` the middleware runs on: `mcp.add_middleware(...)` in the
+server's own module, or a `@mcp.middleware(...)` decorator on a factory
+that returns the class. So X1a — the realistic FastMCP shape, a
+middleware subclass registered on a server in its own file — is now a
+**node and an edge**, pointing at the `mcp_server` (`resolved_via`
+`"registration"`); X1a-unregistered, the same file with the registration
+removed, is the node-and-no-edge shape B.4-gap-5 pinned, because
+co-location is still not evidence. X1a′ is unchanged: a component whose
+own body constructs the middleware, through the call graph. The
+detector is node-only in all of them — the edges are B.4a's.
+
 
 The pipeline order is the real one: the detector runs, the merge places
 its nodes in the delta, and B.4a runs last on the merged node set.
@@ -81,8 +83,10 @@ class AuditMiddleware(Middleware):
 """
 
 # X1a: the shape the SDK documents — the middleware is registered on the
-# server, in the server's own file, and no component body names it. The
-# detector node exists; B.4a's evidence does not.
+# server, in the server's own file, and no component body names it. Since
+# ADR-0019 rev 1 that registration *is* B.4a's evidence for the
+# `mcp_server` target, so the node has an edge; X1a-unregistered (below)
+# is the same file without the registration, which still has none.
 REGISTERED_SOURCE = """\
 from fastmcp import FastMCP
 from fastmcp.server.middleware import Middleware
@@ -96,6 +100,27 @@ class AuditMiddleware(Middleware):
 
 
 mcp.add_middleware(AuditMiddleware())
+
+
+@mcp.tool
+def search(query):
+    return query
+"""
+
+# X1a-unregistered: the same server file with the `add_middleware(...)`
+# line gone. The middleware class and the server are still co-located,
+# and co-location is still not evidence (ADR-0019 rev 1 §1) — a node and
+# no edge, which is the negative B.4-gap-5 pinned before the revision.
+UNREGISTERED_SOURCE = """\
+from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
+
+mcp = FastMCP("audit")
+
+
+class AuditMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        return await call_next(context)
 
 
 @mcp.tool
@@ -336,19 +361,24 @@ def test_a_detector_guardrail_replaces_the_tsa_node_of_the_same_name(
 # X1 — B.4a on a detector node
 # ============================================================
 
-def test_a_middleware_registered_on_a_server_is_a_node_and_no_edge(
+def test_a_middleware_registered_on_a_server_is_a_node_and_an_edge(
     project,
 ) -> None:
-    """X1a: the SDK's own shape, and what B.4a makes of it.
+    """X1a: the SDK's own shape, and what B.4a makes of it since rev 1.
 
     The middleware is registered on the server (`mcp.add_middleware(...)`)
     in the server's own file, so a `mcp_server` node and the detector's
-    `guardrail` node are in the same delta — and B.4a still emits nothing:
-    its `COMPONENT_KINDS` is `{"agent", "tool"}` and a `mcp_server` is
-    deliberately not one of them, and registering the middleware puts its
-    name in no component's body, which is where B.4a's call-site evidence
-    lives (ADR-0019 §1). The node is in the graph either way; this
-    fixture pins the "no edge" half, and X1a′ pins the half that fires.
+    `guardrail` node are in the same delta — and ADR-0019 rev 1 §1 makes
+    that registration the `mcp_server` target's evidence: the middleware
+    runs on the server, and the server is the container its tools live
+    in. Registering the middleware puts its name in no component's body,
+    which is why the call-site form cannot see it and this form exists:
+    the evidence is the server's module AST, not the name-keyed call
+    graph (ADR-0016).
+
+    `resolved_via` names the form (`registration`); X1a-unregistered is
+    the same shape with the registration removed, and it keeps the node
+    and no edge.
     """
     p, nodes = _scan(
         project,
@@ -362,7 +392,39 @@ def test_a_middleware_registered_on_a_server_is_a_node_and_no_edge(
     assert [n.name for n in nodes] == ["AuditMiddleware"]
     guardrail = p.named("AuditMiddleware")
     assert guardrail.kind == "guardrail"
+    server = p.named("audit")
+    assert server.kind == "mcp_server"
+    guards = p.edges("guards")
+    assert [(e.source_id, e.target_id) for e in guards] == [
+        (guardrail.id, server.id),
+    ]
+    assert guards[0].attributes["resolved_via"] == "registration"
+    assert guards[0].flow_kind == "structural"
+
+
+def test_a_middleware_in_a_server_file_with_no_registration_has_no_edge(
+    project,
+) -> None:
+    """X1a-unregistered: co-location is still not evidence (rev 1 §1).
+
+    The middleware class and the server share the file, and nothing
+    registers the middleware on the server. That is the negative
+    B.4-gap-5 pinned: a node and no edge. Rev 1 widens what counts as
+    evidence; it does not make a file layout one.
+    """
+    p, nodes = _scan(
+        project,
+        source=UNREGISTERED_SOURCE,
+        symbols=[
+            _symbol("AuditMiddleware", "class", SERVER_FILE,
+                    UNREGISTERED_SOURCE),
+        ],
+    )
+
+    assert [n.name for n in nodes] == ["AuditMiddleware"]
+    assert p.named("AuditMiddleware").kind == "guardrail"
     assert [n.name for n in p.nodes("mcp_server")] == ["audit"]
+    assert "add_middleware" not in UNREGISTERED_SOURCE
     assert p.edges("guards") == []
 
 

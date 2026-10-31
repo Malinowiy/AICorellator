@@ -592,17 +592,30 @@ def _guardrails_for_chain(
     *source*. One dict per guardrail, in edge-id order (the repository
     orders by id), so the payload is deterministic across runs.
 
-    Empty when the chain has no guardrail near it — the default state of
-    every path, and not a weakness. `[]`, never `None`: the prompt's
-    `guardrails` key is always present (ADR-0019 §2).
+    One level of indirection is read as well, and only one (ADR-0019
+    rev 1 §3): a `tool` whose `parent_server` names an `mcp_server` node
+    also sees the guardrails of that server's `guards` edge. The
+    middleware protects the server, the server contains the tool, the
+    chain passes through the tool — so a payload that omitted the
+    middleware would hide a guardrail the graph holds. The graph gains
+    no edge for this; the read simply follows the tool's `parent_server`
+    attribute to the server node and includes it in the targets. A
+    server's own server is not followed.
+
+    The dedupe is by guardrail id, so a guardrail on both the tool and
+    its server is one entry. Empty when the chain has no guardrail near
+    it — the default state of every path, and not a weakness. `[]`,
+    never `None`: the prompt's `guardrails` key is always present
+    (ADR-0019 §2).
     """
     wanted = set(node_ids)
     if not wanted:
         return []
+    targets = wanted | _parent_server_ids(store, wanted)
     found: list[dict] = []
     seen: set[str] = set()
     for edge in store.edges.list(kind="guards", status="active"):
-        if edge.target_id not in wanted or edge.source_id in seen:
+        if edge.target_id not in targets or edge.source_id in seen:
             continue
         node = store.nodes.get(edge.source_id)
         if node is None or node.kind != "guardrail":
@@ -619,6 +632,37 @@ def _guardrails_for_chain(
         seen.add(edge.source_id)
         found.append(_guardrail_to_dict(node))
     return found
+
+
+def _parent_server_ids(store: GraphStore, node_ids: Iterable[str]) -> set[str]:
+    """The `mcp_server` node ids named by a tool's `parent_server`.
+
+    ADR-0019 rev 1 §3: the one level of indirection the linear-chain
+    read adds. Only a `tool` node is asked — a server is not a container
+    of a server — and only a string `parent_server` is read, because the
+    attribute is the framework detector's (`fastmcp.py`,
+    `mcp_python.py`) and a node that does not carry it names no server.
+    The server node is found by *name*, the same key `parent_server`
+    holds and `mcp_server_nodes` names its node with.
+
+    Empty when no node names a server, so the caller's set is unchanged
+    and the read is exactly B.4b's.
+    """
+    names = set()
+    for node_id in node_ids:
+        node = store.nodes.get(node_id)
+        if node is None or node.kind != "tool":
+            continue
+        parent = node.attributes.get("parent_server")
+        if isinstance(parent, str) and parent:
+            names.add(parent)
+    if not names:
+        return set()
+    return {
+        node.id
+        for node in store.nodes.list(kind="mcp_server")
+        if node.name in names
+    }
 
 
 def _guardrail_to_dict(node: Node) -> dict:

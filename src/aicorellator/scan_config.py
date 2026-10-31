@@ -579,6 +579,13 @@ evaluation:
       timeout: 300
 
     # --- SOLO ---
+    # One voter with reasoning. The qwen3 35B+ model is reasoning-heavy:
+    # `max_tokens: 16000` can truncate a long chain's JSON (2 of 40
+    # dvmcp chains hit this on 2026-10-31 — bad JSON). Raise `max_tokens`
+    # (32k) or lower `reasoning_effort` to "low" if you see truncated
+    # responses.
+
+
     - name: "qwen3.6-35b-a3b"
       role: "solo"
       reasoning_effort: "medium"

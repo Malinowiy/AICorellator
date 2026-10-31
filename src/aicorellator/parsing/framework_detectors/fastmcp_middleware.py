@@ -26,19 +26,10 @@ Edges: none. This detector emits nodes and only nodes; B.4a
 source-level evidence supports.
 
 **What B.4a does with this node — unchanged here, pinned by the tests.**
-The registration the SDK documents, `mcp.add_middleware(AuditMiddleware())`
-at module level, is not evidence: the call sits in no component's body,
-and B.4a's evidence is a call site inside a component's body or a literal
-`@guardrail` decorator (ADR-0019 §1 — co-location is deliberately not
-evidence). `COMPONENT_KINDS` in `guardrail_edges.py` is
-`{"agent", "tool"}`: a `mcp_server` is deliberately not one of them (a
-server is the container the tools live in, not a body a guardrail is
-called from). So a `Middleware` subclass in a file with a `mcp_server`
-node — the realistic FastMCP shape — yields a **node and no edge**. The
-edge fires when a component's own body calls the middleware by bare name,
-i.e. a `tool` whose body constructs it (`resolved_via="call_graph"`).
-Both shapes are pinned in
-`tests/test_normalizer_stages/test_fastmcp_middleware_detector.py`.
+What B.4a does with this node — the registered form, after
+B.4-gap-5-followup»: registered middleware → guards edge guardrail → 
+mcp_server (resolved_via="registration"); unregistered → node and no 
+edge; COMPONENT_KINDS is now {"agent", "tool", "mcp_server"}.
 
 Per-file contract (ADR-0011): the detector reads one file and returns
 nodes from that file alone.

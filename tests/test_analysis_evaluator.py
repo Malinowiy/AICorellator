@@ -409,6 +409,10 @@ GUARDS_EDGE = "edge:" + "9" * 16
 # capability: the same `guards` edge shape, a different provenance.
 DETECTOR_GUARDRAIL_ID = "guardrail:" + "d" * 16
 DETECTOR_GUARDS_EDGE = "edge:" + "d" * 16
+# A tool's server, and the `guards` edge on it (ADR-0019 rev 1 §3): the
+# middleware runs on the server, and the chain passes through the tool.
+SERVER_ID = "mcp_server:" + "7" * 16
+SERVER_GUARDS_EDGE = "edge:" + "7" * 16
 
 
 def _build_unguarded_chain(store) -> None:
@@ -424,6 +428,41 @@ def _build_unguarded_chain(store) -> None:
         id="e:1", source_id="n:1", target_id="n:2", kind="has_access_to",
         host_id="localhost", flow_kind="data",
         data_flow_confirmed="parameter_match",
+    ))
+
+
+def _build_tool_chain(store) -> None:
+    """`n:1 → n:2`, where `n:2` is a tool inside the `audit` server.
+
+    The shape ADR-0019 rev 1 §3 is about: the middleware's `guards` edge
+    points at the `mcp_server` node (`SERVER_ID`), and the chain passes
+    through the tool that names it in `parent_server` — a framework
+    detector's attribute (`fastmcp.py`, `mcp_python.py`).
+    """
+    store.nodes.upsert(Node(
+        id="n:1", kind="entry_point", name="POST /search",
+        host_id="localhost",
+    ))
+    store.nodes.upsert(Node(
+        id="n:2", kind="tool", name="search", host_id="localhost",
+        attributes={"parent_server": "audit", "source_file": "app/x.py"},
+    ))
+    store.edges.upsert(Edge(
+        id="e:1", source_id="n:1", target_id="n:2", kind="uses_tool",
+        host_id="localhost", flow_kind="control",
+    ))
+    store.nodes.upsert(Node(
+        id=SERVER_ID, kind="mcp_server", name="audit", host_id="localhost",
+        attributes={"server_name": "audit"},
+    ))
+    store.nodes.upsert(Node(
+        id=GUARDRAIL_ID, kind="guardrail", name="AuditMiddleware",
+        host_id="localhost",
+        observed_by=["ast", "framework:fastmcp_middleware"],
+    ))
+    store.edges.upsert(Edge(
+        id=SERVER_GUARDS_EDGE, source_id=GUARDRAIL_ID, target_id=SERVER_ID,
+        kind="guards", host_id="localhost", flow_kind="structural",
     ))
 
 
@@ -660,6 +699,83 @@ def test_guardrails_come_from_the_guards_edge_direction(store) -> None:
         kind="guards", host_id="localhost", flow_kind="structural",
     ))
     assert _guardrails_for_chain(store, [GUARDRAIL_ID]) == []
+
+
+def test_a_tool_with_a_parent_server_sees_the_servers_guardrail(store) -> None:
+    """ADR-0019 rev 1 §3: the read follows `parent_server` one level.
+
+    A chain through a tool inside an MCP server should see the middleware
+    registered on that server — otherwise the payload hides a guardrail
+    the graph holds. The graph gains no edge for this: the same `guards`
+    edge is read, from the server the tool names.
+    """
+    _build_tool_chain(store)
+
+    found = _guardrails_for_chain(store, ["n:2"])
+
+    assert [g["id"] for g in found] == [GUARDRAIL_ID]
+    assert found[0]["name"] == "AuditMiddleware"
+    assert found[0]["observed_by"] == [
+        "ast", "framework:fastmcp_middleware",
+    ]
+    # The same edge, read from the server itself — the tool is the one
+    # that needed the indirection.
+    assert [g["id"] for g in _guardrails_for_chain(store, [SERVER_ID])] == [
+        GUARDRAIL_ID,
+    ]
+
+
+def test_a_tools_own_guardrail_and_its_servers_are_one_entry(store) -> None:
+    """The dedupe is by guardrail id (ADR-0019 rev 1 §3).
+
+    A guardrail the tool calls itself and a guardrail registered on the
+    server it lives in are two edges, and when they are the *same*
+    guardrail the payload must name it once — the model weighs a
+    guardrail, not an edge count.
+    """
+    _build_tool_chain(store)
+    store.edges.upsert(Edge(
+        id=GUARDS_EDGE, source_id=GUARDRAIL_ID, target_id="n:2",
+        kind="guards", host_id="localhost", flow_kind="structural",
+    ))
+
+    found = _guardrails_for_chain(store, ["n:2"])
+
+    assert [g["id"] for g in found] == [GUARDRAIL_ID]
+
+
+def test_the_payload_for_a_tool_level_chain_carries_the_servers_guardrail(
+    store,
+) -> None:
+    """The whole point of §3 rev 1: the voters see the middleware.
+
+    `entry_point → tool`, the tool inside the `audit` server, and the
+    middleware on the server. Before rev 1 the section was empty — the
+    chain's nodes are the edge's target only for the tool's own
+    guardrails, and this guardrail's edge points at the server.
+    """
+    _build_tool_chain(store)
+    captured: dict = {}
+
+    def _fake_evaluate(**kwargs):
+        captured.update(kwargs)
+        return [_voter_response("fake-voter")]
+
+    with patch(
+        "aicorellator.analysis.voters.evaluate", side_effect=_fake_evaluate,
+    ):
+        stats = evaluate_chains(
+            store, [_candidate()], _config(), progress=False,
+        )
+
+    assert stats["evaluated"] == 1
+    assert [g["name"] for g in captured["guardrails"]] == ["AuditMiddleware"]
+    # The guardrail is not a chain node and its edge is not a chain edge:
+    # the section is a reference beside the chain, not a step of it.
+    assert GUARDRAIL_ID not in captured["chain_nodes"]
+    assert SERVER_GUARDS_EDGE not in [
+        e["id"] for e in captured["chain_edges"]
+    ]
 
 
 def test_the_guardrails_helper_is_total(store) -> None:

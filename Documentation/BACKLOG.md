@@ -104,11 +104,21 @@ Plus two coverage gaps that Phase B has not yet closed:
 - The docstring is **rewritten, not extended**: the confidence rationale stays (it is the chain-node exploitability estimate), the `observed_by` rationale is new.
 - **Tests:** +1 (`_add_guardrail` generalised to take `observed_by`, so each test's provenance is an assertion and not an accident of inheritance). 2327 passed.
 
+### 2026-10-31 — B.4-gap-5-followup: `mcp_server` as a guards target (ADR-0019 rev 1)
+
+- `guardrail_edges.py`: `COMPONENT_KINDS` is `{"agent", "tool", "mcp_server"}`, and the `mcp_server` target has **its own evidence rule** — the middleware's *registration*, read from the server's own module (`ctx.module_for`), never the call graph (`mcp.add_middleware(...)` is an `ast.Attribute` call, and `entry_points._collect_call_names` records `ast.Name` targets only, ADR-0016). Two shapes: the `add_middleware(<name>...)` call site (first positional argument; `AuditMiddleware()` and `AuditMiddleware` both count) and the `@<var>.middleware(...)` decorator on a factory that returns the guardrail class — the one-level body read is what ties the factory to the class the detector named the node after. `resolved_via` is `"registration"` for both. Co-location is still not evidence: a `Middleware` subclass in a server's file with no registration is a node and no edge.
+- The server's file is read from the node's `source_file` when a framework detector set it (`fastmcp.py`, `mcp_python.py`) and otherwise from the manifest file whose `classify_file` yields the node's `server_name` — the rule `McpServerNodeStage` made the node with, not a second copy of the path convention. `_definition_for` answers None for a `mcp_server`.
+- `evaluator.py`: `_guardrails_for_chain` also reads a `guards` edge whose target is the `mcp_server` node a chain tool's `parent_server` names (ADR-0019 rev 1 §3) — one level, deduped by guardrail id, no new edge, no new payload key. `_guardrails_for_group` is unchanged (it delegates), and `find_chains` still does not traverse `guards`.
+- **Tests:** +10 (guardrail_edges E5 / E6 / E6-negative / N4 / N5 / N6, `test_fastmcp_middleware_detector.py` X1a flipped to node-and-edge plus a new X1a-unregistered, evaluator +3). 2345 passed, 0 errors, 0 warnings.
+- **Corpus regression (eight corpora, `run_scan.py` per corpus, the deterministic policy the 2026-10-30 table was taken under — `llm_classifier` / `llm_fallback` off):** every node/edge total reproduced the recorded baseline **exactly** (finbot 372/212, NMB 29/30, dvmcp 49/56, mcploitable 79/47, ai-goat 11/8, Playground 44/6, damn 12/8, self 34/3), and **`guards = 0` on all eight** — no `guardrail` node exists on any of them, so the registration rule cannot fire. The set's one guardrail node (Playground's `load_config`, B.4-gap-1's capability false positive) has no registration and no `mcp_server` node beside it.
+- **Spot check under the workspace's own policy (`llm_classifier.mode: auto`, so LLM-classified `guardrail` nodes exist):** `dvmcp` → 62 nodes / 56 edges, **6 `guardrail` nodes, 3 `mcp_server` nodes, `guards = 0`**. Guardrail nodes beside servers are not enough — a registration has to name one.
+- What the corpora can and cannot show: none contains a FastMCP middleware registration, so they can only show that the rule does **not** fire where it should not (the check the brief asked for); the positive shape is pinned by the tests.
+
 ### 2026-10-31 — ADR-0019 revision 1: `mcp_server` as a guards target, and its payload read
 
 - The decision, not the code. `COMPONENT_KINDS` grows to `{"agent", "tool", "mcp_server"}` with its own evidence rule (an `add_middleware(...)` call site on the server object, or a `@mcp.middleware(...)` decorator on the factory, read from the server's own module AST), and `_guardrails_for_chain` also reads a `guards` edge on a `tool`'s `parent_server`.
 - Co-location stays non-evidence; ADR-0007's table is not contradicted — a `mcp_server` is the container its tools live in, and a middleware that runs on the server protects every tool it exposes.
-- The code lands as **B.4-gap-5-followup** when the four corpora return; the corpus regression is deferred, not skipped.
+- The code landed as **B.4-gap-5-followup** (2026-10-31); the eight-corpus regression ran with the code and `guards = 0` on all eight.
 
 ### 2026-10-30 — Delete `aicorellator_dump.txt`
 
@@ -716,7 +726,7 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 #### B.4-gap — No producer of `guardrail` nodes after ADR-0016
 
 **Priority:** **High** (blocks B.4 end-to-end)
-**Status:** Done (2026-10-30, 6c4b028 + 33e0ac6 + c3a0b67 + f3f37ef + dd2bfa5 — the five steps B.4-gap-1..5). The `mcp_server` guards target of ADR-0019 rev 1 is code-pending (B.4-gap-5-followup).
+**Status:** Done (2026-10-30, 6c4b028 + 33e0ac6 + c3a0b67 + f3f37ef + dd2bfa5 — the five steps B.4-gap-1..5). The `mcp_server` guards target of ADR-0019 rev 1 landed as B.4-gap-5-followup (2026-10-31).
 **Found in:** B.4a implementation (2026-10-29).
 **Rationale:** B.4a emits `guards` edges from `guardrail` nodes. On all four corpora `guards = 0` — there are no `guardrail` nodes for it to link. ADR-0016 decision 7 removed the class-A name heuristics (path rule, class suffix). `classify_class` / `classify_method` return `sink` / `agent` / `llm_endpoint` / `tool` and nothing else. The LLM classifier (D.2) can, via its `DetectionResult` merged at stage 10 (which is why `guardrail_edges` runs after the merge), but on the four corpora no source produces them.
 **Consequence:** B.4a and B.4b are correct and ready; with B.4-gap-1..5 the producer exists, so guardrail influence fires where a `guardrail` node does — verified on synthetic targets, not yet on the four corpora.
@@ -729,9 +739,9 @@ The chain-group half of ADR-0010, plus ADR-0012 prioritization and ADR-0009 leth
 #### B.4-gap-5-followup — `mcp_server` as a guards target (ADR-0019 rev 1)
 
 **Priority:** **Medium**
-**Status:** ADR done (ADR-0019 rev 1, 8aa0b07, 2026-10-31), **code pending corpora**. The ADR is committed; the code brief is separate.
-**Rationale:** `guardrail_edges.py::COMPONENT_KINDS` is `{"agent", "tool"}`, and the name-keyed call graph (ADR-0016) does not record `mcp.add_middleware(...)`, so a middleware registered on a server is a `guardrail` node and no `guards` edge (pinned by B.4-gap-5). ADR-0019 rev 1 grows `COMPONENT_KINDS` with `mcp_server` and gives it its own evidence rule (an `add_middleware(...)` call site on the server object, or a `@mcp.middleware(...)` decorator), and `_guardrails_for_chain` also reads a `guards` edge on a `tool`'s `parent_server`.
-**Blocker:** the four-corpus regression (corpora not on this machine); the code brief is separate from the ADR.
+**Status:** Done (2026-10-31 — code + eight-corpus regression; see "Recently done").
+**Rationale:** `guardrail_edges.py::COMPONENT_KINDS` was `{"agent", "tool"}`, and the name-keyed call graph (ADR-0016) does not record `mcp.add_middleware(...)`, so a middleware registered on a server was a `guardrail` node and no `guards` edge (pinned by B.4-gap-5). ADR-0019 rev 1 grows `COMPONENT_KINDS` with `mcp_server` and gives it its own evidence rule (an `add_middleware(...)` call site on the server object, or a `@mcp.middleware(...)` decorator), and `_guardrails_for_chain` also reads a `guards` edge on a `tool`'s `parent_server`.
+**Blocker:** none — the eight-corpus regression passed with the code (`guards = 0` on all eight, every node/edge total unchanged; `dvmcp` under the workspace's classifier-on policy: 6 `guardrail` nodes, 3 `mcp_server` nodes, `guards = 0`).
 **References:** ADR-0019 (rev 1); B.4-gap-5.
 
 #### B.4b-followup — `SOLO` step 4 and user prompt questions
@@ -1171,6 +1181,30 @@ ADR-0018 rev 2) and stored the chain with `validated=False` for provenance. This
 is the mechanism working as designed — the verdict is the LLM's, the validation
 is Layer 3's, and `validated=False` is the honest answer. Not a finding; recorded
 so a future corpus run does not "fix" it.
+
+### F11 — `guards > 0` on AI-Vulnerabilities-Playground with `llm_classifier.mode: auto` (D.2 precision, expected)
+
+With the LLM classifier on (`llm_classifier.mode: auto`), Playground yields 194
+nodes and 102 LLM-classified `guardrail` nodes; 10 `guards` edges appear, all
+`resolved_via="call_graph"` targeting `tool` nodes (the pre-existing B.4a rule),
+and **0 target an `mcp_server`** — so B.4-gap-5-followup's new `mcp_server`
+evidence rule is not the cause. The 10 edges are D.2 precision: the classifier
+labels a tool-call as a guardrail, and B.4a links it. Same class as F3 /
+`FP_TP_analysis.md` #2 (test-file / classifier false positives), visible only
+when the classifier is on. **Not a fix in B.4-gap-5-followup**; D.2 precision
+is a separate item.
+
+### B.4-gap-5-followup-2 — `add_middleware` receiver resolution (optional)
+
+The `mcp_server` evidence rule matches `add_middleware(<guardrail>)` by the call's
+attribute name and its first positional argument; it does not resolve the
+**receiver** to the server's own variable. The real instance on
+`AI-Vulnerabilities-Playground` — `app.add_middleware(CORSMiddleware, …)`
+(`apps/api/main.py:205`) — does not fire: `CORSMiddleware` is not a node, and no
+`mcp_server` node lives in that module. Resolving the receiver (the server's own
+`mcp` / `app` variable) would be a follow-up, and a decision (it is a second
+resolution rule, not a fix). Documented in `_has_registration_call`'s docstring.
+**Not a defect of B.4-gap-5-followup.**
 
 ---
 

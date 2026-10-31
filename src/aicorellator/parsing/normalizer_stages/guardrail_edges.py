@@ -4,7 +4,7 @@ Run order: 21 of 21 (see `normalizer_stages.STAGES`) — last.
 
 ADR-0019 §1 (emission). A `guards` edge is emitted only when the
 source-level evidence establishes a protection relationship, and B.4a
-recognizes two forms of it:
+recognizes three forms of it:
 
   - **Call site.** The component's body calls a function that is a
     `guardrail` node, recorded in the name-keyed call graph
@@ -17,6 +17,21 @@ recognizes two forms of it:
     segment is the literal name `guardrail` — `@guardrail`,
     `@guardrail(...)`, `@mcp.guardrail(...)` — the same literal-name
     rule by which `framework_detectors/langchain.py` recognizes `@tool`.
+  - **Registration** (`mcp_server`, ADR-0019 rev 1 §1). A `mcp_server`
+    is a `guards` target in its own right, and its evidence is the
+    middleware's registration on the server: an `add_middleware(...)`
+    call site on the server object, or a `@<var>.middleware(...)`
+    decorator on a factory that hands the guardrail class back. The read
+    is the *server's own module* (`ctx.module_for`), never the call
+    graph: `mcp.add_middleware(...)` is an `ast.Attribute` call, and
+    `entry_points._collect_call_names` records `ast.Name` targets only
+    (ADR-0016). The edge means "this middleware runs on this server",
+    which is why a server is a component here at all — a middleware on a
+    server protects every tool the server exposes (ADR-0007's table
+    names what a guardrail protects in the graph's vocabulary; a
+    `mcp_server` is the container those tools live in). The middleware
+    reaches a tool-level chain through the payload read (§3 rev 1,
+    `evaluator._guardrails_for_chain`), not through traversal.
 
 Three forms are deliberately **not** evidence, and emit nothing
 (ADR-0019 §1, "not emitted, deliberately"):
@@ -25,7 +40,9 @@ Three forms are deliberately **not** evidence, and emit nothing
     file layout, not a defensive relationship. Emitting on co-location
     would be a false claim about protection — and, once B.4b weighs
     guardrails into confidence, a false claim that lowers confidence on
-    chains no guardrail protects.
+    chains no guardrail protects. For the `mcp_server` target this is
+    the pinned shape: a `Middleware` subclass in a server's file with no
+    registration call is a node and no edge.
   - **A `guardrail` node with no call site and no decorator.** One wired
     in by dependency injection, a framework hook or an import side
     effect is a false negative, and it is accepted: a false negative
@@ -90,10 +107,33 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # The kinds a guardrail protects. ADR-0007 describes the edge as
 # "guardrail → component" and its table says "Guardrail protects an
 # agent or a tool"; a `mcp_server` is the container those tools live in,
-# not a body a guardrail is called from.
-COMPONENT_KINDS: frozenset[str] = frozenset({"agent", "tool"})
+# and ADR-0019 rev 1 §1 adds it as a third target with **its own
+# evidence rule** (a registration, not a call from a body). That is not
+# "co-location was already allowed": co-location is exactly what rev 1
+# refuses. It is a widening because `mcp.add_middleware(...)` is a
+# source-level declaration — the same strength as the call-site and
+# decorator forms — and the AST sees it.
+COMPONENT_KINDS: frozenset[str] = frozenset(
+    {"agent", "tool", "mcp_server"}
+)
 
 GUARDRAIL_KIND = "guardrail"
+
+# The SDK's registration method, as the `ast.Attribute` it is:
+# `mcp.add_middleware(AuditMiddleware())`. ADR-0019 rev 1 §1.
+REGISTRATION_METHOD_NAME = "add_middleware"
+
+# The last dotted segment of the decorator form of the same
+# registration: `@mcp.middleware(...)`.
+MIDDLEWARE_DECORATOR_NAME = "middleware"
+
+# The `resolved_via` value the registration evidence carries. Both forms
+# of it — the call site and the decorator — are the ADR's one relation
+# ("the middleware is registered on the server"), so they share one
+# value rather than inventing two. The other values are `call_graph`
+# (the call-site form above) and `decorator` (the literal `@guardrail`
+# form), so this is the third form's name, not a redefinition of either.
+EVIDENCE_REGISTRATION = "registration"
 
 # The one decorator name B.4a recognizes, by its last dotted segment,
 # and the name a `guardrail` node has to carry for the edge to point
@@ -170,7 +210,20 @@ def _evidence(
     component: Node,
     ctx: NormalizeContext,
 ) -> set[str]:
-    """The forms of evidence tying `guardrail` to `component`, if any."""
+    """The forms of evidence tying `guardrail` to `component`, if any.
+
+    Two rules, by the component's kind. An `agent` or a `tool` is a body
+    a guardrail is called from or a definition that carries the
+    `@guardrail` decorator, so the call graph and the decorator list are
+    read. A `mcp_server` is a container, and its evidence is the
+    middleware's registration on it (ADR-0019 rev 1 §1), read from the
+    server's own module — the two rules do not mix, because neither
+    form of the body rule can fire on a server node.
+    """
+    if component.kind == "mcp_server":
+        if _registered_on_server(guardrail, component, ctx):
+            return {EVIDENCE_REGISTRATION}
+        return set()
     definition = _definition_for(component, ctx)
     evidence: set[str] = set()
     if _calls_guardrail(guardrail, component, definition, ctx):
@@ -195,7 +248,14 @@ def _definition_for(
     does not define the name at all (a detector-created node in a file
     the manifest does not hold, or a name the TSA index and the file
     index disagree about).
+
+    A `mcp_server` node has no definition either — it names a container,
+    not a body — and its evidence is `_registered_on_server`'s module
+    scan, so this answers None for it rather than guessing at a function
+    or class that happens to share the server's name.
     """
+    if component.kind == "mcp_server":
+        return None
     file_path = _source_file(component)
     if file_path is None:
         return None
@@ -305,3 +365,179 @@ def _source_file(node: Node) -> str | None:
     """The relative path a node was found in, when it carries one."""
     value = node.attributes.get("source_file")
     return value if isinstance(value, str) else None
+
+
+# ============================================================
+# The `mcp_server` target (ADR-0019 rev 1 §1)
+# ============================================================
+
+def _registered_on_server(
+    guardrail: Node,
+    component: Node,
+    ctx: NormalizeContext,
+) -> bool:
+    """True when `guardrail` is registered on the server `component`.
+
+    Either form the ADR names (ADR-0019 rev 1 §1): the SDK's
+    `add_middleware(...)` call site, or a `@<var>.middleware(...)`
+    decorator on a factory that hands the guardrail class back. Both are
+    read from the server's *own* module: a registration in some other
+    file is not evidence about this server, and co-location — a
+    middleware class in this file with no registration — is not evidence
+    at all (the pinned negative, `N4`).
+    """
+    module = _server_module(component, ctx)
+    if module is None:
+        return False
+    if _has_registration_call(module, guardrail.name):
+        return True
+    return _has_middleware_decorator(module, guardrail.name)
+
+
+def _server_module(
+    component: Node,
+    ctx: NormalizeContext,
+) -> ast.Module | None:
+    """The parsed module an `mcp_server` node stands for, or None."""
+    file_path = _server_file(component, ctx)
+    if file_path is None:
+        return None
+    return ctx.module_for(file_path)
+
+
+def _server_file(component: Node, ctx: NormalizeContext) -> str | None:
+    """The manifest path of the module an `mcp_server` node stands for.
+
+    Two producers, two shapes. A framework detector's `mcp_server` node
+    carries the `source_file` it was found in (`fastmcp.py`,
+    `mcp_python.py`), so the node's own attribute answers. A
+    convention node (`mcp_server_nodes.McpServerNodeStage`, one per
+    `mcp/servers/<name>/server.py` path) carries only `server_name`, so
+    the file is the manifest file whose `classify_file` yields that
+    name — the same rule that made the node, rather than a second copy
+    of the path convention here. None when neither answers: the
+    resolver does not guess a file.
+    """
+    file_path = _source_file(component)
+    if file_path is not None:
+        return file_path
+    from ..classification import classify_file
+
+    for entry in ctx.manifest.files:
+        classification = classify_file(entry.path)
+        if classification is None:
+            continue
+        if classification.attributes.get("server_name") == component.name:
+            return entry.path
+    return None
+
+
+def _has_registration_call(module: ast.Module, name: str) -> bool:
+    """True when the module registers `name` with `add_middleware(...)`.
+
+    The shape is the SDK's: an `ast.Call` whose function is an
+    `ast.Attribute` named `add_middleware` (`mcp.add_middleware(...)`,
+    `server.add_middleware(...)`), whose first positional argument names
+    the guardrail. The evidence is the module AST, not the name-keyed
+    call graph — an attribute call is not recorded there, which is why
+    the registration form exists at all (ADR-0016).
+
+    **The receiver is not resolved, and that is the known limit.** Any
+    `add_middleware(<guardrail name>)` in the server's module counts, so
+    a non-MCP `add_middleware` — Starlette's
+    `app.add_middleware(CORSMiddleware, ...)` — would count too, if a
+    `guardrail` node carried the argument's name and an `mcp_server`
+    node existed in that module. The name must match a node the graph
+    already holds, and the call must sit in a server's own file, so the
+    pair is narrow; resolving the receiver to the server's own variable
+    is a follow-up, not this step. The corpora are the check: eight of
+    them, `guards = 0` on all.
+    """
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr != REGISTRATION_METHOD_NAME:
+            continue
+        if _registration_argument_name(node) == name:
+            return True
+    return False
+
+
+def _registration_argument_name(call: ast.Call) -> str | None:
+    """The name in an `add_middleware(...)` call's first argument, or None.
+
+        add_middleware(AuditMiddleware())            → AuditMiddleware
+        add_middleware(AuditMiddleware)              → AuditMiddleware
+        add_middleware(fastmcp.AuditMiddleware())    → AuditMiddleware
+        add_middleware(middleware=AuditMiddleware()) → None
+        add_middleware()                             → None
+
+    Only the first *positional* argument is read: that is where the SDK's
+    signature puts the middleware, and a keyword form would need a
+    parameter-name table the ADR does not give (the same posture as
+    ADR-0016's "no name tables"). The class itself and a construction of
+    it both count, because both name the same middleware.
+    """
+    if not call.args:
+        return None
+    argument = call.args[0]
+    if isinstance(argument, ast.Call):
+        argument = argument.func
+    if isinstance(argument, ast.Name):
+        return argument.id
+    if isinstance(argument, ast.Attribute):
+        return argument.attr
+    return None
+
+
+def _has_middleware_decorator(module: ast.Module, name: str) -> bool:
+    """True when a `@<var>.middleware(...)` factory hands `name` back.
+
+    The decorator form registers a *factory*, and the FastMCP middleware
+    detector names its `guardrail` node after the class, not the factory
+    (`class AuditMiddleware(Middleware)` → `AuditMiddleware`). So the
+    decorator alone cannot tie the two by name: the factory's body has
+    to return the guardrail. That read is one level — the factory's own
+    `return` statements, never a nested function's.
+    """
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not any(
+            _decorator_name(decorator) == MIDDLEWARE_DECORATOR_NAME
+            for decorator in node.decorator_list
+        ):
+            continue
+        if _returns_name(node, name):
+            return True
+    return False
+
+
+def _returns_name(function: ast.AST, name: str) -> bool:
+    """True when one of `function`'s own returns names `name`.
+
+    `return AuditMiddleware()` and `return AuditMiddleware` both count; a
+    factory that returns anything else does not. The walk does not
+    descend into a nested function or class, whose `return` belongs to
+    that definition (the same one-level read `_body_call_names` makes
+    for an agent's methods).
+    """
+    stack = list(getattr(function, "body", ()))
+    while stack:
+        node = stack.pop()
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        if isinstance(node, ast.Return):
+            value = node.value
+            if isinstance(value, ast.Call):
+                value = value.func
+            if isinstance(value, ast.Name) and value.id == name:
+                return True
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return False

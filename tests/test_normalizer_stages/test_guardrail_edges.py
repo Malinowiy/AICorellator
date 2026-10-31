@@ -2,9 +2,10 @@
 
 ADR-0019 §1: a `guards` edge is emitted only when the source-level
 evidence establishes a protection relationship — a call site through the
-call graph, or a `@guardrail(...)` decorator — and never from
-co-location. Four emission cases, three non-emission cases, plus
-determinism and the "no traversal effect" check.
+call graph, a `@guardrail(...)` decorator, or (rev 1) a middleware
+registration on a `mcp_server` — and never from co-location. Six emission
+cases, six non-emission cases, plus determinism and the "no traversal
+effect" check.
 
 The edge is `structural`: `flow_kind="structural"`, `observed_by=["ast"]`,
 `data_flow_confirmed is None` (ADR-0015 decision 5, ADR-0016).
@@ -14,7 +15,10 @@ No deterministic classifier produces a `guardrail` node today —
 capabilities and nothing else — so each fixture puts one in the delta
 the way `detector_merge` would: a `guardrail` node carrying a
 `source_file`. The resolver reads `delta.nodes`, which is the point of
-running it after the merge.
+running it after the merge. The `mcp_server` fixtures do the same for
+the container node, in both shapes it arrives in: the convention node
+(`server_name` only, what `McpServerNodeStage` makes) and a detector's
+(`source_file` as well).
 
 The call graph is not hand-fed. Every fixture builds it with the real
 detector (`entry_points.run`), so what the resolver reads is what the
@@ -42,6 +46,8 @@ from aicorellator.parsing.normalizer_stages import (
 AGENTS = "agents/invoice.py"
 GUARDRAILS = "core/guardrails/pii.py"
 TOOLS = "tools/invoice.py"
+SERVER = "mcp/servers/audit/server.py"
+OTHER_FILE = "core/middleware/register.py"
 
 # E1: an agent whose method calls the guardrail by bare name.
 AGENT_SOURCE = """\
@@ -115,6 +121,82 @@ class InvoiceAgent:
 
     def process(self, text):
         return self.pii.check(text)
+"""
+
+
+# E5: the SDK's registration, in the server's own file (ADR-0019 rev 1
+# §1). `mcp.add_middleware(...)` is an `ast.Attribute` call, so the
+# name-keyed call graph never records it — the evidence is the module.
+REGISTERED_SOURCE = """\
+from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
+
+mcp = FastMCP("audit")
+
+
+class AuditMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        return await call_next(context)
+
+
+mcp.add_middleware(AuditMiddleware())
+"""
+
+# E6: the decorator form of the same registration. The decorated thing is
+# a factory, and the detector names the node after the class, so the
+# factory's own body has to name the guardrail.
+DECORATED_FACTORY_SOURCE = """\
+from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
+
+mcp = FastMCP("audit")
+
+
+class AuditMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        return await call_next(context)
+
+
+@mcp.middleware("http")
+def audit_factory():
+    return AuditMiddleware()
+"""
+
+# N4: the middleware and the server share a file — and nothing registers
+# the middleware. The co-location B.4a refuses.
+CO_LOCATED_SERVER_SOURCE = """\
+from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware
+
+mcp = FastMCP("audit")
+
+
+class AuditMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        return await call_next(context)
+"""
+
+# N5: the server's own file, with no registration in it.
+PLAIN_SERVER_SOURCE = """\
+from fastmcp import FastMCP
+
+mcp = FastMCP("audit")
+"""
+
+# N5: a *different* file that registers the middleware on the same
+# server object. The rule reads the server's module, not the guardrail's.
+REGISTRATION_FILE_SOURCE = """\
+from fastmcp.server.middleware import Middleware
+
+from mcp.servers.audit.server import mcp
+
+
+class AuditMiddleware(Middleware):
+    async def on_call_tool(self, context, call_next):
+        return await call_next(context)
+
+
+mcp.add_middleware(AuditMiddleware())
 """
 
 
@@ -207,6 +289,45 @@ def _decorated_scenario(project, source: str):
     p.ctx.entry_points = run_entry_point_detector(p.ctx.manifest)
     ClassNodeStage().apply(p.delta, p.ctx)
     p.delta.nodes.append(_guardrail_node("guardrail", GUARDRAILS))
+    return p
+
+
+def _server_node(server_name: str, source_file: str | None = None) -> Node:
+    """The `mcp_server` node the pipeline leaves, in either shape.
+
+    `source_file` is omitted for the convention node
+    (`McpServerNodeStage` carries `server_name` and nothing else, so the
+    resolver has to find the file the way the node was made) and set for
+    a framework detector's node (`fastmcp.py`, `mcp_python.py` carry the
+    file they were found in).
+    """
+    attributes: dict = {"server_name": server_name}
+    if source_file is not None:
+        attributes["source_file"] = source_file
+    return Node(
+        id=f"mcp_server:{server_name}",
+        kind="mcp_server",
+        name=server_name,
+        host_id="localhost",
+        attributes=attributes,
+    )
+
+
+def _server_scenario(
+    project,
+    *,
+    server_source: str,
+    guardrail: str = "AuditMiddleware",
+):
+    """A `mcp_server` node and a `guardrail` node in the server's file."""
+    p = project(
+        files={SERVER: server_source},
+        symbols=[
+            _symbol("AuditMiddleware", "class", SERVER, server_source),
+        ],
+    )
+    p.delta.nodes.append(_guardrail_node(guardrail, SERVER))
+    p.delta.nodes.append(_server_node("audit"))
     return p
 
 
@@ -316,8 +437,76 @@ def test_one_guardrail_protects_every_component_that_calls_it(project) -> None:
     assert {e.target_id for e in guards} == {p.named(n).id for n in names}
 
 
+def test_a_middleware_registered_on_a_server_gets_an_edge(project) -> None:
+    """E5: `mcp.add_middleware(AuditMiddleware())` in the server's file.
+
+    The `mcp_server` target's evidence is the registration, not a call
+    from a body (ADR-0019 rev 1 §1), so the edge points at the server —
+    the container — and `resolved_via` names the form. The server node is
+    the convention one (`server_name` only), so the resolver finds the
+    module the way `McpServerNodeStage` made the node.
+    """
+    p = _server_scenario(project, server_source=REGISTERED_SOURCE)
+
+    GuardrailEdgeStage().apply(p.delta, p.ctx)
+
+    guardrail = p.named("AuditMiddleware")
+    server = p.named("audit")
+    assert guardrail.kind == "guardrail"
+    assert server.kind == "mcp_server"
+    guards = p.edges("guards")
+    assert [(e.source_id, e.target_id) for e in guards] == [
+        (guardrail.id, server.id),
+    ]
+    assert guards[0].attributes["resolved_via"] == "registration"
+    assert guards[0].flow_kind == "structural"
+    assert guards[0].observed_by == ["ast"]
+    assert guards[0].data_flow_confirmed is None
+
+
+def test_a_middleware_factory_decorated_with_mcp_middleware_gets_an_edge(
+    project,
+) -> None:
+    """E6: `@mcp.middleware(...)` on a factory that returns the class.
+
+    The decorator sits on a factory, and the detector names the
+    `guardrail` node after the class, so the decorator is evidence only
+    when the factory hands that class back — which is what the one-level
+    body read establishes (ADR-0019 rev 1 §1 names the decorator form).
+    """
+    p = _server_scenario(project, server_source=DECORATED_FACTORY_SOURCE)
+
+    GuardrailEdgeStage().apply(p.delta, p.ctx)
+
+    guardrail = p.named("AuditMiddleware")
+    server = p.named("audit")
+    guards = p.edges("guards")
+    assert [(e.source_id, e.target_id) for e in guards] == [
+        (guardrail.id, server.id),
+    ]
+    assert guards[0].attributes["resolved_via"] == "registration"
+
+
+def test_a_middleware_factory_that_does_not_return_the_class_gets_no_edge(
+    project,
+) -> None:
+    """E6's negative: `@mcp.middleware(...)` on a factory returning something
+    else is not evidence — the decorator alone does not tie the factory to
+    the guardrail node (ADR-0019 rev 1 §1)."""
+    source = DECORATED_FACTORY_SOURCE.replace(
+        "    return AuditMiddleware()", "    return None"
+    )
+    assert source != DECORATED_FACTORY_SOURCE
+    p = _server_scenario(project, server_source=source)
+
+    GuardrailEdgeStage().apply(p.delta, p.ctx)
+
+    assert p.named("audit").kind == "mcp_server"
+    assert p.edges("guards") == []
+
+
 # ============================================================
-# Not emitted (N1–N3)
+# Not emitted (N1–N6)
 # ============================================================
 
 def test_a_colocated_component_and_guardrail_get_no_edge(project) -> None:
@@ -380,6 +569,71 @@ def test_a_self_prefixed_call_gets_no_edge(project) -> None:
     recorded = set().union(*p.ctx.entry_points.call_graph.values())
     assert "self.pii.check" in SELF_CALL_SOURCE   # the call is in the source
     assert "PIIDetector" not in recorded          # and not in the call graph
+    assert p.edges("guards") == []
+
+
+def test_a_colocated_middleware_and_server_get_no_edge(project) -> None:
+    """N4: a middleware class and a server in one file, no registration.
+
+    The shape B.4-gap-5 pinned, and the one ADR-0019 rev 1 keeps: the
+    file layout is not the defensive relationship, the registration is.
+    """
+    p = _server_scenario(project, server_source=CO_LOCATED_SERVER_SOURCE)
+
+    GuardrailEdgeStage().apply(p.delta, p.ctx)
+
+    assert p.named("AuditMiddleware").attributes["source_file"] == SERVER
+    assert p.named("audit").kind == "mcp_server"
+    assert p.edges("guards") == []
+
+
+def test_a_registration_in_another_file_gets_no_edge(project) -> None:
+    """N5: the evidence is the server's *own* module (ADR-0019 rev 1 §1).
+
+    `core/middleware/register.py` registers the middleware on the server
+    object it imports, but the server's own file has no registration —
+    and the rule reads the server's module, not any module. The server
+    node here is a detector's shape (`source_file` present), so this also
+    pins that resolution path.
+    """
+    p = project(
+        files={
+            SERVER: PLAIN_SERVER_SOURCE,
+            OTHER_FILE: REGISTRATION_FILE_SOURCE,
+        },
+        symbols=[
+            _symbol("AuditMiddleware", "class", OTHER_FILE,
+                    REGISTRATION_FILE_SOURCE),
+        ],
+    )
+    p.delta.nodes.append(_guardrail_node("AuditMiddleware", OTHER_FILE))
+    p.delta.nodes.append(_server_node("audit", source_file=SERVER))
+
+    GuardrailEdgeStage().apply(p.delta, p.ctx)
+
+    assert "mcp.add_middleware(AuditMiddleware())" in REGISTRATION_FILE_SOURCE
+    assert p.named("audit").attributes["source_file"] == SERVER
+    assert p.edges("guards") == []
+
+
+def test_a_capability_guardrail_and_a_server_get_no_edge(project) -> None:
+    """N6: the evidence is the registration, not the guardrail's kind.
+
+    A capability-derived `guardrail` node (`pii_check`, `observed_by`
+    `["ast"]`) beside a server with no registration emits nothing: the
+    `mcp_server` branch asks whether the middleware is registered, and it
+    never asks which producer made the guardrail (ADR-0019 rev 1 §1).
+    """
+    p = _server_scenario(
+        project,
+        server_source=CO_LOCATED_SERVER_SOURCE,
+        guardrail="pii_check",
+    )
+
+    GuardrailEdgeStage().apply(p.delta, p.ctx)
+
+    assert p.named("pii_check").kind == "guardrail"
+    assert [n.name for n in p.nodes("mcp_server")] == ["audit"]
     assert p.edges("guards") == []
 
 
