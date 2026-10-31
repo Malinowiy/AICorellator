@@ -16,9 +16,10 @@ one node per distinct `st.<call>` at module level — `method="STREAMLIT"`,
 `entry_kind="streamlit"`, `path` = the call's name, `line_start` = the
 call's line, and **no** `handler`, because there is no function to name.
 The writer's module-level branch (`writer._module_level`) is what reads
-such a site: the module's top-level functions and its own body are the
-writes the entry point reaches, and the site is the module's rather than
-a function's.
+such a site: the calls the module body itself makes are the start set —
+its own `ast.Name` calls, not the list of top-level functions it defines
+(`writer._module_body_calls`, B.3b-user_upload-core-module-followup-2) —
+and the site is the module's rather than a function's.
 
 **The detector does not walk the tree.** The node carries `source_file`,
 `line_start`, `path` and `entry_kind`, which is everything a site is made

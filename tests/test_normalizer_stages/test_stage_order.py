@@ -19,7 +19,7 @@ The order encodes four facts that are easy to lose in a refactor:
     walks the `writes_to` edges that stage emits) and after `flow_kind`,
     with the resolver group that passes `CONTROL_FLOW` (see
     `normalizer_stages.dynamic_mcp_invocation`);
-  - `body_attributes` runs last but one, because the merge replaces
+  - `body_attributes` runs last but three, because the merge replaces
     nodes and the replacement is what the graph keeps;
   - `lethal_trifecta` runs last but two: it shares the "after the merge"
     constraint and has no other, and it reads capabilities rather than

@@ -294,6 +294,13 @@ def test_bundle_carries_the_projection_the_label_and_the_provenance(
     B.7: `prompt_version` / `voter_outputs` are the other two — what the
     verdict is traced by (ADR-0005, ADR-0006). The row carries all four,
     and the file now says all four.
+
+    One note on the label's value: since B.9 a *validated* chain carries
+    `validated_kind="evidence"`, and `"semantic"` is the level a chain
+    reaches when the evidence check is what rejected it
+    (`graph.models.VALID_VALIDATED_KINDS`). The row here is hand-written
+    — this test's subject is the bundle's column, not the level — so the
+    pair is the pre-B.9 one.
     """
     _graph(store, trifecta=True)
     group = _group(store)

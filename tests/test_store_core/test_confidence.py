@@ -222,10 +222,11 @@ def test_nothing_short_of_an_exact_literal_reaches_the_default() -> None:
         `1 − 0.7 × 0.7 × 0.7 = 0.657`, still under 0.7;
       - what the *resolver* can reach without an exact literal is
         `0.608` (`1 − 0.7 × 0.8 × 0.7`): the one-side literal plus the
-        shared wrapper. Prefix containment does not appear in this
-        combination because a site attaches to a store by exact equality
-        (`resolver._attached_keys`), so a pair either has the store's
-        own literal or has none.
+        shared wrapper. Since B.3b-fs-followup prefix containment is
+        reachable through the resolver too — `resolver._attached_keys`
+        attaches a site to a store whose literal contains its own or is
+        contained by it — so `0.657` is reachable as well; both are
+        still under 0.7, which is the point.
 
     Either way a pair that did not name the same store cannot enter the
     default enumeration however much of the code agrees about where it

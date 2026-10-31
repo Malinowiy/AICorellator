@@ -39,13 +39,14 @@ same store — prefix containment — plus the shared wrapper, `1 − 0.7 ×
 agreement can put a pair in the default enumeration: the literal is what
 names the store, and this is the arithmetic that says so.
 
-What the *resolver* reaches is the narrower `0.608` (the one-side
-literal plus the shared wrapper), because a site attaches to the store
-its own literal names by exact equality (`resolver._attached_keys`), so
-the prefix branch fires only for a hint that contains the store's key
-without equalling it. The branch is the family-level signal B.3b-fs
-specifies and this module computes; making it reachable is an
-attachment decision, not one this module can take.
+The *resolver* reaches the prefix row too, since B.3b-fs-followup:
+`resolver._attached_keys` attaches a site to the store its literal names
+by exact equality **and** to every store whose literal contains its own
+or is contained by it, so the prefix pairing at `0.51` and the
+prefix-plus-wrapper pairing at `0.657` above are reachable, and the
+resolver's bound is the one this module states rather than a narrower
+one. The branch is the family-level signal B.3b-fs specifies and this
+module computes; the attachment is the resolver's.
 `test_confidence.py` pins both numbers.
 
 `literal_match` returns `None` for "no link": its signature would like a

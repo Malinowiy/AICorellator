@@ -158,13 +158,14 @@ The sites come back in source order (line, then column), so a family's
 report is a property of the code and not of `ast.walk`'s breadth-first
 order.
 
-One limitation the resolver inherits and does not fix here: a site
-attaches only to the store its literal *equals*, so a write naming
-`'docs/'` and a read naming `'docs/uploads/x'` are two stores and the
-containment branch of `literal_match` never fires for them — the same
-`fs` limitation (B.3b-fs-followup). The branch itself is pinned in
-`tests/test_store_core/test_confidence.py`; the attachment decision is
-the resolver's.
+The containment branch of `literal_match` is live through the resolver
+(B.3b-fs-followup): a site attaches to the store its literal *equals*
+**and** to every store whose literal contains its own or is contained by
+it, so a write naming `'docs/'` and a read naming `'docs/uploads/x'` are
+two stores *and* two pairs — the equal-literal pair at `LITERAL_EQUAL`
+and the containment pair at `LITERAL_PREFIX`. The branch itself is
+pinned in `tests/test_store_core/test_confidence.py`; the attachment is
+`resolver._attached_keys`'s.
 """
 
 from __future__ import annotations

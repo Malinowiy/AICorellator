@@ -6,10 +6,11 @@ reaches. The interface accepts one (`families.base.Context`); the first
 concrete context is `user_upload`, and this package is where it lands:
 
   - `upload` — `UserUploadContext` (B.3b-user_upload-core) and the
-    detectors that feed it. Importing `upload` registers the detectors
-    the tree ships — `fastapi`, since B.3b-user_upload-fastapi, and
-    `streamlit`, since B.3b-user_upload-streamlit — so a scan that
-    imports the store subsystem has them without naming one.
+    detectors that feed it. Importing `upload` registers the four
+    detectors the tree ships — `fastapi` (B.3b-user_upload-fastapi),
+    `streamlit` (B.3b-user_upload-streamlit), `django`
+    (B.3b-user_upload-django) and `flask` (B.3b-user_upload-flask) — so
+    a scan that imports the store subsystem has them without naming one.
 """
 
 from . import upload  # noqa: F401 — the package's public entry point

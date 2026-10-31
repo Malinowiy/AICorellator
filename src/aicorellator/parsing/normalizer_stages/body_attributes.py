@@ -1,6 +1,6 @@
 """BodyAttributeStage — `sink_data_flow` / `returns_data` backfill.
 
-Run order: 18 of 21 (see `normalizer_stages.STAGES`) — second to last.
+Run order: 18 of 21 (see `normalizer_stages.STAGES`) — fourth to last.
 
 Two prompt signals (1.2a.1) that ask the same shape of question — *what
 does this node's own body do?* — of two node kinds:
@@ -14,7 +14,7 @@ file is parsed at most once. A sink whose *name* is a class
 (`UserProfileRepository`) resolves through the class index and is
 analysed method by method (1.2a.5); a tool is always a function.
 
-The stage runs late because the detector merge (stage 8) can replace a
+The stage runs late because the detector merge (stage 11) can replace a
 TSA node with a detector node of the same `(name, source_file)`: the
 replacement arrives without these attributes, and it is the node that
 ends up in the graph. Filling them here — once, for whatever nodes
@@ -23,10 +23,12 @@ node construction. The guard is the same one the pipeline has always
 used: a node that already carries the attribute (a detector-enriched
 one) is left alone.
 
-It is *not* last any more: `LethalTrifectaStage` (1.3d, stage 18) runs
-after it. That stage shares this one's "after the merge" constraint and
-has no constraint of its own, so it took the end of the pipeline; the
-two are independent, and neither reads what the other writes.
+It is *not* last any more: three stages run after it —
+`LethalTrifectaStage` (1.3d, stage 19), `StoreResolverStage` (B.3b, stage
+20) and `GuardrailEdgeStage` (B.4a, stage 21). Each shares this one's
+"after the merge" constraint and has no constraint on its position
+relative to it; the four are independent, and none reads what another
+writes.
 """
 
 from __future__ import annotations

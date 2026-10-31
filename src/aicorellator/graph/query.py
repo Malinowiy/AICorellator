@@ -1526,7 +1526,10 @@ class QueryLayer:
         reached, which is why a chain that exists but is incoherent
         reads `"existence"` rather than `"semantic"` (ADR-0006 Layer 3
         before A.4 is exactly the `"existence"` level). The field is
-        where a third level will be named when the data asks for one.
+        where the third level is named: `"evidence"` (B.9, ADR-0018
+        revision 2), which the evaluator assigns when these checks
+        passed and a voter cited an edge of the chain — the only level
+        that sets `validated` (`graph.models.VALID_VALIDATED_KINDS`).
 
         `notes` holds one short, name-based line per failure — never
         source text, the same rule `FlowDecision.evidence` follows.

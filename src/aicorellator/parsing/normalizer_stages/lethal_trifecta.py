@@ -1,6 +1,6 @@
 """LethalTrifectaStage — the `lethal_trifecta` node attribute (1.3d).
 
-Run order: 19 of 21 (see `normalizer_stages.STAGES`) — second to last.
+Run order: 19 of 21 (see `normalizer_stages.STAGES`) — third to last.
 
 One node fact, derived from the node's own capabilities: does this node
 read untrusted input, can it read secrets, and can it get data out?
@@ -24,15 +24,16 @@ Why its own stage rather than a branch inside `body_attributes`:
   - every other concern in the pipeline has its own stage and its own
     test file; this one is ~10 lines and reads well on its own.
 
-Why second to last, and why after `body_attributes`: the only ordering
-constraint is the detector merge (stage 10), which can replace a node and
+Why third to last, and why after `body_attributes`: the only ordering
+constraint is the detector merge (stage 11), which can replace a node and
 the replacement is what the graph keeps — the same reason
 `body_attributes` runs late. This stage has no constraint relative to
-`body_attributes`, so it sits at the end of the pipeline, where the node
-set is final. `guardrail_edges` (B.4a, stage 19) takes the very last
-slot, and it shares this stage's one constraint and no other, so the two
-do not read what the other writes and their order is not load-bearing —
-see `normalizer_stages.guardrail_edges`.
+`body_attributes`, so it sits near the end of the pipeline, where the
+node set is final. `store_resolver` (B.3b, stage 20) and
+`guardrail_edges` (B.4a, stage 21) take the two slots after it, and each
+shares this stage's one constraint and no other, so none reads what
+another writes and their order is not load-bearing — see
+`normalizer_stages.guardrail_edges`.
 
 The attribute is written on **every** node, `True` or `False`, and the
 stage is its only producer, so it recomputes rather than guarding: a
