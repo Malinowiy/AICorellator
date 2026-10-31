@@ -1058,7 +1058,7 @@ All in the "do not change" sets of past steps; each is one line or one sentence.
   B.4-gap", but `B.4-gap` is Done (B.4-gap-1..5); the real blocker is the same
   corpus run. This line records the correction; `D.5`'s own "Blocked by" text is
   left for the next planning session, when the corpora return.
-  
+
 ---
 
 ## Known gaps
@@ -1080,6 +1080,97 @@ Three gaps recorded during Phase B, none blocking, none papered over.
 ### B.3b-fs-followup — prefix containment through the resolver
 
 (see §B.3b-fs-followup above)
+
+### FinBot `delegates_to` collapse 11 → 0 (A.3b, expected)
+
+FinBot's baseline (283/93/182) is **pre-A.3b**. After A.3b (ADR-0016 §Decision 7:
+name heuristics removed, `SymbolCallResolver` resolves raw `SymbolCall`s against
+existing agent nodes), FinBot's `delegates_to` is **0** because no call site
+resolves under the written rule — for three documented reasons:
+
+- **(a) no `SymbolCall` exists for the route→runner hop.** The routes pass
+  `run_orchestrator_agent` to `background_tasks.add_task(...)`: an argument to a
+  library method, not a call. `entry_points.py` records calls, not arguments. The
+  baseline's `POST /vendors/register → OrchestratorAgent` was produced by the
+  deleted `RUNNER_TO_AGENT` name table, not by a call.
+- **(b) the 6 agent→agent call sites in `orchestrator.py` reach a runner whose
+  body passes the agent as a keyword argument.** `run_agent_with_retry(
+  agent_class=InvoiceAgent, ...)` — `_referenced_names` reads call targets and
+  *positional* arguments of project-defined bare-name calls, and the keyword
+  spelling is deliberately out of scope (A.3b's module docstring, BACKLOG §A.3b).
+  A synthetic control (same call, positional spelling) resolves the agent, so the
+  one-hop bound is not the blocker.
+- **(c) 132 call sites resolve a target but the source file holds no agent node**
+  (A.3b's documented "a call site into a file with no agent node produces no
+  edge"), and **77** name an agent by base name; the 15 of those with a source
+  are self-delegations dropped by the `source_id == target_id` guard.
+
+**A.3b's own commit message recorded this measurement** (`3f2c849`: "finbot-ctf:
+355/187, 1 agent, 0 delegates_to — the intended A.3b behaviour and the cause of
+delegates_to 11 -> 0"). F1 is a re-measurement, not a defect. The consequence is
+FinBot's chain count 182 → 22 (all 1-hop `entry_point → sink`); every path
+through `OrchestratorAgent → *Agent → mcp_server → tool → sink` is no longer
+enumerated. A future decision to read keyword arguments, or to treat
+`BackgroundTasks.add_task` as a delegation, is a **new scope decision about the
+resolver's evidence**, not a bug fix. The README baseline table (FinBot
+283/93/182) is pre-A.3b and no longer describes the live graph — see the corpus
+regression note in `Documentation/Analysis/` (2026-10-31).
+
+### `SymbolCallResolver._target_for` step 2b — method-name collision (precision risk)
+
+**Priority:** **Medium** · **Status:** Not started.
+
+`_target_for` step 2b reads the imported file, finds the callee as a symbol, and
+falls back to the symbol's **enclosing class** if that class is an agent node.
+For `runner.py:45 callee=agent.process`, `process` is a method of six agent
+classes, so the fallback returns six targets. Today it emits nothing because
+`runner.py` holds no agent node; if that file — or a route that calls a file
+like it — ever gains one, the resolver emits `source → 6 agents` on a name
+collision.
+
+This is a **precision** issue in the step 2b fallback, distinct from F1's
+expected collapse. A fix would need to prefer the call site's own receiver
+resolution (which the AST does not provide — ADR-0001), to refuse a multi-match,
+or to accept it and let Layer 3 filter. **A decision, not a one-liner.**
+`/tmp/probe_finbot/probe_delegation.py` (`--focus`) shows the collision on the
+fresh FinBot scan.
+
+### `load_config` guardrail node on AI-Vulnerabilities-Playground (B.4-gap-1, expected)
+
+`AI-Vulnerabilities-Playground` yields one `guardrail` node from the B.4-gap-1
+capability rule: `load_config`, `capabilities ["reads_filesystem",
+"validates_input"]`, `observed_by ["ast"]`, `source_file
+training_labs/eval_harness.py:18`. It is a JSON config loader, called by bare name
+from `run_trigger_activation_test`. It is a **false positive by the rule's own
+design** (ADR-0024 §2: the capability rule accepts `print` / `logger.info`
+false positives because the guardrails payload is a signal the model weighs, not
+a filter). `guards = 0` because the function guards no `agent` / `tool` node —
+the same "node-only" outcome B.4-gap-4/5 pinned. **Real detector hits: none.**
+This is the only `guardrail` node in eight scans.
+
+### Test-file chains (FP_TP_analysis #2, confirmed on corpus regression)
+
+On `mcploitable`, 13 of 19 fresh chains come from a single test file
+(`CLI:tests/test_asi02_unit_check.py`). On `dvmcp`, 21 of 40 chains come from
+one MCP entry point (`MCP:dvmcp-vulnerable-server → tool:file_reader → …`,
+2-hop). On FinBot, 62 of the 77 agent-named call sites and 119 of the 132
+target-only near-misses are in `tests/`. This is the class already recorded in
+`Documentation/Analysis/FP_TP_analysis.md` #2: a test script is not an entry
+point a real attacker reaches. The LLM evaluation is where it should be
+filtered — the prompt's test-file calibration (v1.4.1, 1.2a.3d) is the
+mechanism; the fresh corpus regression is a reminder that the class is
+**dominant** in these corpora, not rare.
+
+### B.9 on dvmcp: 2 `exploitable` chains rejected as `semantic` (2026-10-31, expected)
+
+`solo` run on `dvmcp` (40 chains): 2 chains carry `verdict='exploitable'` with
+`validated=False, validated_kind='semantic'` and the note "no voter cited an edge
+from the chain (1 citation(s) outside the chain)". The 35B voter returned
+`exploitable: true` but cited an edge outside the chain; Layer 3 caught it (B.9,
+ADR-0018 rev 2) and stored the chain with `validated=False` for provenance. This
+is the mechanism working as designed — the verdict is the LLM's, the validation
+is Layer 3's, and `validated=False` is the honest answer. Not a finding; recorded
+so a future corpus run does not "fix" it.
 
 ---
 
